@@ -1,5 +1,7 @@
 """Ollama APIクライアント。"""
 
+import re
+
 import httpx
 
 from src.errors import OllamaUnavailableError
@@ -45,6 +47,7 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "options": {"think": False},  # qwen3思考モード無効化
         }
         if system:
             payload["system"] = system
@@ -57,7 +60,10 @@ class OllamaClient:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                return data.get("response", "")
+                text = data.get("response", "")
+                # <think>...</think> タグが残っている場合は除去
+                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                return text
         except Exception as e:
             self._available_url = None
             raise OllamaUnavailableError(f"Ollama generation failed: {e}") from e

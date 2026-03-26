@@ -20,12 +20,22 @@ class LLMRouter:
         self._config = config
         self._gemini_config = config.get("gemini", {})
 
-        # Ollama URLs を windows_agents から構築
+        # Ollama URLs を構築
+        # 1. config の llm.ollama_url（ローカル含む直接指定）
+        # 2. windows_agents のホストから自動構築
         ollama_urls = []
+        direct_url = config.get("llm", {}).get("ollama_url", "")
+        if direct_url:
+            ollama_urls.append(direct_url.rstrip("/"))
+        else:
+            # デフォルトでローカルOllamaを追加
+            ollama_urls.append("http://localhost:11434")
         for agent in config.get("windows_agents", []):
             host = agent.get("host", "")
             if host:
-                ollama_urls.append(f"http://{host}:11434")
+                url = f"http://{host}:11434"
+                if url not in ollama_urls:
+                    ollama_urls.append(url)
 
         model = config.get("llm", {}).get("ollama_model", "qwen3")
         self.ollama = OllamaClient(model=model, urls=ollama_urls)

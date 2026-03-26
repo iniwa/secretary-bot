@@ -52,24 +52,29 @@ def create_web_app(bot) -> FastAPI:
         if not message:
             raise HTTPException(400, "message is required")
 
-        await bot.database.log_conversation("webgui", "user", message)
-        result = await bot.skill_router.route(message, channel="webgui")
-        skill_name = result.get("skill", "chat")
-        parsed = result.get("parsed", {})
-
-        unit = bot.unit_manager.get(skill_name)
-        if unit is None:
-            unit = bot.unit_manager.get("chat")
-
         try:
+            await bot.database.log_conversation("webgui", "user", message)
+            result = await bot.skill_router.route(message, channel="webgui")
+            skill_name = result.get("skill", "chat")
+            parsed = result.get("parsed", {})
+            # 元のメッセージを保証（LLMがparsedにmessageを含めない場合の対策）
+            parsed.setdefault("message", message)
+
+            unit = bot.unit_manager.get(skill_name)
+            if unit is None:
+                unit = bot.unit_manager.get("chat")
+
             response = await unit.execute(None, parsed)
             if response:
                 mode = "eco" if not bot.llm_router.ollama_available else "normal"
                 await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=skill_name)
             return {"response": response or "", "skill": skill_name}
         except Exception as e:
-            log.error("WebGUI chat error: %s", e)
-            return {"response": "エラーが発生しました。", "skill": skill_name}
+            log.error("WebGUI chat error: %s", e, exc_info=True)
+            return JSONResponse(
+                status_code=200,
+                content={"response": f"Error: {e}", "skill": "system"},
+            )
 
     @app.get("/api/logs", dependencies=[Depends(_verify)])
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None):

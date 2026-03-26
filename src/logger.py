@@ -47,7 +47,10 @@ class JsonFormatter(logging.Formatter):
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    handler = logging.StreamHandler(sys.stdout)
+    # Windows cp932 環境で絵文字等が出力エラーになるのを防止
+    import io
+    stream = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    handler = logging.StreamHandler(stream)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.setLevel(level)

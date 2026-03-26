@@ -1,6 +1,7 @@
 # LLM設定（APIキーは.envで管理）
 llm:
   ollama_model: "qwen3"
+  # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
 
 # ハートビート
 heartbeat:

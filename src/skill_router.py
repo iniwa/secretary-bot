@@ -30,7 +30,12 @@ class SkillRouter:
     def _build_skills_text(self) -> str:
         lines = []
         for unit in self.bot.unit_manager.units.values():
-            lines.append(f"- {unit.SKILL_NAME}: {unit.SKILL_DESCRIPTION}")
+            # RemoteUnitProxy の場合は内部ユニットを参照
+            actual = getattr(unit, "unit", unit)
+            name = getattr(actual, "SKILL_NAME", "")
+            desc = getattr(actual, "SKILL_DESCRIPTION", "")
+            if name:
+                lines.append(f"- {name}: {desc}")
         return "\n".join(lines)
 
     async def route(self, user_input: str, channel: str = "discord") -> dict:
@@ -52,6 +57,6 @@ class SkillRouter:
                 raise ValueError("Missing 'skill' key")
             log.info("Routed to: %s (trace=%s)", result["skill"], trace_id)
             return result
-        except (json.JSONDecodeError, ValueError) as e:
+        except Exception as e:
             log.warning("Routing failed (%s), falling back to chat (trace=%s)", e, trace_id)
             return {"skill": "chat", "parsed": {"message": user_input}}

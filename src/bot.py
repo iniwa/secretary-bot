@@ -67,11 +67,8 @@ class SecretaryBot(commands.Bot):
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
 
     async def setup_hook(self) -> None:
-        await self.database.connect()
-        await self.llm_router.check_ollama()
-        await self.unit_manager.load_units()
-        self.heartbeat.start()
-        log.info("Bot setup complete")
+        # Discord接続時に呼ばれるが、main()で既に初期化済みなのでスキップ
+        pass
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
@@ -97,6 +94,7 @@ class SecretaryBot(commands.Bot):
         result = await self.skill_router.route(content)
         skill_name = result.get("skill", "chat")
         parsed = result.get("parsed", {})
+        parsed.setdefault("message", content)
 
         unit = self.unit_manager.get(skill_name)
         if unit is None:
@@ -140,7 +138,7 @@ async def main() -> None:
     setup_logging(verbose=config.get("debug", {}).get("verbose_logging", False))
 
     bot = SecretaryBot(config)
-    token = os.environ["DISCORD_BOT_TOKEN"]
+    token = os.environ.get("DISCORD_BOT_TOKEN", "")
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -149,11 +147,24 @@ async def main() -> None:
         except NotImplementedError:
             pass  # Windows
 
-    # WebGUIとBotを並行起動
-    await asyncio.gather(
-        bot.start(token),
-        _run_web(bot),
-    )
+    # DB/LLM/Unit の初期化（Discord接続前に実行）
+    await bot.database.connect()
+    await bot.llm_router.check_ollama()
+    await bot.unit_manager.load_units()
+    bot.heartbeat.start()
+    log.info("Bot setup complete")
+
+    if token:
+        # WebGUIとDiscord Botを並行起動
+        log.info("Starting with Discord + WebGUI")
+        await asyncio.gather(
+            bot.start(token),
+            _run_web(bot),
+        )
+    else:
+        # Discord Token なし → WebGUIのみ起動
+        log.info("No DISCORD_BOT_TOKEN set, starting WebGUI only")
+        await _run_web(bot)
 
 
 if __name__ == "__main__":
