@@ -1,0 +1,19 @@
+services:
+  secretary-bot:
+    image: ghcr.io/iniwa/secretary-bot:latest
+    volumes:
+      - /home/iniwa/docker/secretary-bot/src:/app/src
+      - /home/iniwa/docker/secretary-bot/config.yaml:/app/config.yaml
+      - /home/iniwa/docker/secretary-bot/data:/app/data
+    ports:
+      - "8100:8100"
+    env_file:
+      - /home/iniwa/docker/secretary-bot/.env
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Tokyo
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

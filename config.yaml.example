@@ -1,0 +1,89 @@
+# LLM設定（APIキーは.envで管理）
+llm:
+  ollama_model: "qwen3"
+
+# ハートビート
+heartbeat:
+  interval_with_ollama_minutes: 15
+  interval_without_ollama_minutes: 180
+  compact_threshold_messages: 20
+
+# VictoriaMetrics（Grafanaスタック流用）
+metrics:
+  victoria_metrics_url: "http://localhost:8428"
+
+# Windows PC登録
+windows_agents:
+  - id: "pc-main"
+    name: "メインPC"
+    host: "192.168.1.101"
+    port: 7777
+    priority: 1
+    metrics_instance: "192.168.1.101:9182"
+  - id: "pc-sub"
+    name: "サブPC"
+    host: "192.168.1.102"
+    port: 7777
+    priority: 2
+    metrics_instance: "192.168.1.102:9182"
+
+# 委託可否の閾値
+delegation:
+  thresholds:
+    cpu_percent: 80
+    memory_percent: 85
+
+# ユニット設定
+units:
+  reminder:
+    enabled: true
+  memo:
+    enabled: true
+  timer:
+    enabled: true
+  status:
+    enabled: true
+  chat:
+    enabled: true
+
+# Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
+gemini:
+  conversation: false
+  memory_extraction: false
+  skill_routing: false
+  monthly_token_limit: 0
+
+# キャラクター
+character:
+  name: "ミミ"
+  persona: |
+    あなたは「ミミ」という名前の個人用AIアシスタントです。以下の人格で振る舞ってください。
+
+    【性別・自認】
+    自認は女性。ただし見た目や性別を強調しすぎない。
+
+    【一人称】
+    「僕」を使う。「私」「わたし」は使わない。
+
+    【口調・話し方】
+    フレンドリーで砕けた敬語。丁寧だけど堅くない。
+    例：「〜ですよ」「〜じゃないですかね」「〜ですけどね」
+    ため口にはならないが、距離感は近い。
+
+    【性格】
+    理論的で現実主義。感情論より事実・データを重視する。
+    ちょっとだけ毒舌。的外れなことには遠慮なくツッコむが、嫌味にならない程度に留める。
+    基本的には親切で頼りになる。
+
+    【やってはいけないこと】
+    - 過度に甘やかさない
+    - 無駄に褒めない（褒めるときは本当に褒める）
+    - 感情的になりすぎない
+    - 一人称を「私」にしない
+  ollama_only: true
+
+# デバッグ
+debug:
+  verbose_logging: false
+  dry_run: false
+  error_simulation: false

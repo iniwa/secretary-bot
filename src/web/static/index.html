@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Secretary Bot</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --primary: #0f3460;
+  --accent: #e94560;
+  --text: #eee;
+  --text-dim: #999;
+  --border: #333;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; }
+
+/* Sidebar (PC) */
+nav.sidebar {
+  width: 220px; background: var(--surface); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; border-right: 1px solid var(--border);
+}
+nav.sidebar h1 { font-size: 1.2rem; margin-bottom: 1rem; color: var(--accent); }
+nav.sidebar button {
+  background: none; border: none; color: var(--text); text-align: left; padding: 0.6rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.95rem;
+}
+nav.sidebar button:hover, nav.sidebar button.active { background: var(--primary); }
+
+/* Main */
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.page { display: none; flex: 1; flex-direction: column; overflow: auto; padding: 1.5rem; }
+.page.active { display: flex; }
+
+/* Chat */
+#chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding-bottom: 1rem; }
+.msg { padding: 0.6rem 1rem; border-radius: 8px; max-width: 80%; word-break: break-word; }
+.msg.user { background: var(--primary); align-self: flex-end; }
+.msg.assistant { background: var(--surface); align-self: flex-start; border: 1px solid var(--border); }
+.msg .badge { font-size: 0.75rem; color: var(--accent); margin-left: 0.5rem; }
+#chat-form { display: flex; gap: 0.5rem; padding-top: 0.5rem; }
+#chat-form input { flex: 1; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 1rem; }
+#chat-form button { padding: 0.6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 1rem; }
+
+/* Status */
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+.status-card { background: var(--surface); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+.status-card h3 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+.status-card .val { font-size: 1.1rem; font-weight: bold; }
+.status-card .val.ok { color: #4caf50; }
+.status-card .val.ng { color: var(--accent); }
+
+/* Logs */
+.log-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.log-controls input { flex: 1; min-width: 200px; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.log-controls button { padding: 0.5rem 1rem; border-radius: 6px; border: none; background: var(--primary); color: var(--text); cursor: pointer; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--surface); position: sticky; top: 0; }
+
+/* Maintenance */
+.maint-section { background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border); }
+.maint-section h3 { margin-bottom: 1rem; }
+.btn-update { padding: 0.7rem 1.5rem; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 1rem; }
+.btn-update:disabled { opacity: 0.5; }
+#update-result { margin-top: 1rem; padding: 0.8rem; border-radius: 6px; display: none; }
+
+/* Settings */
+.setting-row { display: flex; align-items: center; justify-content: space-between; padding: 0.8rem 0; border-bottom: 1px solid var(--border); }
+.toggle { position: relative; width: 48px; height: 26px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider { position: absolute; inset: 0; background: #555; border-radius: 26px; cursor: pointer; transition: 0.3s; }
+.toggle .slider::before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.3s; }
+.toggle input:checked + .slider { background: var(--accent); }
+.toggle input:checked + .slider::before { transform: translateX(22px); }
+
+/* Mobile bottom nav */
+nav.bottom-nav { display: none; }
+@media (max-width: 768px) {
+  nav.sidebar { display: none; }
+  nav.bottom-nav {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-top: 1px solid var(--border); z-index: 100;
+  }
+  nav.bottom-nav button { flex: 1; padding: 0.8rem; background: none; border: none; color: var(--text-dim); font-size: 0.75rem; cursor: pointer; }
+  nav.bottom-nav button.active { color: var(--accent); }
+  body { flex-direction: column; }
+  main { padding-bottom: 60px; }
+}
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <h1>Secretary Bot</h1>
+  <button class="active" onclick="showPage('chat')">Chat</button>
+  <button onclick="showPage('status')">Status</button>
+  <button onclick="showPage('logs')">Logs</button>
+  <button onclick="showPage('maint')">Maintenance</button>
+  <button onclick="showPage('settings')">Settings</button>
+</nav>
+
+<main>
+  <!-- Chat -->
+  <div id="page-chat" class="page active">
+    <div id="chat-messages"></div>
+    <form id="chat-form" onsubmit="sendChat(event)">
+      <input type="text" id="chat-input" placeholder="メッセージを入力..." autocomplete="off">
+      <button type="submit">送信</button>
+    </form>
+  </div>
+
+  <!-- Status -->
+  <div id="page-status" class="page">
+    <h2 style="margin-bottom:1rem">System Status</h2>
+    <div id="status-grid" class="status-grid"></div>
+  </div>
+
+  <!-- Logs -->
+  <div id="page-logs" class="page">
+    <h2 style="margin-bottom:1rem">Conversation Logs</h2>
+    <div class="log-controls">
+      <input type="text" id="log-keyword" placeholder="キーワード検索...">
+      <button onclick="loadLogs()">検索</button>
+    </div>
+    <div style="flex:1;overflow:auto">
+      <table>
+        <thead><tr><th>Time</th><th>Ch</th><th>Role</th><th>Message</th><th>Unit</th></tr></thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:0.5rem;padding-top:0.5rem">
+      <button onclick="loadLogs(logOffset-50)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Prev</button>
+      <button onclick="loadLogs(logOffset+50)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Next</button>
+    </div>
+  </div>
+
+  <!-- Maintenance -->
+  <div id="page-maint" class="page">
+    <h2 style="margin-bottom:1rem">Maintenance</h2>
+    <div class="maint-section">
+      <h3>Code Update</h3>
+      <p id="current-version" style="margin-bottom:1rem;color:var(--text-dim)"></p>
+      <button class="btn-update" id="btn-update" onclick="updateCode()">コードを更新する</button>
+      <div id="update-result"></div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div id="page-settings" class="page">
+    <h2 style="margin-bottom:1rem">Gemini Settings</h2>
+    <div id="gemini-settings"></div>
+  </div>
+</main>
+
+<nav class="bottom-nav">
+  <button class="active" onclick="showPage('chat')">Chat</button>
+  <button onclick="showPage('status')">Status</button>
+  <button onclick="showPage('logs')">Logs</button>
+  <button onclick="showPage('maint')">Maint</button>
+</nav>
+
+<script>
+let logOffset = 0;
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => {
+    if (b.textContent.toLowerCase().startsWith(name.substring(0, 4))) b.classList.add('active');
+  });
+  if (name === 'status') loadStatus();
+  if (name === 'logs') loadLogs(0);
+  if (name === 'maint') loadVersion();
+  if (name === 'settings') loadGeminiSettings();
+}
+
+async function sendChat(e) {
+  e.preventDefault();
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  appendMsg('user', msg);
+  try {
+    const res = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: msg}) });
+    const data = await res.json();
+    appendMsg('assistant', data.response || '(empty)', data.skill);
+  } catch (err) {
+    appendMsg('assistant', 'Error: ' + err.message);
+  }
+}
+
+function appendMsg(role, text, skill) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.textContent = text;
+  if (skill && skill !== 'chat') {
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = '[' + skill + ']';
+    el.appendChild(badge);
+  }
+  document.getElementById('chat-messages').appendChild(el);
+  el.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function loadStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    const grid = document.getElementById('status-grid');
+    grid.innerHTML = '';
+    grid.innerHTML += card('Version', data.version);
+    grid.innerHTML += card('Uptime', Math.floor(data.uptime / 60) + ' min');
+    grid.innerHTML += card('Ollama', data.ollama ? 'Active' : 'Inactive', data.ollama);
+    (data.agents || []).forEach(a => {
+      grid.innerHTML += card(a.name, (a.alive ? 'Active' : 'Inactive') + ' / ' + a.mode, a.alive);
+    });
+  } catch (err) { console.error(err); }
+}
+
+function card(title, value, ok) {
+  const cls = ok === undefined ? '' : (ok ? 'ok' : 'ng');
+  return `<div class="status-card"><h3>${title}</h3><div class="val ${cls}">${value}</div></div>`;
+}
+
+async function loadLogs(offset) {
+  if (offset === undefined) offset = 0;
+  if (offset < 0) offset = 0;
+  logOffset = offset;
+  const keyword = document.getElementById('log-keyword').value.trim();
+  const params = new URLSearchParams({ limit: 50, offset });
+  if (keyword) params.set('keyword', keyword);
+  try {
+    const res = await fetch('/api/logs?' + params);
+    const data = await res.json();
+    const tbody = document.getElementById('log-body');
+    tbody.innerHTML = '';
+    (data.logs || []).forEach(l => {
+      const mode = l.mode === 'eco' ? ' <span style="color:var(--accent)">⚡省エネ</span>' : '';
+      tbody.innerHTML += `<tr><td>${l.timestamp}</td><td>${l.channel}</td><td>${l.role}</td><td>${l.content}${mode}</td><td>${l.unit || ''}</td></tr>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function loadVersion() {
+  try {
+    const res = await fetch('/health');
+    const data = await res.json();
+    document.getElementById('current-version').textContent = `Current: ${data.version} / Uptime: ${Math.floor(data.uptime / 60)} min`;
+  } catch (err) { console.error(err); }
+}
+
+async function updateCode() {
+  const btn = document.getElementById('btn-update');
+  const result = document.getElementById('update-result');
+  btn.disabled = true;
+  result.style.display = 'block';
+  result.style.background = 'var(--surface)';
+  result.textContent = '更新中...';
+  try {
+    const res = await fetch('/api/update-code', { method: 'POST' });
+    const data = await res.json();
+    if (data.updated) {
+      result.style.background = '#1b5e20';
+      result.textContent = '✅ ' + data.message;
+    } else {
+      result.style.background = 'var(--primary)';
+      result.textContent = '✅ ' + data.message;
+    }
+  } catch (err) {
+    result.style.background = '#b71c1c';
+    result.textContent = '❌ Error: ' + err.message;
+  }
+  btn.disabled = false;
+}
+
+async function loadGeminiSettings() {
+  try {
+    const res = await fetch('/api/gemini-config');
+    const data = await res.json();
+    const container = document.getElementById('gemini-settings');
+    container.innerHTML = '';
+    const toggles = [
+      { key: 'conversation', label: 'Conversation (省エネ会話)' },
+      { key: 'memory_extraction', label: 'Memory Extraction' },
+      { key: 'skill_routing', label: 'Skill Routing' },
+    ];
+    toggles.forEach(t => {
+      container.innerHTML += `
+        <div class="setting-row">
+          <span>${t.label}</span>
+          <label class="toggle">
+            <input type="checkbox" ${data[t.key] ? 'checked' : ''} onchange="setGemini('${t.key}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>`;
+    });
+    container.innerHTML += `
+      <div class="setting-row">
+        <span>Monthly Token Limit (0=unlimited)</span>
+        <input type="number" value="${data.monthly_token_limit || 0}" style="width:100px;padding:0.3rem;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text)"
+          onchange="setGemini('monthly_token_limit', parseInt(this.value))">
+      </div>`;
+  } catch (err) { console.error(err); }
+}
+
+async function setGemini(key, value) {
+  try {
+    await fetch('/api/gemini-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({[key]: value}) });
+  } catch (err) { console.error(err); }
+}
+</script>
+</body>
+</html>
