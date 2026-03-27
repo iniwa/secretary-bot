@@ -75,8 +75,8 @@ def create_web_app(bot) -> FastAPI:
             )
 
     @app.get("/api/logs", dependencies=[Depends(_verify)])
-    async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None):
-        logs = await bot.database.get_conversation_logs(limit=limit, offset=offset, keyword=keyword)
+    async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
+        logs = await bot.database.get_conversation_logs(limit=limit, offset=offset, keyword=keyword, channel=channel)
         return {"logs": logs}
 
     @app.get("/api/status", dependencies=[Depends(_verify)])

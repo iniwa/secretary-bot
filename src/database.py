@@ -131,15 +131,21 @@ class Database:
     async def get_conversation_logs(
         self, limit: int = 50, offset: int = 0,
         keyword: str | None = None,
+        channel: str | None = None,
     ) -> list[dict]:
+        conditions = []
+        params: list = []
         if keyword:
-            return await self.fetchall(
-                "SELECT * FROM conversation_log WHERE content LIKE ? ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-                (f"%{keyword}%", limit, offset),
-            )
+            conditions.append("content LIKE ?")
+            params.append(f"%{keyword}%")
+        if channel:
+            conditions.append("channel = ?")
+            params.append(channel)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
         return await self.fetchall(
-            "SELECT * FROM conversation_log ORDER BY timestamp DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT * FROM conversation_log{where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            tuple(params),
         )
 
     async def get_recent_messages(self, limit: int = 20) -> list[dict]:

@@ -240,6 +240,10 @@ nav.bottom-nav { display: none; }
 <script>
 let logOffset = 0;
 
+// --- sessionStorage helpers ---
+function saveState(key, value) { try { sessionStorage.setItem('sb_' + key, JSON.stringify(value)); } catch(e) {} }
+function loadState(key, fallback) { try { const v = sessionStorage.getItem('sb_' + key); return v !== null ? JSON.parse(v) : fallback; } catch(e) { return fallback; } }
+
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
@@ -249,6 +253,7 @@ function showPage(name) {
     const target = name.replace('unit-', '');
     if (btn.startsWith(target.substring(0, 4))) b.classList.add('active');
   });
+  saveState('page', name);
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
@@ -312,6 +317,7 @@ async function loadLogs(offset) {
   if (offset < 0) offset = 0;
   logOffset = offset;
   const keyword = document.getElementById('log-keyword').value.trim();
+  saveState('log_keyword', keyword);
   const params = new URLSearchParams({ limit: 50, offset });
   if (keyword) params.set('keyword', keyword);
   try {
@@ -398,6 +404,7 @@ async function setGemini(key, value) {
 
 async function loadReminders() {
   const filter = document.getElementById('reminder-filter').value;
+  saveState('reminder_filter', filter);
   const params = new URLSearchParams();
   if (filter !== '') params.set('active', filter);
   try {
@@ -419,6 +426,7 @@ async function loadReminders() {
 
 async function loadTodos() {
   const filter = document.getElementById('todo-filter').value;
+  saveState('todo_filter', filter);
   const params = new URLSearchParams();
   if (filter !== '') params.set('done', filter);
   try {
@@ -439,6 +447,7 @@ async function loadTodos() {
 
 async function loadMemos() {
   const keyword = document.getElementById('memo-keyword').value.trim();
+  saveState('memo_keyword', keyword);
   const params = new URLSearchParams();
   if (keyword) params.set('keyword', keyword);
   try {
@@ -456,6 +465,38 @@ async function loadMemos() {
     });
   } catch (err) { console.error(err); }
 }
+
+// --- チャット履歴をバックエンドから復元 ---
+async function loadChatHistory() {
+  try {
+    const res = await fetch('/api/logs?limit=50&channel=webgui');
+    const data = await res.json();
+    const msgs = (data.logs || []).reverse();
+    msgs.forEach(l => {
+      appendMsg(l.role, l.content, l.unit);
+    });
+  } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- 初期化 ---
+(async function init() {
+  // フィルター・検索値を復元
+  const savedReminderFilter = loadState('reminder_filter', '1');
+  const savedTodoFilter = loadState('todo_filter', '0');
+  const savedLogKeyword = loadState('log_keyword', '');
+  const savedMemoKeyword = loadState('memo_keyword', '');
+  document.getElementById('reminder-filter').value = savedReminderFilter;
+  document.getElementById('todo-filter').value = savedTodoFilter;
+  document.getElementById('log-keyword').value = savedLogKeyword;
+  document.getElementById('memo-keyword').value = savedMemoKeyword;
+
+  // チャット履歴を復元
+  await loadChatHistory();
+
+  // アクティブページを復元
+  const savedPage = loadState('page', 'chat');
+  showPage(savedPage);
+})();
 </script>
 </body>
 </html>

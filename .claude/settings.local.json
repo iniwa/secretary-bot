@@ -26,7 +26,8 @@
       "Bash(curl -s -u admin: http://localhost:8100/api/units/reminders)",
       "mcp__playwright__playwright_navigate",
       "Bash(npx playwright:*)",
-      "Bash(pkill -f debug_webgui)"
+      "Bash(pkill -f debug_webgui)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
