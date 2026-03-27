@@ -2,9 +2,9 @@
 
 使い方:
   python debug_runner.py                    # 対話モード（ユニット選択 → parsed入力）
-  python debug_runner.py memo save          # memo ユニットの save アクションを直接実行
-  python debug_runner.py reminder list      # reminder ユニットの list アクションを実行
-  python debug_runner.py --route "明日の会議をメモして"  # SkillRouter のdry_runテスト
+  python debug_runner.py memo               # memo ユニットの全シナリオを実行
+  python debug_runner.py reminder add       # reminder ユニットの add アクションを実行
+  python debug_runner.py --route "明日の会議をメモして"  # UnitRouter のdry_runテスト
 
 config.yaml の debug.dry_run を true にして使用してください。
 """
@@ -35,14 +35,14 @@ _DEBUG_CONFIG = {
     "gemini": {
         "conversation": False,
         "memory_extraction": False,
-        "skill_routing": False,
+        "unit_routing": False,
     },
     "debug": {
         "dry_run": True,
         "verbose_logging": True,
         "dry_run_responses": {
-            "skill_routing": '{"skill": "chat", "parsed": {"message": "テスト"}}',
-            "conversation": "これはdry_runの返答です。",
+            "unit_routing": '{"unit": "chat"}',
+            "conversation": '{"action": "add", "message": "テスト", "time": "2026-04-01 10:00", "content": "テストメモ", "tags": "test", "keyword": "テスト", "title": "テストToDo", "id": 1, "minutes": 0.05}',
             "memory_extraction": "なし",
         },
     },
@@ -145,8 +145,8 @@ def _load_unit_class(unit_name: str):
         cls = getattr(mod, attr_name)
         if (
             isinstance(cls, type)
-            and hasattr(cls, "SKILL_NAME")
-            and cls.SKILL_NAME == unit_name
+            and hasattr(cls, "UNIT_NAME")
+            and cls.UNIT_NAME == unit_name
         ):
             return cls
     raise ValueError(f"Unit class not found in {module_path}")
@@ -156,21 +156,21 @@ def _load_unit_class(unit_name: str):
 
 SCENARIOS: dict[str, list[dict]] = {
     "reminder": [
-        {"label": "add", "parsed": {"action": "add", "message": "会議", "time": "2026-04-01T10:00:00"}},
-        {"label": "list", "parsed": {"action": "list"}},
-        {"label": "todo_add", "parsed": {"action": "todo_add", "title": "買い物リスト作る"}},
-        {"label": "todo_list", "parsed": {"action": "todo_list"}},
-        {"label": "todo_done (id=1)", "parsed": {"action": "todo_done", "id": 1}},
+        {"label": "add", "parsed": {"message": "明日の10時に会議のリマインドをして"}},
+        {"label": "list", "parsed": {"message": "リマインダー一覧を見せて"}},
+        {"label": "todo_add", "parsed": {"message": "買い物リスト作るをToDoに追加して"}},
+        {"label": "todo_list", "parsed": {"message": "ToDo一覧を見せて"}},
+        {"label": "todo_done", "parsed": {"message": "ToDo 1番を完了にして"}},
     ],
     "memo": [
-        {"label": "save", "parsed": {"action": "save", "content": "テストメモの内容", "tags": "test"}},
-        {"label": "search", "parsed": {"action": "search", "keyword": "テスト"}},
+        {"label": "save", "parsed": {"message": "テストメモの内容をメモして"}},
+        {"label": "search", "parsed": {"message": "テストのメモを検索して"}},
     ],
     "timer": [
-        {"label": "start (0.05分=3秒)", "parsed": {"minutes": 0.05, "message": "テストタイマー完了"}},
+        {"label": "start", "parsed": {"message": "3秒後にテストタイマー完了と教えて"}},
     ],
     "status": [
-        {"label": "check", "parsed": {}},
+        {"label": "check", "parsed": {"message": "システムのステータスを確認して"}},
     ],
     "chat": [
         {"label": "chat", "parsed": {"message": "こんにちは、元気？"}},
@@ -199,9 +199,9 @@ async def run_unit_test(bot: MockBot, unit_name: str, parsed: dict, label: str =
 
 
 async def run_route_test(bot: MockBot, user_input: str) -> dict:
-    """SkillRouter の dry_run テスト。"""
-    from src.skill_router import SkillRouter
-    router = SkillRouter(bot)
+    """UnitRouter の dry_run テスト。"""
+    from src.unit_router import UnitRouter
+    router = UnitRouter(bot)
     result = await router.route(user_input)
     return result
 
@@ -215,7 +215,7 @@ async def interactive_mode(bot: MockBot) -> list[dict]:
         print("\n--- ユニット選択 ---")
         for i, name in enumerate(units, 1):
             print(f"  {i}. {name}")
-        print(f"  {len(units) + 1}. SkillRouter テスト")
+        print(f"  {len(units) + 1}. UnitRouter テスト")
         print(f"  {len(units) + 2}. 全ユニット一括テスト")
         print("  q. 終了")
 
@@ -317,7 +317,7 @@ async def async_main() -> None:
     parser = argparse.ArgumentParser(description="ユニット単体デバッグランナー")
     parser.add_argument("unit", nargs="?", help="テストするユニット名 (reminder/memo/timer/status/chat)")
     parser.add_argument("action", nargs="?", help="アクション名 (add/list/save/search等)")
-    parser.add_argument("--route", type=str, help="SkillRouterのテスト入力テキスト")
+    parser.add_argument("--route", type=str, help="UnitRouterのテスト入力テキスト")
     parser.add_argument("--all", action="store_true", help="全ユニット一括テスト")
     parser.add_argument("--config", type=str, help="config.yaml のパス（省略時はデバッグ用デフォルト設定）")
     args = parser.parse_args()
@@ -348,7 +348,7 @@ async def async_main() -> None:
 
     try:
         if args.route:
-            # SkillRouter テスト
+            # UnitRouter テスト
             route_result = await run_route_test(bot, args.route)
             print(f"ルーティング結果: {json.dumps(route_result, ensure_ascii=False, indent=2)}")
 
@@ -375,7 +375,7 @@ async def async_main() -> None:
                         results.append(r)
                 else:
                     # カスタム parsed として実行
-                    parsed = {"action": args.action}
+                    parsed = {"message": args.action}
                     print(f">> {unit_name} / {args.action} (カスタム)")
                     r = await run_unit_test(bot, unit_name, parsed, args.action)
                     results.append(r)

@@ -36,7 +36,7 @@ class UnitManager:
                 await module.setup(self.bot)
                 # Cog から取得
                 for cog in self.bot.cogs.values():
-                    if hasattr(cog, "SKILL_NAME") and cog.SKILL_NAME == name:
+                    if hasattr(cog, "UNIT_NAME") and cog.UNIT_NAME == name:
                         self.units[name] = cog
                         # DELEGATE_TO がある場合はプロキシでラップ
                         if cog.DELEGATE_TO:

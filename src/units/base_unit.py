@@ -12,18 +12,18 @@ log = get_logger(__name__)
 
 
 class BaseUnit(commands.Cog):
-    SKILL_NAME: str = ""
-    SKILL_DESCRIPTION: str = ""
+    UNIT_NAME: str = ""
+    UNIT_DESCRIPTION: str = ""
     DELEGATE_TO: str | None = None
     PREFERRED_AGENT: str | None = None
 
     def __init__(self, bot):
         self.bot = bot
-        self._breaker = CircuitBreaker(name=self.SKILL_NAME)
+        self._breaker = CircuitBreaker(name=self.UNIT_NAME)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
 
         # ユニット別LLMファサード
-        unit_cfg = bot.config.get("units", {}).get(self.SKILL_NAME, {})
+        unit_cfg = bot.config.get("units", {}).get(self.UNIT_NAME, {})
         self.llm = UnitLLM.from_config(
             bot.llm_router,
             unit_config=unit_cfg,

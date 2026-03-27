@@ -30,7 +30,7 @@ class Heartbeat:
                 try:
                     await unit.on_heartbeat()
                 except Exception as e:
-                    log.error("Heartbeat error in %s: %s", unit.SKILL_NAME, e)
+                    log.error("Heartbeat error in %s: %s", unit.UNIT_NAME, e)
 
             # コンテキスト圧縮チェック
             await self._check_compact()

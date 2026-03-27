@@ -54,26 +54,24 @@ def create_web_app(bot) -> FastAPI:
 
         try:
             await bot.database.log_conversation("webgui", "user", message)
-            result = await bot.skill_router.route(message, channel="webgui")
-            skill_name = result.get("skill", "chat")
-            parsed = result.get("parsed", {})
-            # 元のメッセージを保証（LLMがparsedにmessageを含めない場合の対策）
-            parsed.setdefault("message", message)
+            result = await bot.unit_router.route(message, channel="webgui")
+            unit_name = result.get("unit", "chat")
+            user_message = result.get("message", message)
 
-            unit = bot.unit_manager.get(skill_name)
+            unit = bot.unit_manager.get(unit_name)
             if unit is None:
                 unit = bot.unit_manager.get("chat")
 
-            response = await unit.execute(None, parsed)
+            response = await unit.execute(None, {"message": user_message})
             if response:
                 mode = "eco" if not bot.llm_router.ollama_available else "normal"
-                await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=skill_name)
-            return {"response": response or "", "skill": skill_name}
+                await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)
+            return {"response": response or "", "unit": unit_name}
         except Exception as e:
             log.error("WebGUI chat error: %s", e, exc_info=True)
             return JSONResponse(
                 status_code=200,
-                content={"response": f"Error: {e}", "skill": "system"},
+                content={"response": f"Error: {e}", "unit": "system"},
             )
 
     @app.get("/api/logs", dependencies=[Depends(_verify)])
@@ -194,7 +192,7 @@ def create_web_app(bot) -> FastAPI:
     async def set_gemini_config(request: Request):
         body = await request.json()
         gemini_cfg = bot.config.setdefault("gemini", {})
-        for key in ("conversation", "memory_extraction", "skill_routing", "monthly_token_limit"):
+        for key in ("conversation", "memory_extraction", "unit_routing", "monthly_token_limit"):
             if key in body:
                 gemini_cfg[key] = body[key]
         bot.llm_router._gemini_config = gemini_cfg

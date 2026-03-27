@@ -15,7 +15,7 @@ from src.heartbeat import Heartbeat
 from src.llm.router import LLMRouter
 from src.logger import get_logger, setup_logging
 from src.memory.chroma_client import ChromaMemory
-from src.skill_router import SkillRouter
+from src.unit_router import UnitRouter
 from src.units import UnitManager
 from src.web.app import create_web_app
 
@@ -61,7 +61,7 @@ class SecretaryBot(commands.Bot):
         self.database = Database(path=os.path.join(data_dir, "bot.db"))
         self.llm_router = LLMRouter(config)
         self.chroma = ChromaMemory(path=os.path.join(data_dir, "chromadb"))
-        self.skill_router = SkillRouter(self)
+        self.unit_router = UnitRouter(self)
         self.heartbeat = Heartbeat(self)
         self.unit_manager = UnitManager(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
@@ -90,22 +90,21 @@ class SecretaryBot(commands.Bot):
         # 会話ログ保存
         await self.database.log_conversation("discord", "user", content)
 
-        # Skill Router
-        result = await self.skill_router.route(content)
-        skill_name = result.get("skill", "chat")
-        parsed = result.get("parsed", {})
-        parsed.setdefault("message", content)
+        # Unit Router
+        result = await self.unit_router.route(content)
+        unit_name = result.get("unit", "chat")
+        user_message = result.get("message", content)
 
-        unit = self.unit_manager.get(skill_name)
+        unit = self.unit_manager.get(unit_name)
         if unit is None:
             unit = self.unit_manager.get("chat")
 
         try:
-            response = await unit.execute(ctx, parsed)
+            response = await unit.execute(ctx, {"message": user_message})
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=skill_name)
+                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
         except Exception as e:
             log.error("Unit execution failed: %s", e, exc_info=True)
             await message.channel.send("ごめんなさい、処理中にエラーが発生しました。")

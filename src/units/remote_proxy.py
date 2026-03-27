@@ -28,10 +28,10 @@ class RemoteUnitProxy:
             preferred=self.unit.PREFERRED_AGENT
         )
         if agent is None:
-            log.warning("No agent available for %s, executing locally", self.unit.SKILL_NAME)
+            log.warning("No agent available for %s, executing locally", self.unit.UNIT_NAME)
             return await self.unit.execute(ctx, parsed)
 
-        url = f"http://{agent['host']}:{agent['port']}/execute/{self.unit.SKILL_NAME}"
+        url = f"http://{agent['host']}:{agent['port']}/execute/{self.unit.UNIT_NAME}"
         headers = {"X-Agent-Token": self.agent_token}
 
         try:
@@ -41,5 +41,5 @@ class RemoteUnitProxy:
                 data = resp.json()
                 return data.get("result", "")
         except Exception as e:
-            log.error("Remote execution failed for %s: %s", self.unit.SKILL_NAME, e)
+            log.error("Remote execution failed for %s: %s", self.unit.UNIT_NAME, e)
             raise DelegationError(f"Remote execution failed: {e}") from e

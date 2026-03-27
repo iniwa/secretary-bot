@@ -1,4 +1,4 @@
-"""自然言語 → ユニット振り分け（Skill Router）。"""
+"""自然言語 → ユニット振り分け（Unit Router）。"""
 
 from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger, new_trace_id
@@ -6,14 +6,14 @@ from src.logger import get_logger, new_trace_id
 log = get_logger(__name__)
 
 _ROUTE_PROMPT_TEMPLATE = """\
-あなたはスキルルーターです。ユーザーの入力を分析し、最適なスキルを1つ選んでください。
-以下のスキル一覧から選び、JSON形式で返却してください。
+あなたはユニットルーターです。ユーザーの入力を分析し、最適なユニットを1つ選んでください。
+ユニットの選択のみを行ってください。パラメータの解析は不要です。
 
-## スキル一覧
-{skills_text}
+## ユニット一覧
+{units_text}
 
 ## 出力形式（厳守）
-{{"skill": "スキル名", "parsed": {{...解析した情報...}}}}
+{{"unit": "ユニット名"}}
 
 JSON以外は返さないでください。
 
@@ -22,18 +22,18 @@ JSON以外は返さないでください。
 """
 
 
-class SkillRouter:
+class UnitRouter:
     def __init__(self, bot):
         self.bot = bot
-        self.llm = UnitLLM(bot.llm_router, purpose="skill_routing")
+        self.llm = UnitLLM(bot.llm_router, purpose="unit_routing")
 
-    def _build_skills_text(self) -> str:
+    def _build_units_text(self) -> str:
         lines = []
         for unit in self.bot.unit_manager.units.values():
             # RemoteUnitProxy の場合は内部ユニットを参照
             actual = getattr(unit, "unit", unit)
-            name = getattr(actual, "SKILL_NAME", "")
-            desc = getattr(actual, "SKILL_DESCRIPTION", "")
+            name = getattr(actual, "UNIT_NAME", "")
+            desc = getattr(actual, "UNIT_DESCRIPTION", "")
             if name:
                 lines.append(f"- {name}: {desc}")
         return "\n".join(lines)
@@ -43,16 +43,16 @@ class SkillRouter:
         log.info("Routing input (trace=%s): %.80s", trace_id, user_input)
 
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
-            skills_text=self._build_skills_text(),
+            units_text=self._build_units_text(),
             user_input=user_input,
         )
 
         try:
             result = await self.llm.extract_json(prompt)
-            if "skill" not in result:
-                raise ValueError("Missing 'skill' key")
-            log.info("Routed to: %s (trace=%s)", result["skill"], trace_id)
-            return result
+            if "unit" not in result:
+                raise ValueError("Missing 'unit' key")
+            log.info("Routed to: %s (trace=%s)", result["unit"], trace_id)
+            return {"unit": result["unit"], "message": user_input}
         except Exception as e:
             log.warning("Routing failed (%s), falling back to chat (trace=%s)", e, trace_id)
-            return {"skill": "chat", "parsed": {"message": user_input}}
+            return {"unit": "chat", "message": user_input}

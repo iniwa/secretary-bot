@@ -10,7 +10,7 @@ log = get_logger(__name__)
 # purpose → gemini config key
 _PURPOSE_TO_TOGGLE = {
     "conversation": "conversation",
-    "skill_routing": "skill_routing",
+    "unit_routing": "unit_routing",
     "memory_extraction": "memory_extraction",
 }
 

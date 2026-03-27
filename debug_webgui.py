@@ -27,10 +27,10 @@ _DEBUG_CONFIG = {
     "gemini": {
         "conversation": False,
         "memory_extraction": False,
-        "skill_routing": False,
+        "unit_routing": False,
     },
     "debug": {"dry_run": True, "verbose_logging": False, "dry_run_responses": {
-        "skill_routing": '{"skill": "chat", "parsed": {"message": "test"}}',
+        "unit_routing": '{"unit": "chat"}',
         "conversation": "dry_run response",
         "memory_extraction": "なし",
     }},
@@ -73,7 +73,7 @@ class MockBot:
         self.llm_router = LLMRouter(config)
         self.chroma = ChromaMemory(path=os.path.join(data_dir, "debug_chromadb"))
         self.unit_manager = MockUnitManager()
-        self.skill_router = None
+        self.unit_router = None
 
     async def init(self):
         await self.database.connect()

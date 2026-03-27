@@ -4,8 +4,8 @@ from src.units.base_unit import BaseUnit
 
 
 class StatusUnit(BaseUnit):
-    SKILL_NAME = "status"
-    SKILL_DESCRIPTION = "PCやサーバーの稼働状況を確認。「PCは起きてる？」「ステータス確認」など。"
+    UNIT_NAME = "status"
+    UNIT_DESCRIPTION = "PCやサーバーの稼働状況を確認。「PCは起きてる？」「ステータス確認」など。"
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         self.breaker.check()

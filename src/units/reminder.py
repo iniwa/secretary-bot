@@ -2,53 +2,91 @@
 
 from datetime import datetime
 
-from discord.ext import commands
-
 from src.units.base_unit import BaseUnit
+
+_WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
+
+_EXTRACT_PROMPT = """\
+現在日時: {now} ({weekday}曜日)
+
+以下のユーザー入力を分析し、JSON形式で返してください。
+
+## アクション一覧
+- add: リマインダー登録（message と time が必要）
+- list: リマインダー一覧表示
+- todo_add: ToDo追加（title が必要）
+- todo_list: ToDo一覧表示
+- todo_done: ToDo完了（id が必要）
+
+## 出力形式（厳守）
+{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値}}
+
+不要なフィールドは省略してください。
+日時表現は必ずISO形式に変換してください。
+JSON以外は返さないでください。
+
+## ユーザー入力
+{user_input}
+"""
 
 
 class ReminderUnit(BaseUnit):
-    SKILL_NAME = "reminder"
-    SKILL_DESCRIPTION = "リマインダーやToDoの登録・一覧・完了管理。「〜時に教えて」「やることリスト」など。"
+    UNIT_NAME = "reminder"
+    UNIT_DESCRIPTION = "リマインダーやToDoの登録・一覧・完了管理。「〜時に教えて」「やることリスト」など。"
 
-    # --- リマインダー ---
+    # --- メイン処理 ---
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         self.breaker.check()
-        action = parsed.get("action", "add")
+        message = parsed.get("message", "")
         try:
+            # LLMでパラメータ抽出
+            extracted = await self._extract_params(message)
+            action = extracted.get("action", "add")
+
             if action == "add":
-                return await self._add_reminder(parsed)
+                result = await self._add_reminder(extracted)
             elif action == "list":
-                return await self._list_reminders()
+                result = await self._list_reminders()
             elif action == "todo_add":
-                return await self._add_todo(parsed)
+                result = await self._add_todo(extracted)
             elif action == "todo_list":
-                return await self._list_todos()
+                result = await self._list_todos()
             elif action == "todo_done":
-                return await self._done_todo(parsed)
+                result = await self._done_todo(extracted)
             else:
-                return await self._add_reminder(parsed)
-        except Exception as e:
+                result = await self._add_reminder(extracted)
+            self.breaker.record_success()
+            return result
+        except Exception:
             self.breaker.record_failure()
             raise
-        else:
-            self.breaker.record_success()
 
-    async def _add_reminder(self, parsed: dict) -> str:
-        message = parsed.get("message", "")
-        remind_at = parsed.get("time", "")
+    async def _extract_params(self, user_input: str) -> dict:
+        """ユーザー入力からLLMでパラメータを抽出する。"""
+        now = datetime.now()
+        prompt = _EXTRACT_PROMPT.format(
+            now=now.strftime("%Y-%m-%d %H:%M"),
+            weekday=_WEEKDAYS[now.weekday()],
+            user_input=user_input,
+        )
+        return await self.llm.extract_json(prompt)
+
+    # --- リマインダー ---
+
+    async def _add_reminder(self, extracted: dict) -> str:
+        message = extracted.get("message", "")
+        time_str = extracted.get("time", "")
         if not message:
             return "リマインドする内容を教えてください。"
 
-        # 日時パースは簡易実装（デバッグ時に調整）
-        try:
-            dt = datetime.fromisoformat(remind_at) if remind_at else None
-        except ValueError:
-            dt = None
+        if not time_str:
+            return "日時の解析ができませんでした。「明日の10時」「2025-01-01 08:00」のような形式で指定してください。"
 
-        if dt is None:
-            return "日時の解析ができませんでした。「2025-01-01 08:00」のような形式で指定してください。"
+        try:
+            dt = datetime.fromisoformat(time_str)
+        except ValueError:
+            return "日時の解析ができませんでした。「明日の10時」「2025-01-01 08:00」のような形式で指定してください。"
 
         await self.bot.database.execute(
             "INSERT INTO reminders (message, remind_at) VALUES (?, ?)",
@@ -69,8 +107,8 @@ class ReminderUnit(BaseUnit):
 
     # --- ToDo ---
 
-    async def _add_todo(self, parsed: dict) -> str:
-        title = parsed.get("title", parsed.get("message", ""))
+    async def _add_todo(self, extracted: dict) -> str:
+        title = extracted.get("title", extracted.get("message", ""))
         if not title:
             return "ToDoの内容を教えてください。"
         await self.bot.database.execute(
@@ -89,8 +127,8 @@ class ReminderUnit(BaseUnit):
             lines.append(f"#{r['id']} {r['title']}")
         return "ToDo一覧:\n" + "\n".join(lines)
 
-    async def _done_todo(self, parsed: dict) -> str:
-        todo_id = parsed.get("id")
+    async def _done_todo(self, extracted: dict) -> str:
+        todo_id = extracted.get("id")
         if not todo_id:
             return "完了するToDoのIDを指定してください。"
         await self.bot.database.execute(

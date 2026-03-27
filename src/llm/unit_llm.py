@@ -1,4 +1,4 @@
-"""UnitLLM — ユニット・SkillRouter共通のLLMアクセスファサード。"""
+"""UnitLLM — ユニット・UnitRouter共通のLLMアクセスファサード。"""
 
 import json
 import re

@@ -267,20 +267,20 @@ async function sendChat(e) {
   try {
     const res = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: msg}) });
     const data = await res.json();
-    appendMsg('assistant', data.response || '(empty)', data.skill);
+    appendMsg('assistant', data.response || '(empty)', data.unit);
   } catch (err) {
     appendMsg('assistant', 'Error: ' + err.message);
   }
 }
 
-function appendMsg(role, text, skill) {
+function appendMsg(role, text, unit) {
   const el = document.createElement('div');
   el.className = 'msg ' + role;
   el.textContent = text;
-  if (skill && skill !== 'chat') {
+  if (unit && unit !== 'chat') {
     const badge = document.createElement('span');
     badge.className = 'badge';
-    badge.textContent = '[' + skill + ']';
+    badge.textContent = '[' + unit + ']';
     el.appendChild(badge);
   }
   document.getElementById('chat-messages').appendChild(el);
@@ -367,7 +367,7 @@ async function loadGeminiSettings() {
     const toggles = [
       { key: 'conversation', label: 'Conversation (省エネ会話)' },
       { key: 'memory_extraction', label: 'Memory Extraction' },
-      { key: 'skill_routing', label: 'Skill Routing' },
+      { key: 'unit_routing', label: 'Unit Routing' },
     ];
     toggles.forEach(t => {
       container.innerHTML += `

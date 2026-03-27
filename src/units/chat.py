@@ -7,8 +7,8 @@ from src.units.base_unit import BaseUnit
 
 
 class ChatUnit(BaseUnit):
-    SKILL_NAME = "chat"
-    SKILL_DESCRIPTION = "雑談や相談。他のスキルに該当しない場合のフォールバック先。"
+    UNIT_NAME = "chat"
+    UNIT_DESCRIPTION = "雑談や相談。他のユニットに該当しない場合のフォールバック先。"
 
     def __init__(self, bot):
         super().__init__(bot)
