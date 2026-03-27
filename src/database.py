@@ -6,7 +6,7 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS reminders (
     remind_at       DATETIME NOT NULL,
     repeat_type     TEXT,
     repeat_interval INTEGER,
-    active          BOOLEAN NOT NULL DEFAULT 1
+    active          BOOLEAN NOT NULL DEFAULT 1,
+    notified        BOOLEAN NOT NULL DEFAULT 0,
+    done_at         DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS conversation_log (
@@ -66,12 +68,25 @@ class Database:
 
     async def _migrate(self) -> None:
         """PRAGMA user_version による簡易マイグレーション。"""
+        _migrations: dict[int, list[str]] = {
+            2: [
+                "ALTER TABLE reminders ADD COLUMN notified BOOLEAN NOT NULL DEFAULT 0",
+                "ALTER TABLE reminders ADD COLUMN done_at DATETIME",
+            ],
+        }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
         current = row[0] if row else 0
-        if current < _SCHEMA_VERSION:
-            await self._db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            await self._db.commit()
+        for version in sorted(_migrations.keys()):
+            if current < version:
+                for stmt in _migrations[version]:
+                    try:
+                        await self._db.execute(stmt)
+                    except Exception as e:
+                        log.debug("Migration stmt skipped (%s): %s", e, stmt)
+                await self._db.execute(f"PRAGMA user_version = {version}")
+                await self._db.commit()
+                log.info("Database migrated to version %d", version)
 
     @property
     def db(self) -> aiosqlite.Connection:

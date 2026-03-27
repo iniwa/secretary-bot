@@ -158,9 +158,14 @@ SCENARIOS: dict[str, list[dict]] = {
     "reminder": [
         {"label": "add", "parsed": {"message": "明日の10時に会議のリマインドをして"}},
         {"label": "list", "parsed": {"message": "リマインダー一覧を見せて"}},
+        {"label": "edit", "parsed": {"message": "リマインダー1番を11時に変えて"}},
+        {"label": "done", "parsed": {"message": "リマインダー1番を完了にして"}},
+        {"label": "delete", "parsed": {"message": "リマインダー1番を削除して"}},
         {"label": "todo_add", "parsed": {"message": "買い物リスト作るをToDoに追加して"}},
         {"label": "todo_list", "parsed": {"message": "ToDo一覧を見せて"}},
+        {"label": "todo_edit", "parsed": {"message": "ToDo 1番のタイトルを「洗濯物を畳む」に変えて"}},
         {"label": "todo_done", "parsed": {"message": "ToDo 1番を完了にして"}},
+        {"label": "todo_delete", "parsed": {"message": "ToDo 1番を削除して"}},
     ],
     "memo": [
         {"label": "save", "parsed": {"message": "テストメモの内容をメモして"}},
