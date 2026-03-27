@@ -145,6 +145,47 @@ def create_web_app(bot) -> FastAPI:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
 
+    # --- Units データ閲覧 API ---
+
+    @app.get("/api/units/reminders", dependencies=[Depends(_verify)])
+    async def get_reminders(active: int | None = None):
+        if active is not None:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = ? ORDER BY remind_at DESC LIMIT 100",
+                (active,),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM reminders ORDER BY remind_at DESC LIMIT 100"
+            )
+        return {"items": rows}
+
+    @app.get("/api/units/todos", dependencies=[Depends(_verify)])
+    async def get_todos(done: int | None = None):
+        if done is not None:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM todos WHERE done = ? ORDER BY created_at DESC LIMIT 100",
+                (done,),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM todos ORDER BY created_at DESC LIMIT 100"
+            )
+        return {"items": rows}
+
+    @app.get("/api/units/memos", dependencies=[Depends(_verify)])
+    async def get_memos(keyword: str | None = None):
+        if keyword:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM memos WHERE content LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 100",
+                (f"%{keyword}%", f"%{keyword}%"),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM memos ORDER BY created_at DESC LIMIT 100"
+            )
+        return {"items": rows}
+
     @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
     async def get_gemini_config():
         return bot.config.get("gemini", {})

@@ -74,6 +74,25 @@ th { background: var(--surface); position: sticky; top: 0; }
 .toggle input:checked + .slider { background: var(--accent); }
 .toggle input:checked + .slider::before { transform: translateX(22px); }
 
+/* Units sub-nav */
+nav.sidebar .nav-group { margin-top: 0.5rem; }
+nav.sidebar .nav-group-label {
+  font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim); padding: 0.4rem 0.8rem; letter-spacing: 0.05em;
+}
+nav.sidebar .nav-group button { padding-left: 1.4rem; font-size: 0.9rem; }
+
+/* Unit tables */
+.unit-section { margin-bottom: 1.5rem; }
+.unit-section h3 { margin-bottom: 0.5rem; }
+.unit-filter { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
+.unit-filter select, .unit-filter input, .unit-filter button {
+  padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 0.9rem;
+}
+.unit-filter button { cursor: pointer; background: var(--primary); }
+.unit-empty { color: var(--text-dim); padding: 1rem 0; }
+td .tag { display: inline-block; background: var(--primary); padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; margin-right: 0.3rem; }
+td .done { text-decoration: line-through; color: var(--text-dim); }
+
 /* Mobile bottom nav */
 nav.bottom-nav { display: none; }
 @media (max-width: 768px) {
@@ -96,6 +115,11 @@ nav.bottom-nav { display: none; }
   <button onclick="showPage('logs')">Logs</button>
   <button onclick="showPage('maint')">Maintenance</button>
   <button onclick="showPage('settings')">Settings</button>
+  <div class="nav-group">
+    <div class="nav-group-label">Units</div>
+    <button onclick="showPage('unit-reminder')">Reminder</button>
+    <button onclick="showPage('unit-memo')">Memo</button>
+  </div>
 </nav>
 
 <main>
@@ -149,13 +173,68 @@ nav.bottom-nav { display: none; }
     <h2 style="margin-bottom:1rem">Gemini Settings</h2>
     <div id="gemini-settings"></div>
   </div>
+
+  <!-- Unit: Reminder -->
+  <div id="page-unit-reminder" class="page">
+    <h2 style="margin-bottom:1rem">Reminder / ToDo</h2>
+
+    <div class="unit-section">
+      <h3>Reminders</h3>
+      <div class="unit-filter">
+        <select id="reminder-filter" onchange="loadReminders()">
+          <option value="">All</option>
+          <option value="1" selected>Active</option>
+          <option value="0">Done</option>
+        </select>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr><th>#</th><th>Message</th><th>Remind At</th><th>Active</th></tr></thead>
+          <tbody id="reminder-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="unit-section">
+      <h3>ToDo</h3>
+      <div class="unit-filter">
+        <select id="todo-filter" onchange="loadTodos()">
+          <option value="">All</option>
+          <option value="0" selected>Pending</option>
+          <option value="1">Done</option>
+        </select>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr><th>#</th><th>Title</th><th>Created</th><th>Done At</th></tr></thead>
+          <tbody id="todo-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unit: Memo -->
+  <div id="page-unit-memo" class="page">
+    <h2 style="margin-bottom:1rem">Memo</h2>
+    <div class="unit-filter">
+      <input type="text" id="memo-keyword" placeholder="キーワード検索...">
+      <button onclick="loadMemos()">検索</button>
+    </div>
+    <div style="overflow:auto">
+      <table>
+        <thead><tr><th>#</th><th>Content</th><th>Tags</th><th>Created</th></tr></thead>
+        <tbody id="memo-body"></tbody>
+      </table>
+    </div>
+  </div>
 </main>
 
 <nav class="bottom-nav">
   <button class="active" onclick="showPage('chat')">Chat</button>
   <button onclick="showPage('status')">Status</button>
   <button onclick="showPage('logs')">Logs</button>
-  <button onclick="showPage('maint')">Maint</button>
+  <button onclick="showPage('unit-reminder')">Remind</button>
+  <button onclick="showPage('unit-memo')">Memo</button>
 </nav>
 
 <script>
@@ -166,12 +245,16 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => {
-    if (b.textContent.toLowerCase().startsWith(name.substring(0, 4))) b.classList.add('active');
+    const btn = b.textContent.toLowerCase().trim();
+    const target = name.replace('unit-', '');
+    if (btn.startsWith(target.substring(0, 4))) b.classList.add('active');
   });
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
   if (name === 'settings') loadGeminiSettings();
+  if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
+  if (name === 'unit-memo') loadMemos();
 }
 
 async function sendChat(e) {
@@ -308,6 +391,69 @@ async function loadGeminiSettings() {
 async function setGemini(key, value) {
   try {
     await fetch('/api/gemini-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({[key]: value}) });
+  } catch (err) { console.error(err); }
+}
+
+// --- Units ---
+
+async function loadReminders() {
+  const filter = document.getElementById('reminder-filter').value;
+  const params = new URLSearchParams();
+  if (filter !== '') params.set('active', filter);
+  try {
+    const res = await fetch('/api/units/reminders?' + params);
+    const data = await res.json();
+    const tbody = document.getElementById('reminder-body');
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No reminders</td></tr>';
+      return;
+    }
+    data.items.forEach(r => {
+      const active = r.active ? 'Active' : 'Done';
+      const cls = r.active ? 'ok' : 'ng';
+      tbody.innerHTML += `<tr><td>${r.id}</td><td>${r.message}</td><td>${r.remind_at}</td><td><span class="val ${cls}">${active}</span></td></tr>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function loadTodos() {
+  const filter = document.getElementById('todo-filter').value;
+  const params = new URLSearchParams();
+  if (filter !== '') params.set('done', filter);
+  try {
+    const res = await fetch('/api/units/todos?' + params);
+    const data = await res.json();
+    const tbody = document.getElementById('todo-body');
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No todos</td></tr>';
+      return;
+    }
+    data.items.forEach(t => {
+      const titleCls = t.done ? 'done' : '';
+      tbody.innerHTML += `<tr><td>${t.id}</td><td class="${titleCls}">${t.title}</td><td>${t.created_at}</td><td>${t.done_at || '-'}</td></tr>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function loadMemos() {
+  const keyword = document.getElementById('memo-keyword').value.trim();
+  const params = new URLSearchParams();
+  if (keyword) params.set('keyword', keyword);
+  try {
+    const res = await fetch('/api/units/memos?' + params);
+    const data = await res.json();
+    const tbody = document.getElementById('memo-body');
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No memos</td></tr>';
+      return;
+    }
+    data.items.forEach(m => {
+      const tags = (m.tags || '').split(',').filter(t => t.trim()).map(t => `<span class="tag">${t.trim()}</span>`).join('');
+      tbody.innerHTML += `<tr><td>${m.id}</td><td>${m.content}</td><td>${tags || '-'}</td><td>${m.created_at}</td></tr>`;
+    });
   } catch (err) { console.error(err); }
 }
 </script>

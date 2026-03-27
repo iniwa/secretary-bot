@@ -22,7 +22,11 @@
       "mcp__serena__initial_instructions",
       "mcp__serena__find_symbol",
       "Bash(pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(curl -s -u admin: http://localhost:8100/api/units/reminders)",
+      "mcp__playwright__playwright_navigate",
+      "Bash(npx playwright:*)",
+      "Bash(pkill -f debug_webgui)"
     ]
   }
 }
