@@ -40,6 +40,11 @@ class AllLLMsUnavailableError(LLMError):
     severity = Severity.HIGH
 
 
+class LLMJsonParseError(LLMError):
+    """LLM出力のJSON解析に失敗。"""
+    severity = Severity.MEDIUM
+
+
 class DatabaseError(BotError):
     """DB操作エラー。"""
     severity = Severity.HIGH

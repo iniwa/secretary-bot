@@ -38,6 +38,10 @@ delegation:
 units:
   reminder:
     enabled: true
+    # llm:                           # ユニット別LLM設定（省略時はグローバル設定を使用）
+    #   ollama_model: "qwen3:1.7b"   # Ollamaモデルを上書き
+    #   gemini_model: "gemini-2.0-flash-lite"  # Geminiモデルを上書き
+    #   ollama_only: true            # Geminiフォールバック禁止
   memo:
     enabled: true
   timer:

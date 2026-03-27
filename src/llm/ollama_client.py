@@ -39,12 +39,12 @@ class OllamaClient:
     def is_available(self) -> bool:
         return self._available_url is not None
 
-    async def generate(self, prompt: str, system: str | None = None) -> str:
+    async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> str:
         if not self._available_url:
             raise OllamaUnavailableError("No Ollama instance available")
 
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "prompt": prompt,
             "stream": False,
             "options": {"think": False},  # qwen3思考モード無効化

@@ -78,11 +78,7 @@ class ChatUnit(BaseUnit):
 
         system = "\n".join(system_parts) if system_parts else None
 
-        response = await self.bot.llm_router.generate(
-            message,
-            system=system,
-            purpose="conversation",
-        )
+        response = await self.llm.generate(message, system=system)
 
         # 省エネモード時は冒頭文言を付与
         if not ollama_available:

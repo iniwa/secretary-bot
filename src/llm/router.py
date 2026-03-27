@@ -64,6 +64,8 @@ class LLMRouter:
         system: str | None = None,
         purpose: str = "conversation",
         ollama_only: bool = False,
+        ollama_model: str | None = None,
+        gemini_model: str | None = None,
     ) -> str:
         debug_cfg = self._config.get("debug", {})
         dry_run = debug_cfg.get("dry_run", False)
@@ -76,7 +78,7 @@ class LLMRouter:
         # Ollama を優先
         if self.ollama_available:
             try:
-                return await self.ollama.generate(prompt, system=system)
+                return await self.ollama.generate(prompt, system=system, model=ollama_model)
             except OllamaUnavailableError:
                 self.ollama_available = False
                 log.warning("Ollama became unavailable, checking Gemini fallback")
@@ -87,7 +89,7 @@ class LLMRouter:
         # Gemini フォールバック
         if self._is_gemini_allowed(purpose):
             try:
-                return await self.gemini.generate(prompt, system=system)
+                return await self.gemini.generate(prompt, system=system, model=gemini_model)
             except GeminiError as e:
                 log.error("Gemini also failed: %s", e)
 

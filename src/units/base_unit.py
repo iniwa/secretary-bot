@@ -5,6 +5,7 @@ import os
 from discord.ext import commands
 
 from src.circuit_breaker import CircuitBreaker
+from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -20,6 +21,15 @@ class BaseUnit(commands.Cog):
         self.bot = bot
         self._breaker = CircuitBreaker(name=self.SKILL_NAME)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
+
+        # ユニット別LLMファサード
+        unit_cfg = bot.config.get("units", {}).get(self.SKILL_NAME, {})
+        self.llm = UnitLLM.from_config(
+            bot.llm_router,
+            unit_config=unit_cfg,
+            global_config=bot.config,
+            purpose="conversation",
+        )
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         """ユニットの主処理。サブクラスでオーバーライドする。"""

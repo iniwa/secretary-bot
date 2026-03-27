@@ -1,7 +1,6 @@
 """自然言語 → ユニット振り分け（Skill Router）。"""
 
-import json
-
+from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger, new_trace_id
 
 log = get_logger(__name__)
@@ -26,6 +25,7 @@ JSON以外は返さないでください。
 class SkillRouter:
     def __init__(self, bot):
         self.bot = bot
+        self.llm = UnitLLM(bot.llm_router, purpose="skill_routing")
 
     def _build_skills_text(self) -> str:
         lines = []
@@ -48,11 +48,7 @@ class SkillRouter:
         )
 
         try:
-            response = await self.bot.llm_router.generate(
-                prompt,
-                purpose="skill_routing",
-            )
-            result = json.loads(response)
+            result = await self.llm.extract_json(prompt)
             if "skill" not in result:
                 raise ValueError("Missing 'skill' key")
             log.info("Routed to: %s (trace=%s)", result["skill"], trace_id)
