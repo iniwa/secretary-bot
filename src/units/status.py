@@ -9,8 +9,10 @@ class StatusUnit(BaseUnit):
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         self.breaker.check()
+        message = parsed.get("message", "")
         try:
             result = await self._check_status()
+            result = await self.personalize(result, message)
             self.breaker.record_success()
             return result
         except Exception:

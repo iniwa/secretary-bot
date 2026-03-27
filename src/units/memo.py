@@ -36,6 +36,7 @@ class MemoUnit(BaseUnit):
                 result = await self._search(extracted)
             else:
                 result = await self._save(extracted)
+            result = await self.personalize(result, message)
             self.breaker.record_success()
             return result
         except Exception:

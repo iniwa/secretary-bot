@@ -50,6 +50,27 @@ class BaseUnit(commands.Cog):
     async def notify_error(self, message: str) -> None:
         await self.notify(f"[Error] {message}")
 
+    # --- キャラクター変換 ---
+
+    async def personalize(self, raw_result: str, user_message: str) -> str:
+        """Ollama稼働中のみペルソナを注入して返答を生成。省エネ時は定型文をそのまま返す。"""
+        if not self.bot.llm_router.ollama_available:
+            return raw_result
+        persona = self.bot.config.get("character", {}).get("persona", "")
+        if not persona:
+            return raw_result
+        system = (
+            f"{persona}\n\n"
+            "以下の処理結果をユーザーに伝えてください。"
+            "内容・事実は変えず、キャラクターらしい口調で自然に伝えてください。"
+        )
+        prompt = (
+            f"ユーザーの発言: {user_message}\n"
+            f"処理結果: {raw_result}\n\n"
+            "この処理結果をキャラクターらしい口調でユーザーに伝えてください。"
+        )
+        return await self.llm.generate(prompt, system=system)
+
     # --- サーキットブレーカー ---
 
     @property

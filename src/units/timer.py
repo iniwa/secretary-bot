@@ -45,10 +45,14 @@ class TimerUnit(BaseUnit):
             self._next_id += 1
             channel_id = ctx.channel.id if ctx and hasattr(ctx, "channel") else None
 
-            task = asyncio.create_task(self._wait_and_notify(timer_id, minutes, message, channel_id))
+            task = asyncio.create_task(
+                self._wait_and_notify(timer_id, minutes, message, user_message, channel_id)
+            )
             self._active_timers[timer_id] = task
+            result = f"タイマー#{timer_id} を設定しました: {minutes}分後に「{message}」"
+            result = await self.personalize(result, user_message)
             self.breaker.record_success()
-            return f"タイマー#{timer_id} を設定しました: {minutes}分後に「{message}」"
+            return result
         except Exception:
             self.breaker.record_failure()
             raise
@@ -58,11 +62,15 @@ class TimerUnit(BaseUnit):
         prompt = _EXTRACT_PROMPT.format(user_input=user_input)
         return await self.llm.extract_json(prompt)
 
-    async def _wait_and_notify(self, timer_id: int, minutes: float, message: str, channel_id: int | None) -> None:
+    async def _wait_and_notify(
+        self, timer_id: int, minutes: float, message: str,
+        user_message: str, channel_id: int | None,
+    ) -> None:
         await asyncio.sleep(minutes * 60)
         self._active_timers.pop(timer_id, None)
 
-        notify_text = f"タイマー#{timer_id} 完了: {message}"
+        raw = f"タイマー#{timer_id} 完了: {message}"
+        notify_text = await self.personalize(raw, user_message)
         if channel_id:
             channel = self.bot.get_channel(channel_id)
             if channel:

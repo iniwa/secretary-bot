@@ -70,6 +70,7 @@ class ReminderUnit(BaseUnit):
                 result = await self._delete_todo(extracted)
             else:
                 result = await self._add_reminder(extracted)
+            result = await self.personalize(result, message)
             self.breaker.record_success()
             return result
         except Exception:
