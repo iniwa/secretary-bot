@@ -65,8 +65,12 @@ class LLMRouter:
         purpose: str = "conversation",
         ollama_only: bool = False,
     ) -> str:
-        dry_run = self._config.get("debug", {}).get("dry_run", False)
+        debug_cfg = self._config.get("debug", {})
+        dry_run = debug_cfg.get("dry_run", False)
         if dry_run:
+            responses = debug_cfg.get("dry_run_responses", {})
+            if purpose in responses:
+                return responses[purpose]
             return f"[dry_run] purpose={purpose}"
 
         # Ollama を優先

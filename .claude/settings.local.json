@@ -18,7 +18,11 @@
       "Bash(curl -s http://localhost:11434/api/tags)",
       "Bash(tasklist //FI 'IMAGENAME eq python.exe' //FO CSV)",
       "Bash(python -c \"import urllib.request; urllib.request.urlopen\\(''http://localhost:8100/health''\\); print\\(''Bot is running''\\)\")",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "mcp__serena__initial_instructions",
+      "mcp__serena__find_symbol",
+      "Bash(pip install:*)",
+      "Bash(python:*)"
     ]
   }
 }

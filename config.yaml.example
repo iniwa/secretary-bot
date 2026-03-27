@@ -88,3 +88,8 @@ debug:
   verbose_logging: false
   dry_run: false
   error_simulation: false
+  # dry_run: true 時にpurpose別の固定レスポンスを返す（省略時は "[dry_run] purpose=xxx"）
+  # dry_run_responses:
+  #   skill_routing: '{"skill": "memo", "parsed": {"action": "save", "content": "テストメモ"}}'
+  #   conversation: "これはdry_runのテスト返答です。"
+  #   memory_extraction: "なし"

@@ -41,3 +41,6 @@ Thumbs.db
 
 # Serena
 .serena/
+
+# Claude
+.claude
