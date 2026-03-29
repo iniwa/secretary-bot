@@ -90,29 +90,31 @@ class SecretaryBot(commands.Bot):
         # 会話ログ保存
         await self.database.log_conversation("discord", "user", content)
 
-        # Unit Router
+        # Unit Router（typing表示中に処理）
         user_id = str(message.author.id)
-        result = await self.unit_router.route(content, channel="discord", user_id=user_id)
-        unit_name = result.get("unit", "chat")
-        user_message = result.get("message", content)
+        async with message.channel.typing():
+            result = await self.unit_router.route(content, channel="discord", user_id=user_id)
+            unit_name = result.get("unit", "chat")
+            user_message = result.get("message", content)
 
-        unit = self.unit_manager.get(unit_name)
-        if unit is None:
-            unit = self.unit_manager.get("chat")
+            unit = self.unit_manager.get(unit_name)
+            if unit is None:
+                unit = self.unit_manager.get("chat")
 
-        try:
-            actual_unit = getattr(unit, "unit", unit)
-            actual_unit.session_done = False
-            response = await unit.execute(ctx, {"message": user_message})
-            if actual_unit.session_done:
-                self.unit_router.clear_session("discord", user_id)
-            if response:
-                await message.channel.send(response)
-                mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
-        except Exception as e:
-            log.error("Unit execution failed: %s", e, exc_info=True)
-            await message.channel.send("ごめんなさい、処理中にエラーが発生しました。")
+            try:
+                actual_unit = getattr(unit, "unit", unit)
+                actual_unit.session_done = False
+                response = await unit.execute(ctx, {"message": user_message})
+                if actual_unit.session_done:
+                    self.unit_router.clear_session("discord", user_id)
+            except Exception as e:
+                log.error("Unit execution failed: %s", e, exc_info=True)
+                response = "ごめんなさい、処理中にエラーが発生しました。"
+
+        if response:
+            await message.channel.send(response)
+            mode = "eco" if not self.llm_router.ollama_available else "normal"
+            await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
 
     async def notify_admin(self, message: str) -> None:
         if self._admin_channel_id:
