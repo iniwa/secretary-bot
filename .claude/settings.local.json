@@ -27,7 +27,8 @@
       "mcp__playwright__playwright_navigate",
       "Bash(npx playwright:*)",
       "Bash(pkill -f debug_webgui)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(grep -n DELEGATE_TO D:Gitai-mimich-agentsrcunits*.py)"
     ]
   }
 }

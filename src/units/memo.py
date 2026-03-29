@@ -8,9 +8,11 @@ _EXTRACT_PROMPT = """\
 ## アクション一覧
 - save: メモを保存（content が必要、tags は任意）
 - search: メモをキーワード検索（keyword が必要）
+- list: メモを一覧表示
+- delete: メモを削除（id が必要。「全部削除」なら id="all"）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "content": "メモ内容", "tags": "タグ", "keyword": "検索キーワード"}}
+{{"action": "アクション名", "content": "メモ内容", "tags": "タグ", "keyword": "検索キーワード", "id": "メモID"}}
 
 不要なフィールドは省略してください。
 JSON以外は返さないでください。
@@ -34,6 +36,10 @@ class MemoUnit(BaseUnit):
 
             if action == "search":
                 result = await self._search(extracted)
+            elif action == "list":
+                result = await self._list()
+            elif action == "delete":
+                result = await self._delete(extracted)
             else:
                 result = await self._save(extracted)
             result = await self.personalize(result, message)
@@ -58,6 +64,38 @@ class MemoUnit(BaseUnit):
             (content, tags),
         )
         return f"メモしました: {content}"
+
+    async def _list(self) -> str:
+        rows = await self.bot.database.fetchall(
+            "SELECT * FROM memos ORDER BY created_at DESC LIMIT 20",
+        )
+        if not rows:
+            return "メモはありません。"
+        lines = []
+        for r in rows:
+            lines.append(f"#{r['id']} {r['content']}")
+        return "メモ一覧:\n" + "\n".join(lines)
+
+    async def _delete(self, extracted: dict) -> str:
+        memo_id = str(extracted.get("id", ""))
+        if not memo_id:
+            return "削除するメモのIDを指定してください。"
+        if memo_id == "all":
+            await self.bot.database.execute("DELETE FROM memos")
+            return "メモを全件削除しました。"
+        try:
+            mid = int(memo_id)
+        except ValueError:
+            return "メモIDは数値で指定してください。"
+        existing = await self.bot.database.fetchone(
+            "SELECT id FROM memos WHERE id = ?", (mid,)
+        )
+        if not existing:
+            return f"ID#{mid} のメモは見つかりませんでした。"
+        await self.bot.database.execute(
+            "DELETE FROM memos WHERE id = ?", (mid,)
+        )
+        return f"メモ#{mid} を削除しました。"
 
     async def _search(self, extracted: dict) -> str:
         keyword = extracted.get("keyword", "")
