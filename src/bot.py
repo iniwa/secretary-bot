@@ -65,6 +65,8 @@ class SecretaryBot(commands.Bot):
         self.heartbeat = Heartbeat(self)
         self.unit_manager = UnitManager(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
+        # チャネル+ユーザーごとのメッセージ処理ロック（直列化）
+        self._user_locks: dict[str, asyncio.Lock] = {}
 
     async def setup_hook(self) -> None:
         # Discord接続時に呼ばれるが、main()で既に初期化済みなのでスキップ
@@ -87,38 +89,43 @@ class SecretaryBot(commands.Bot):
         if not content:
             return
 
-        # 会話ログ保存
-        await self.database.log_conversation("discord", "user", content)
-
-        # Unit Router（typing表示中に処理）
+        # ユーザーごとにロックを取得（同一ユーザーのメッセージを直列化）
         user_id = str(message.author.id)
-        async with message.channel.typing():
-            result = await self.unit_router.route(content, channel="discord", user_id=user_id)
-            unit_name = result.get("unit", "chat")
-            user_message = result.get("message", content)
+        lock_key = f"discord:{user_id}"
+        if lock_key not in self._user_locks:
+            self._user_locks[lock_key] = asyncio.Lock()
 
-            unit = self.unit_manager.get(unit_name)
-            if unit is None:
-                unit = self.unit_manager.get("chat")
+        async with self._user_locks[lock_key]:
+            # 会話ログ保存
+            await self.database.log_conversation("discord", "user", content)
 
-            try:
-                actual_unit = getattr(unit, "unit", unit)
-                actual_unit.session_done = False
-                session_key = f"discord:{user_id}"
-                response = await unit.execute(ctx, {"message": user_message, "channel": session_key})
-                if actual_unit.session_done:
-                    self.unit_router.clear_session("discord", user_id)
-                    actual_unit.clear_exchange(session_key)
-                elif response:
-                    actual_unit.save_exchange(session_key, user_message, response)
-            except Exception as e:
-                log.error("Unit execution failed: %s", e, exc_info=True)
-                response = "ごめんなさい、処理中にエラーが発生しました。"
+            # Unit Router（typing表示中に処理）
+            async with message.channel.typing():
+                result = await self.unit_router.route(content, channel="discord", user_id=user_id)
+                unit_name = result.get("unit", "chat")
+                user_message = result.get("message", content)
 
-        if response:
-            await message.channel.send(response)
-            mode = "eco" if not self.llm_router.ollama_available else "normal"
-            await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
+                unit = self.unit_manager.get(unit_name)
+                if unit is None:
+                    unit = self.unit_manager.get("chat")
+
+                try:
+                    actual_unit = getattr(unit, "unit", unit)
+                    actual_unit.session_done = False
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key})
+                    if actual_unit.session_done:
+                        self.unit_router.clear_session("discord", user_id)
+                        actual_unit.clear_exchange(lock_key)
+                    elif response:
+                        actual_unit.save_exchange(lock_key, user_message, response)
+                except Exception as e:
+                    log.error("Unit execution failed: %s", e, exc_info=True)
+                    response = "ごめんなさい、処理中にエラーが発生しました。"
+
+            if response:
+                await message.channel.send(response)
+                mode = "eco" if not self.llm_router.ollama_available else "normal"
+                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
 
     async def notify_admin(self, message: str) -> None:
         if self._admin_channel_id:

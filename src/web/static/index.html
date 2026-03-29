@@ -38,6 +38,8 @@ main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .msg.user { background: var(--primary); align-self: flex-end; }
 .msg.assistant { background: var(--surface); align-self: flex-start; border: 1px solid var(--border); }
 .msg .badge { font-size: 0.75rem; color: var(--accent); margin-left: 0.5rem; }
+.msg .channel-badge { color: #7289da; font-size: 0.7rem; }
+.msg.from-discord { border-left: 3px solid #7289da; opacity: 0.85; }
 .msg.thinking { display: flex; gap: 0.3rem; align-items: center; padding: 0.8rem 1.2rem; }
 .msg.thinking .dot { width: 8px; height: 8px; background: var(--text-dim); border-radius: 50%; animation: thinking-bounce 1.4s infinite ease-in-out; }
 .msg.thinking .dot:nth-child(2) { animation-delay: 0.2s; }
@@ -267,12 +269,17 @@ function showPage(name) {
   if (name === 'unit-memo') loadMemos();
 }
 
+let chatBusy = false;
 async function sendChat(e) {
   e.preventDefault();
+  if (chatBusy) return;
   const input = document.getElementById('chat-input');
+  const btn = document.querySelector('#chat-form button');
   const msg = input.value.trim();
   if (!msg) return;
   input.value = '';
+  chatBusy = true;
+  btn.disabled = true;
   appendMsg('user', msg);
   const thinking = appendThinking();
   try {
@@ -284,6 +291,9 @@ async function sendChat(e) {
     thinking.remove();
     appendMsg('assistant', 'Error: ' + err.message);
   }
+  chatBusy = false;
+  btn.disabled = false;
+  input.focus();
 }
 
 function appendThinking() {
@@ -295,10 +305,22 @@ function appendThinking() {
   return el;
 }
 
-function appendMsg(role, text, unit) {
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function appendMsg(role, text, unit, channel) {
   const el = document.createElement('div');
   el.className = 'msg ' + role;
-  el.textContent = text;
+  if (channel) el.classList.add('from-' + channel.toLowerCase());
+  // 改行を <br> に変換（HTMLエスケープ済み）
+  el.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+  if (channel) {
+    const chBadge = document.createElement('span');
+    chBadge.className = 'badge channel-badge';
+    chBadge.textContent = channel;
+    el.appendChild(chBadge);
+  }
   if (unit && unit !== 'chat') {
     const badge = document.createElement('span');
     badge.className = 'badge';
@@ -486,11 +508,12 @@ async function loadMemos() {
 // --- チャット履歴をバックエンドから復元 ---
 async function loadChatHistory() {
   try {
-    const res = await fetch('/api/logs?limit=50&channel=webgui');
+    const res = await fetch('/api/logs?limit=50');
     const data = await res.json();
     const msgs = (data.logs || []).reverse();
     msgs.forEach(l => {
-      appendMsg(l.role, l.content, l.unit);
+      const ch = l.channel === 'discord' ? 'Discord' : null;
+      appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
 }

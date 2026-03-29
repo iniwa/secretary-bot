@@ -1,5 +1,6 @@
 """FastAPI WebGUI + /health エンドポイント。"""
 
+import asyncio
 import os
 import secrets
 import subprocess
@@ -45,6 +46,9 @@ def create_web_app(bot) -> FastAPI:
 
     # --- API ---
 
+    # WebGUIはシングルユーザー想定なのでロック1つ
+    _webgui_lock = asyncio.Lock()
+
     @app.post("/api/chat", dependencies=[Depends(_verify)])
     async def chat(request: Request):
         body = await request.json()
@@ -52,33 +56,34 @@ def create_web_app(bot) -> FastAPI:
         if not message:
             raise HTTPException(400, "message is required")
 
-        try:
-            await bot.database.log_conversation("webgui", "user", message)
-            result = await bot.unit_router.route(message, channel="webgui")
-            unit_name = result.get("unit", "chat")
-            user_message = result.get("message", message)
+        async with _webgui_lock:
+            try:
+                await bot.database.log_conversation("webgui", "user", message)
+                result = await bot.unit_router.route(message, channel="webgui")
+                unit_name = result.get("unit", "chat")
+                user_message = result.get("message", message)
 
-            unit = bot.unit_manager.get(unit_name)
-            if unit is None:
-                unit = bot.unit_manager.get("chat")
+                unit = bot.unit_manager.get(unit_name)
+                if unit is None:
+                    unit = bot.unit_manager.get("chat")
 
-            actual_unit = getattr(unit, "unit", unit)
-            actual_unit.session_done = False
-            response = await unit.execute(None, {"message": user_message, "channel": "webgui"})
-            if actual_unit.session_done:
-                bot.unit_router.clear_session("webgui")
-                actual_unit.clear_exchange("webgui")
-            elif response:
-                actual_unit.save_exchange("webgui", user_message, response)
-            if response:
-                mode = "eco" if not bot.llm_router.ollama_available else "normal"
-                await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)
-            return {"response": response or "", "unit": unit_name}
-        except Exception as e:
-            log.error("WebGUI chat error: %s", e, exc_info=True)
-            return JSONResponse(
-                status_code=200,
-                content={"response": f"Error: {e}", "unit": "system"},
+                actual_unit = getattr(unit, "unit", unit)
+                actual_unit.session_done = False
+                response = await unit.execute(None, {"message": user_message, "channel": "webgui"})
+                if actual_unit.session_done:
+                    bot.unit_router.clear_session("webgui")
+                    actual_unit.clear_exchange("webgui")
+                elif response:
+                    actual_unit.save_exchange("webgui", user_message, response)
+                if response:
+                    mode = "eco" if not bot.llm_router.ollama_available else "normal"
+                    await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)
+                return {"response": response or "", "unit": unit_name}
+            except Exception as e:
+                log.error("WebGUI chat error: %s", e, exc_info=True)
+                return JSONResponse(
+                    status_code=200,
+                    content={"response": f"Error: {e}", "unit": "system"},
             )
 
     @app.get("/api/logs", dependencies=[Depends(_verify)])

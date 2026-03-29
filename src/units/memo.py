@@ -12,10 +12,11 @@ _EXTRACT_PROMPT = """\
 - delete: メモを削除（id が必要。「全部削除」なら id="all"）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "content": "メモ内容", "tags": "タグ", "keyword": "検索キーワード", "id": "メモID"}}
+{{"action": "アクション名", "content": "メモ内容", "tags": "タグ", "keyword": "検索キーワード", "id": "メモID", "ids": ["ID1", "ID2"]}}
 
-不要なフィールドは省略してください。
-JSON以外は返さないでください。
+- 不要なフィールドは省略してください。
+- 複数IDの操作（例:「1と2を削除」）は ids フィールドに配列で指定してください。単一IDの場合は id を使用。
+- JSON1つだけを返してください。複数のJSONを返さないでください。
 
 ## ユーザー入力
 {user_input}
@@ -47,7 +48,9 @@ class MemoUnit(BaseUnit):
             else:
                 result = await self._save(extracted)
                 self.session_done = True
-            result = await self.personalize(result, message)
+            # リスト・検索結果は整形済みなので personalize しない
+            if action not in ("list", "search"):
+                result = await self.personalize(result, message)
             self.breaker.record_success()
             return result
         except Exception:
@@ -79,31 +82,44 @@ class MemoUnit(BaseUnit):
         )
         if not rows:
             return "メモはありません。"
-        lines = []
+        lines = [f"📄 メモ一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            lines.append(f"#{r['id']} {r['content']}")
-        return "メモ一覧:\n" + "\n".join(lines)
+            tags = f"  [{r['tags']}]" if r.get("tags") else ""
+            lines.append(f"  #{r['id']}  {r['content']}{tags}")
+        return "\n".join(lines)
 
     async def _delete(self, extracted: dict) -> str:
+        # 全削除
         memo_id = str(extracted.get("id", ""))
-        if not memo_id:
-            return "削除するメモのIDを指定してください。"
         if memo_id == "all":
             await self.bot.database.execute("DELETE FROM memos")
             return "メモを全件削除しました。"
-        try:
-            mid = int(memo_id)
-        except ValueError:
-            return "メモIDは数値で指定してください。"
-        existing = await self.bot.database.fetchone(
-            "SELECT id FROM memos WHERE id = ?", (mid,)
-        )
-        if not existing:
-            return f"ID#{mid} のメモは見つかりませんでした。"
-        await self.bot.database.execute(
-            "DELETE FROM memos WHERE id = ?", (mid,)
-        )
-        return f"メモ#{mid} を削除しました。"
+
+        # 複数ID対応
+        ids = extracted.get("ids", [])
+        if ids:
+            id_list = [str(i) for i in ids]
+        elif memo_id:
+            id_list = [memo_id]
+        else:
+            return "削除するメモのIDを指定してください。"
+
+        results = []
+        for mid_str in id_list:
+            try:
+                mid = int(mid_str)
+            except ValueError:
+                results.append(f"#{mid_str} はIDとして不正です")
+                continue
+            existing = await self.bot.database.fetchone(
+                "SELECT * FROM memos WHERE id = ?", (mid,)
+            )
+            if not existing:
+                results.append(f"#{mid} が見つかりません")
+            else:
+                await self.bot.database.execute("DELETE FROM memos WHERE id = ?", (mid,))
+                results.append(f"#{mid}「{existing['content']}」を削除しました")
+        return "\n".join(results)
 
     async def _search(self, extracted: dict) -> str:
         keyword = extracted.get("keyword", "")
@@ -115,10 +131,11 @@ class MemoUnit(BaseUnit):
         )
         if not rows:
             return f"「{keyword}」に一致するメモは見つかりませんでした。"
-        lines = []
+        lines = [f"🔍 メモ検索「{keyword}」（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            lines.append(f"#{r['id']} {r['content']}")
-        return "メモ検索結果:\n" + "\n".join(lines)
+            tags = f"  [{r['tags']}]" if r.get("tags") else ""
+            lines.append(f"  #{r['id']}  {r['content']}{tags}")
+        return "\n".join(lines)
 
 
 async def setup(bot) -> None:

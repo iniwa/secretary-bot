@@ -24,11 +24,12 @@ _EXTRACT_PROMPT = """\
 - todo_delete: ToDo削除（id が必要）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値}}
+{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値, "ids": [数値]}}
 
-不要なフィールドは省略してください。
-日時表現は必ずISO形式に変換してください。
-JSON以外は返さないでください。
+- 不要なフィールドは省略してください。
+- 日時表現は必ずISO形式に変換してください。
+- 複数IDの操作（例:「1と2を削除」）は ids フィールドに配列で指定してください。単一IDの場合は id を使用。
+- JSON1つだけを返してください。複数のJSONを返さないでください。
 
 ## ユーザー入力
 {user_input}
@@ -81,7 +82,9 @@ class ReminderUnit(BaseUnit):
             else:
                 result = await self._add_reminder(extracted)
                 self.session_done = True
-            result = await self.personalize(result, message)
+            # リスト表示は整形済みなので personalize しない
+            if action not in ("list", "todo_list"):
+                result = await self.personalize(result, message)
             self.breaker.record_success()
             return result
         except Exception:
@@ -126,11 +129,16 @@ class ReminderUnit(BaseUnit):
         )
         if not rows:
             return "アクティブなリマインダーはありません。"
-        lines = []
+        lines = [f"📋 リマインダー一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            status = " ⚠️通知済み・未完了" if r.get("notified") else ""
-            lines.append(f"#{r['id']} {r['remind_at']} - {r['message']}{status}")
-        return "リマインダー一覧:\n" + "\n".join(lines)
+            try:
+                dt = datetime.fromisoformat(r["remind_at"])
+                time_str = dt.strftime("%m/%d %H:%M")
+            except Exception:
+                time_str = r["remind_at"]
+            status = " ⚠️通知済" if r.get("notified") else ""
+            lines.append(f"  #{r['id']}  {time_str}  {r['message']}{status}")
+        return "\n".join(lines)
 
     async def _edit_reminder(self, extracted: dict) -> str:
         rid = extracted.get("id")
@@ -156,32 +164,48 @@ class ReminderUnit(BaseUnit):
         dt_display = datetime.fromisoformat(new_time_str)
         return f"リマインダー #{rid} を更新しました: {dt_display.strftime('%m/%d %H:%M')} に「{new_message}」"
 
-    async def _delete_reminder(self, extracted: dict) -> str:
+    def _get_ids(self, extracted: dict) -> list[int]:
+        """id または ids から対象IDリストを取得する。"""
+        ids = extracted.get("ids", [])
+        if ids:
+            return [int(i) for i in ids]
         rid = extracted.get("id")
-        if not rid:
+        return [int(rid)] if rid else []
+
+    async def _delete_reminder(self, extracted: dict) -> str:
+        ids = self._get_ids(extracted)
+        if not ids:
             return "削除するリマインダーのIDを指定してください。"
-        row = await self.bot.database.fetchone(
-            "SELECT * FROM reminders WHERE id = ?", (rid,)
-        )
-        if not row:
-            return f"リマインダー #{rid} が見つかりません。"
-        await self.bot.database.execute("DELETE FROM reminders WHERE id = ?", (rid,))
-        return f"リマインダー #{rid}「{row['message']}」を削除しました。"
+        results = []
+        for rid in ids:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ?", (rid,)
+            )
+            if not row:
+                results.append(f"#{rid} が見つかりません")
+            else:
+                await self.bot.database.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+                results.append(f"#{rid}「{row['message']}」を削除しました")
+        return "\n".join(results)
 
     async def _done_reminder(self, extracted: dict) -> str:
-        rid = extracted.get("id")
-        if not rid:
+        ids = self._get_ids(extracted)
+        if not ids:
             return "完了にするリマインダーのIDを指定してください。"
-        row = await self.bot.database.fetchone(
-            "SELECT * FROM reminders WHERE id = ? AND active = 1", (rid,)
-        )
-        if not row:
-            return f"リマインダー #{rid} が見つかりません。"
-        await self.bot.database.execute(
-            "UPDATE reminders SET active = 0, done_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (rid,),
-        )
-        return f"リマインダー #{rid}「{row['message']}」を完了にしました。"
+        results = []
+        for rid in ids:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ? AND active = 1", (rid,)
+            )
+            if not row:
+                results.append(f"#{rid} が見つかりません")
+            else:
+                await self.bot.database.execute(
+                    "UPDATE reminders SET active = 0, done_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (rid,),
+                )
+                results.append(f"#{rid}「{row['message']}」を完了にしました")
+        return "\n".join(results)
 
     # --- ToDo ---
 
@@ -200,10 +224,10 @@ class ReminderUnit(BaseUnit):
         )
         if not rows:
             return "未完了のToDoはありません。"
-        lines = []
+        lines = [f"📝 ToDo一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            lines.append(f"#{r['id']} {r['title']}")
-        return "ToDo一覧:\n" + "\n".join(lines)
+            lines.append(f"  #{r['id']}  {r['title']}")
+        return "\n".join(lines)
 
     async def _done_todo(self, extracted: dict) -> str:
         todo_id = extracted.get("id")
