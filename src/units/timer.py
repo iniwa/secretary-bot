@@ -32,9 +32,10 @@ class TimerUnit(BaseUnit):
     async def execute(self, ctx, parsed: dict) -> str | None:
         self.breaker.check()
         user_message = parsed.get("message", "")
+        channel = parsed.get("channel", "")
         try:
             # LLMでパラメータ抽出
-            extracted = await self._extract_params(user_message)
+            extracted = await self._extract_params(user_message, channel)
             minutes = extracted.get("minutes", 0)
             message = extracted.get("message", "タイマー完了")
 
@@ -58,9 +59,12 @@ class TimerUnit(BaseUnit):
             self.breaker.record_failure()
             raise
 
-    async def _extract_params(self, user_input: str) -> dict:
+    async def _extract_params(self, user_input: str, channel: str = "") -> dict:
         """ユーザー入力からLLMでパラメータを抽出する。"""
+        context = self.get_context(channel) if channel else ""
         prompt = _EXTRACT_PROMPT.format(user_input=user_input)
+        if context:
+            prompt = prompt + context
         return await self.llm.extract_json(prompt)
 
     async def _wait_and_notify(

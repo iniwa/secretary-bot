@@ -104,9 +104,13 @@ class SecretaryBot(commands.Bot):
             try:
                 actual_unit = getattr(unit, "unit", unit)
                 actual_unit.session_done = False
-                response = await unit.execute(ctx, {"message": user_message})
+                session_key = f"discord:{user_id}"
+                response = await unit.execute(ctx, {"message": user_message, "channel": session_key})
                 if actual_unit.session_done:
                     self.unit_router.clear_session("discord", user_id)
+                    actual_unit.clear_exchange(session_key)
+                elif response:
+                    actual_unit.save_exchange(session_key, user_message, response)
             except Exception as e:
                 log.error("Unit execution failed: %s", e, exc_info=True)
                 response = "ごめんなさい、処理中にエラーが発生しました。"

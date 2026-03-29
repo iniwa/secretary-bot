@@ -64,9 +64,12 @@ def create_web_app(bot) -> FastAPI:
 
             actual_unit = getattr(unit, "unit", unit)
             actual_unit.session_done = False
-            response = await unit.execute(None, {"message": user_message})
+            response = await unit.execute(None, {"message": user_message, "channel": "webgui"})
             if actual_unit.session_done:
                 bot.unit_router.clear_session("webgui")
+                actual_unit.clear_exchange("webgui")
+            elif response:
+                actual_unit.save_exchange("webgui", user_message, response)
             if response:
                 mode = "eco" if not bot.llm_router.ollama_available else "normal"
                 await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)

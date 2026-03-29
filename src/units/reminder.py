@@ -44,8 +44,9 @@ class ReminderUnit(BaseUnit):
     async def execute(self, ctx, parsed: dict) -> str | None:
         self.breaker.check()
         message = parsed.get("message", "")
+        channel = parsed.get("channel", "")
         try:
-            extracted = await self._extract_params(message)
+            extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "add")
 
             # list系はセッション維持（後続のID指定操作に備える）、それ以外は完了
@@ -87,14 +88,17 @@ class ReminderUnit(BaseUnit):
             self.breaker.record_failure()
             raise
 
-    async def _extract_params(self, user_input: str) -> dict:
+    async def _extract_params(self, user_input: str, channel: str = "") -> dict:
         """ユーザー入力からLLMでパラメータを抽出する。"""
         now = datetime.now()
+        context = self.get_context(channel) if channel else ""
         prompt = _EXTRACT_PROMPT.format(
             now=now.strftime("%Y-%m-%d %H:%M"),
             weekday=_WEEKDAYS[now.weekday()],
             user_input=user_input,
         )
+        if context:
+            prompt = prompt + context
         return await self.llm.extract_json(prompt)
 
     # --- リマインダー ---

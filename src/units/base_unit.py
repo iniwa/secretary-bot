@@ -23,6 +23,8 @@ class BaseUnit(commands.Cog):
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
         # セッション終了フラグ（execute内でTrueにするとルーターのセッションがクリアされる）
         self.session_done = False
+        # セッション継続用: チャネルごとの直前のやり取りを保持
+        self._last_exchange: dict[str, dict] = {}
 
         # ユニット別LLMファサード
         unit_cfg = bot.config.get("units", {}).get(self.UNIT_NAME, {})
@@ -72,6 +74,22 @@ class BaseUnit(commands.Cog):
             "この処理結果をキャラクターらしい口調でユーザーに伝えてください。"
         )
         return await self.llm.generate(prompt, system=system)
+
+    # --- セッション文脈 ---
+
+    def save_exchange(self, channel: str, user_msg: str, bot_response: str) -> None:
+        """直前のやり取りを保存（セッション継続時に文脈として使う）。"""
+        self._last_exchange[channel] = {"user": user_msg, "bot": bot_response}
+
+    def get_context(self, channel: str) -> str:
+        """直前のやり取りがあればプロンプト用の文脈テキストを返す。"""
+        ex = self._last_exchange.get(channel)
+        if not ex:
+            return ""
+        return f"\n## 直前のやり取り（文脈）\nユーザー: {ex['user']}\nアシスタント: {ex['bot']}\n"
+
+    def clear_exchange(self, channel: str) -> None:
+        self._last_exchange.pop(channel, None)
 
     # --- サーキットブレーカー ---
 
