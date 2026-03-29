@@ -196,6 +196,26 @@ def create_web_app(bot) -> FastAPI:
             )
         return {"items": rows}
 
+    @app.get("/api/units/timers", dependencies=[Depends(_verify)])
+    async def get_timers():
+        import time as _time
+        timer_unit = bot.unit_manager.get("timer")
+        if timer_unit is None:
+            return {"items": []}
+        actual = getattr(timer_unit, "unit", timer_unit)
+        items = []
+        now = _time.time()
+        for tid, info in actual._timer_info.items():
+            elapsed = now - info["created_at"]
+            remaining = max(0, info["minutes"] * 60 - elapsed)
+            items.append({
+                "id": tid,
+                "message": info["message"],
+                "minutes": info["minutes"],
+                "remaining_sec": int(remaining),
+            })
+        return {"items": items}
+
     @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
     async def get_gemini_config():
         return bot.config.get("gemini", {})

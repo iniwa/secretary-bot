@@ -126,6 +126,7 @@ nav.bottom-nav { display: none; }
     <div class="nav-group-label">Units</div>
     <button onclick="showPage('unit-reminder')">Reminder</button>
     <button onclick="showPage('unit-memo')">Memo</button>
+    <button onclick="showPage('unit-timer')">Timer</button>
   </div>
 </nav>
 
@@ -234,6 +235,12 @@ nav.bottom-nav { display: none; }
       </table>
     </div>
   </div>
+
+  <!-- Unit: Timer -->
+  <div id="page-unit-timer" class="page">
+    <h2 style="margin-bottom:1rem">Timer</h2>
+    <div id="timer-list"></div>
+  </div>
 </main>
 
 <nav class="bottom-nav">
@@ -267,6 +274,7 @@ function showPage(name) {
   if (name === 'settings') loadGeminiSettings();
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
+  if (name === 'unit-timer') loadTimers();
 }
 
 let chatBusy = false;
@@ -502,6 +510,27 @@ async function loadMemos() {
       const tags = (m.tags || '').split(',').filter(t => t.trim()).map(t => `<span class="tag">${t.trim()}</span>`).join('');
       tbody.innerHTML += `<tr><td>${m.id}</td><td>${m.content}</td><td>${tags || '-'}</td><td>${m.created_at}</td></tr>`;
     });
+  } catch (err) { console.error(err); }
+}
+
+async function loadTimers() {
+  const container = document.getElementById('timer-list');
+  try {
+    const res = await fetch('/api/units/timers');
+    const data = await res.json();
+    if (!data.items || data.items.length === 0) {
+      container.innerHTML = '<p class="unit-empty">アクティブなタイマーはありません</p>';
+      return;
+    }
+    let html = '<table><thead><tr><th>#</th><th>Message</th><th>Duration</th><th>Remaining</th></tr></thead><tbody>';
+    data.items.forEach(t => {
+      const min = Math.floor(t.remaining_sec / 60);
+      const sec = t.remaining_sec % 60;
+      const remaining = t.remaining_sec > 0 ? `${min}:${String(sec).padStart(2,'0')}` : 'Done';
+      html += `<tr><td>${t.id}</td><td>${t.message}</td><td>${t.minutes}min</td><td>${remaining}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
   } catch (err) { console.error(err); }
 }
 

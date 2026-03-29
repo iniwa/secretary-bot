@@ -1,6 +1,7 @@
 """タイマーユニット — N分後に通知。"""
 
 import asyncio
+import time
 
 from src.units.base_unit import BaseUnit
 
@@ -27,6 +28,7 @@ class TimerUnit(BaseUnit):
     def __init__(self, bot):
         super().__init__(bot)
         self._active_timers: dict[int, asyncio.Task] = {}
+        self._timer_info: dict[int, dict] = {}  # id -> {message, minutes, created_at}
         self._next_id = 1
 
     async def execute(self, ctx, parsed: dict) -> str | None:
@@ -46,6 +48,11 @@ class TimerUnit(BaseUnit):
             self._next_id += 1
             channel_id = ctx.channel.id if ctx and hasattr(ctx, "channel") else None
 
+            self._timer_info[timer_id] = {
+                "message": message,
+                "minutes": minutes,
+                "created_at": time.time(),
+            }
             task = asyncio.create_task(
                 self._wait_and_notify(timer_id, minutes, message, user_message, channel_id)
             )
@@ -73,6 +80,7 @@ class TimerUnit(BaseUnit):
     ) -> None:
         await asyncio.sleep(minutes * 60)
         self._active_timers.pop(timer_id, None)
+        self._timer_info.pop(timer_id, None)
 
         raw = f"タイマー#{timer_id} 完了: {message}"
         notify_text = await self.personalize(raw, user_message)
