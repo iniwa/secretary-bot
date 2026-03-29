@@ -21,6 +21,8 @@ class BaseUnit(commands.Cog):
         self.bot = bot
         self._breaker = CircuitBreaker(name=self.UNIT_NAME)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
+        # セッション終了フラグ（execute内でTrueにするとルーターのセッションがクリアされる）
+        self.session_done = False
 
         # ユニット別LLMファサード
         unit_cfg = bot.config.get("units", {}).get(self.UNIT_NAME, {})

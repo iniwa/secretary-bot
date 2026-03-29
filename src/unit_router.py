@@ -1,9 +1,14 @@
 """自然言語 → ユニット振り分け（Unit Router）。"""
 
+import time
+
 from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger, new_trace_id
 
 log = get_logger(__name__)
+
+# セッションの有効期限（秒）
+_SESSION_TIMEOUT = 120
 
 _ROUTE_PROMPT_TEMPLATE = """\
 あなたはユニットルーターです。ユーザーの入力を分析し、最適なユニットを1つ選んでください。
@@ -26,6 +31,10 @@ class UnitRouter:
     def __init__(self, bot):
         self.bot = bot
         self.llm = UnitLLM(bot.llm_router, purpose="unit_routing")
+        # チャネルごとの直前ユニットセッション
+        # key: channel ("discord:{user_id}" | "webgui")
+        # value: {"unit": str, "ts": float}
+        self._sessions: dict[str, dict] = {}
 
     def _build_units_text(self) -> str:
         lines = []
@@ -38,9 +47,47 @@ class UnitRouter:
                 lines.append(f"- {name}: {desc}")
         return "\n".join(lines)
 
-    async def route(self, user_input: str, channel: str = "discord") -> dict:
+    def _is_continuation(self, user_input: str) -> bool:
+        """短い入力や番号だけなど、前のユニットへの続きと判断できるか。"""
+        text = user_input.strip()
+        # 数字のみ（ID指定）
+        if text.isdigit():
+            return True
+        # 「はい」「いいえ」「うん」「お願い」「やめて」「全部」「1番」等の短い応答
+        if len(text) <= 15:
+            return True
+        return False
+
+    def _get_session(self, channel: str) -> str | None:
+        """有効なセッションがあれば直前のユニット名を返す。"""
+        session = self._sessions.get(channel)
+        if not session:
+            return None
+        if time.monotonic() - session["ts"] > _SESSION_TIMEOUT:
+            del self._sessions[channel]
+            return None
+        return session["unit"]
+
+    def _set_session(self, channel: str, unit_name: str) -> None:
+        self._sessions[channel] = {"unit": unit_name, "ts": time.monotonic()}
+
+    def clear_session(self, channel: str, user_id: str = "") -> None:
+        """ユニットが処理完了時にセッションをクリアする。"""
+        session_key = f"{channel}:{user_id}" if user_id else channel
+        self._sessions.pop(session_key, None)
+
+    async def route(self, user_input: str, channel: str = "discord", user_id: str = "") -> dict:
         trace_id = new_trace_id()
         log.info("Routing input (trace=%s): %.80s", trace_id, user_input)
+
+        session_key = f"{channel}:{user_id}" if user_id else channel
+
+        # 直前のユニットとの会話継続判定
+        prev_unit = self._get_session(session_key)
+        if prev_unit and prev_unit != "chat" and self._is_continuation(user_input):
+            log.info("Continuing with unit: %s (trace=%s)", prev_unit, trace_id)
+            self._set_session(session_key, prev_unit)
+            return {"unit": prev_unit, "message": user_input}
 
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
             units_text=self._build_units_text(),
@@ -51,8 +98,11 @@ class UnitRouter:
             result = await self.llm.extract_json(prompt)
             if "unit" not in result:
                 raise ValueError("Missing 'unit' key")
-            log.info("Routed to: %s (trace=%s)", result["unit"], trace_id)
-            return {"unit": result["unit"], "message": user_input}
+            unit_name = result["unit"]
+            log.info("Routed to: %s (trace=%s)", unit_name, trace_id)
+            self._set_session(session_key, unit_name)
+            return {"unit": unit_name, "message": user_input}
         except Exception as e:
             log.warning("Routing failed (%s), falling back to chat (trace=%s)", e, trace_id)
+            self._set_session(session_key, "chat")
             return {"unit": "chat", "message": user_input}

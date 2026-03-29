@@ -48,28 +48,38 @@ class ReminderUnit(BaseUnit):
             extracted = await self._extract_params(message)
             action = extracted.get("action", "add")
 
+            # list系はセッション維持（後続のID指定操作に備える）、それ以外は完了
             if action == "add":
                 result = await self._add_reminder(extracted)
+                self.session_done = True
             elif action == "list":
                 result = await self._list_reminders()
             elif action == "edit":
                 result = await self._edit_reminder(extracted)
+                self.session_done = True
             elif action == "delete":
                 result = await self._delete_reminder(extracted)
+                self.session_done = True
             elif action == "done":
                 result = await self._done_reminder(extracted)
+                self.session_done = True
             elif action == "todo_add":
                 result = await self._add_todo(extracted)
+                self.session_done = True
             elif action == "todo_list":
                 result = await self._list_todos()
             elif action == "todo_done":
                 result = await self._done_todo(extracted)
+                self.session_done = True
             elif action == "todo_edit":
                 result = await self._edit_todo(extracted)
+                self.session_done = True
             elif action == "todo_delete":
                 result = await self._delete_todo(extracted)
+                self.session_done = True
             else:
                 result = await self._add_reminder(extracted)
+                self.session_done = True
             result = await self.personalize(result, message)
             self.breaker.record_success()
             return result

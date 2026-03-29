@@ -36,12 +36,16 @@ class MemoUnit(BaseUnit):
 
             if action == "search":
                 result = await self._search(extracted)
+                self.session_done = True
             elif action == "list":
                 result = await self._list()
+                # listの後はIDで削除等の操作が続く可能性があるのでセッション維持
             elif action == "delete":
                 result = await self._delete(extracted)
+                self.session_done = True
             else:
                 result = await self._save(extracted)
+                self.session_done = True
             result = await self.personalize(result, message)
             self.breaker.record_success()
             return result

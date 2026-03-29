@@ -14,6 +14,7 @@ class StatusUnit(BaseUnit):
             result = await self._check_status()
             result = await self.personalize(result, message)
             self.breaker.record_success()
+            self.session_done = True
             return result
         except Exception:
             self.breaker.record_failure()

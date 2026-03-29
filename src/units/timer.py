@@ -52,6 +52,7 @@ class TimerUnit(BaseUnit):
             result = f"タイマー#{timer_id} を設定しました: {minutes}分後に「{message}」"
             result = await self.personalize(result, user_message)
             self.breaker.record_success()
+            self.session_done = True
             return result
         except Exception:
             self.breaker.record_failure()

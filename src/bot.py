@@ -91,7 +91,8 @@ class SecretaryBot(commands.Bot):
         await self.database.log_conversation("discord", "user", content)
 
         # Unit Router
-        result = await self.unit_router.route(content)
+        user_id = str(message.author.id)
+        result = await self.unit_router.route(content, channel="discord", user_id=user_id)
         unit_name = result.get("unit", "chat")
         user_message = result.get("message", content)
 
@@ -100,7 +101,11 @@ class SecretaryBot(commands.Bot):
             unit = self.unit_manager.get("chat")
 
         try:
+            actual_unit = getattr(unit, "unit", unit)
+            actual_unit.session_done = False
             response = await unit.execute(ctx, {"message": user_message})
+            if actual_unit.session_done:
+                self.unit_router.clear_session("discord", user_id)
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
