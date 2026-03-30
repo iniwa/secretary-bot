@@ -93,7 +93,7 @@ class UnitRouter:
             await ft.emit("SESSION", "done", {"continued": True, "unit": prev_unit}, flow_id)
             await ft.emit("REUSE", "done", {"unit": prev_unit}, flow_id)
             await ft.emit("UNIT_DECIDE", "done", {"unit": prev_unit}, flow_id)
-            return {"unit": prev_unit, "message": user_input}
+            return {"unit": prev_unit, "message": user_input, "user_id": user_id}
 
         await ft.emit("SESSION", "done", {"continued": False}, flow_id)
         await ft.emit("ROUTE_LLM", "active", {}, flow_id)
@@ -112,10 +112,10 @@ class UnitRouter:
             self._set_session(session_key, unit_name)
             await ft.emit("ROUTE_LLM", "done", {"unit": unit_name}, flow_id)
             await ft.emit("UNIT_DECIDE", "done", {"unit": unit_name}, flow_id)
-            return {"unit": unit_name, "message": user_input}
+            return {"unit": unit_name, "message": user_input, "user_id": user_id}
         except Exception as e:
             log.warning("Routing failed (%s), falling back to chat (trace=%s)", e, trace_id)
             self._set_session(session_key, "chat")
             await ft.emit("ROUTE_LLM", "error", {"error": str(e)}, flow_id)
             await ft.emit("UNIT_DECIDE", "done", {"unit": "chat", "fallback": True}, flow_id)
-            return {"unit": "chat", "message": user_input}
+            return {"unit": "chat", "message": user_input, "user_id": user_id}

@@ -25,6 +25,7 @@ def create_web_app(bot) -> FastAPI:
 
     _username = os.environ.get("WEBGUI_USERNAME", "admin")
     _password = os.environ.get("WEBGUI_PASSWORD", "")
+    _webgui_user_id = os.environ.get("WEBGUI_USER_ID", "")
 
     def _verify(credentials: HTTPBasicCredentials = Depends(security)):
         if not _password:
@@ -65,8 +66,8 @@ def create_web_app(bot) -> FastAPI:
             await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
             await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
             try:
-                await bot.database.log_conversation("webgui", "user", message)
-                result = await bot.unit_router.route(message, channel="webgui", flow_id=flow_id)
+                await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
+                result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", message)
 
@@ -76,9 +77,9 @@ def create_web_app(bot) -> FastAPI:
 
                 actual_unit = getattr(unit, "unit", unit)
                 actual_unit.session_done = False
-                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "flow_id": flow_id})
+                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id})
                 if actual_unit.session_done:
-                    bot.unit_router.clear_session("webgui")
+                    bot.unit_router.clear_session("webgui", _webgui_user_id)
                     actual_unit.clear_exchange("webgui")
                     await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                 elif response:
@@ -86,7 +87,7 @@ def create_web_app(bot) -> FastAPI:
                     await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
                 if response:
                     mode = "eco" if not bot.llm_router.ollama_available else "normal"
-                    await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)
+                    await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name, user_id=_webgui_user_id)
                     await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
                     await ft.emit("REPLY", "done", {"channel": "webgui"}, flow_id)
                 await ft.end_flow(flow_id)

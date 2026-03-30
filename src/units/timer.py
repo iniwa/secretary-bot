@@ -42,6 +42,7 @@ class TimerUnit(BaseUnit):
 
         user_message = parsed.get("message", "")
         channel = parsed.get("channel", "")
+        user_id = parsed.get("user_id", "")
         try:
             # LLMでパラメータ抽出
             extracted = await self._extract_params(user_message, channel)
@@ -59,9 +60,10 @@ class TimerUnit(BaseUnit):
                 "message": message,
                 "minutes": minutes,
                 "created_at": time.time(),
+                "user_id": user_id,
             }
             task = asyncio.create_task(
-                self._wait_and_notify(timer_id, minutes, message, user_message, channel_id)
+                self._wait_and_notify(timer_id, minutes, message, user_message, channel_id, user_id)
             )
             self._active_timers[timer_id] = task
             result = f"タイマー#{timer_id} を設定しました: {minutes}分後に「{message}」"
@@ -85,7 +87,7 @@ class TimerUnit(BaseUnit):
 
     async def _wait_and_notify(
         self, timer_id: int, minutes: float, message: str,
-        user_message: str, channel_id: int | None,
+        user_message: str, channel_id: int | None, user_id: str = "",
     ) -> None:
         await asyncio.sleep(minutes * 60)
         self._active_timers.pop(timer_id, None)
@@ -93,6 +95,9 @@ class TimerUnit(BaseUnit):
 
         raw = f"タイマー#{timer_id} 完了: {message}"
         notify_text = await self.personalize(raw, user_message)
+        # メンション付きで通知
+        if user_id and user_id != "webgui":
+            notify_text = f"<@{user_id}> {notify_text}"
         if channel_id:
             channel = self.bot.get_channel(channel_id)
             if channel:

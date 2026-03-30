@@ -39,22 +39,23 @@ class MemoUnit(BaseUnit):
 
         message = parsed.get("message", "")
         channel = parsed.get("channel", "")
+        user_id = parsed.get("user_id", "")
         try:
             # LLMでパラメータ抽出
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "save")
 
             if action == "search":
-                result = await self._search(extracted)
+                result = await self._search(extracted, user_id)
                 self.session_done = True
             elif action == "list":
-                result = await self._list()
+                result = await self._list(user_id)
                 # listの後はIDで削除等の操作が続く可能性があるのでセッション維持
             elif action == "delete":
-                result = await self._delete(extracted)
+                result = await self._delete(extracted, user_id)
                 self.session_done = True
             else:
-                result = await self._save(extracted)
+                result = await self._save(extracted, user_id)
                 self.session_done = True
             # リスト・検索結果は整形済みなので personalize しない
             if action not in ("list", "search"):
@@ -75,21 +76,27 @@ class MemoUnit(BaseUnit):
             prompt = prompt + context
         return await self.llm.extract_json(prompt)
 
-    async def _save(self, extracted: dict) -> str:
+    async def _save(self, extracted: dict, user_id: str = "") -> str:
         content = extracted.get("content", "")
         tags = extracted.get("tags", "")
         if not content:
             return "メモする内容を教えてください。"
         await self.bot.database.execute(
-            "INSERT INTO memos (content, tags, created_at) VALUES (?, ?, ?)",
-            (content, tags, jst_now()),
+            "INSERT INTO memos (content, tags, user_id, created_at) VALUES (?, ?, ?, ?)",
+            (content, tags, user_id, jst_now()),
         )
         return f"メモしました: {content}"
 
-    async def _list(self) -> str:
-        rows = await self.bot.database.fetchall(
-            "SELECT * FROM memos ORDER BY created_at DESC LIMIT 20",
-        )
+    async def _list(self, user_id: str = "") -> str:
+        if user_id:
+            rows = await self.bot.database.fetchall(
+                "SELECT * FROM memos WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+                (user_id,),
+            )
+        else:
+            rows = await self.bot.database.fetchall(
+                "SELECT * FROM memos ORDER BY created_at DESC LIMIT 20",
+            )
         if not rows:
             return "メモはありません。"
         lines = [f"📄 メモ一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
@@ -98,11 +105,14 @@ class MemoUnit(BaseUnit):
             lines.append(f"  #{r['id']}  {r['content']}{tags}")
         return "\n".join(lines)
 
-    async def _delete(self, extracted: dict) -> str:
+    async def _delete(self, extracted: dict, user_id: str = "") -> str:
         # 全削除
         memo_id = str(extracted.get("id", ""))
         if memo_id == "all":
-            await self.bot.database.execute("DELETE FROM memos")
+            if user_id:
+                await self.bot.database.execute("DELETE FROM memos WHERE user_id = ?", (user_id,))
+            else:
+                await self.bot.database.execute("DELETE FROM memos")
             return "メモを全件削除しました。"
 
         # 複数ID対応
@@ -121,9 +131,14 @@ class MemoUnit(BaseUnit):
             except ValueError:
                 results.append(f"#{mid_str} はIDとして不正です")
                 continue
-            existing = await self.bot.database.fetchone(
-                "SELECT * FROM memos WHERE id = ?", (mid,)
-            )
+            if user_id:
+                existing = await self.bot.database.fetchone(
+                    "SELECT * FROM memos WHERE id = ? AND user_id = ?", (mid, user_id)
+                )
+            else:
+                existing = await self.bot.database.fetchone(
+                    "SELECT * FROM memos WHERE id = ?", (mid,)
+                )
             if not existing:
                 results.append(f"#{mid} が見つかりません")
             else:
@@ -131,14 +146,20 @@ class MemoUnit(BaseUnit):
                 results.append(f"#{mid}「{existing['content']}」を削除しました")
         return "\n".join(results)
 
-    async def _search(self, extracted: dict) -> str:
+    async def _search(self, extracted: dict, user_id: str = "") -> str:
         keyword = extracted.get("keyword", "")
         if not keyword:
             return "検索キーワードを教えてください。"
-        rows = await self.bot.database.fetchall(
-            "SELECT * FROM memos WHERE content LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 10",
-            (f"%{keyword}%", f"%{keyword}%"),
-        )
+        if user_id:
+            rows = await self.bot.database.fetchall(
+                "SELECT * FROM memos WHERE user_id = ? AND (content LIKE ? OR tags LIKE ?) ORDER BY created_at DESC LIMIT 10",
+                (user_id, f"%{keyword}%", f"%{keyword}%"),
+            )
+        else:
+            rows = await self.bot.database.fetchall(
+                "SELECT * FROM memos WHERE content LIKE ? OR tags LIKE ? ORDER BY created_at DESC LIMIT 10",
+                (f"%{keyword}%", f"%{keyword}%"),
+            )
         if not rows:
             return f"「{keyword}」に一致するメモは見つかりませんでした。"
         lines = [f"🔍 メモ検索「{keyword}」（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]

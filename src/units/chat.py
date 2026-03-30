@@ -24,12 +24,13 @@ class ChatUnit(BaseUnit):
         await ft.emit("CB_CHECK", "done", {"state": self.breaker.state}, flow_id)
 
         message = parsed.get("message", "")
+        user_id = parsed.get("user_id", "")
         if not message:
             return None
 
         await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
         try:
-            response = await self._generate_response(message, flow_id)
+            response = await self._generate_response(message, flow_id, user_id=user_id)
             self.breaker.record_success()
             await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME}, flow_id)
 
@@ -38,7 +39,7 @@ class ChatUnit(BaseUnit):
             conversation = f"user: {message}\nassistant: {response}"
             try:
                 await self.ai_memory.extract_and_save(conversation)
-                await self.people_memory.extract_and_save(conversation)
+                await self.people_memory.extract_and_save(conversation, user_id=user_id)
                 await ft.emit("MEM_WRITE", "done", {}, flow_id)
             except Exception:
                 await ft.emit("MEM_WRITE", "error", {}, flow_id)
@@ -53,7 +54,7 @@ class ChatUnit(BaseUnit):
             await ft.emit("UNIT_EXEC", "error", {}, flow_id)
             raise
 
-    async def _generate_response(self, message: str, flow_id: str | None = None) -> str:
+    async def _generate_response(self, message: str, flow_id: str | None = None, user_id: str = "") -> str:
         ft = get_flow_tracker()
         config = self.bot.config
         character = config.get("character", {})
@@ -76,15 +77,15 @@ class ChatUnit(BaseUnit):
                 for m in ai_memories:
                     system_parts.append(f"- {m['text']}")
 
-            # 人物記憶
-            people_memories = self.people_memory.recall(message, n_results=3)
+            # 人物記憶（ユーザーごと）
+            people_memories = self.people_memory.recall(message, n_results=3, user_id=user_id)
             if people_memories:
                 system_parts.append("【ユーザーについて】")
                 for m in people_memories:
                     system_parts.append(f"- {m['text']}")
         else:
-            # 省エネモード: people_memory のみ
-            people_memories = self.people_memory.recall(message, n_results=3)
+            # 省エネモード: people_memory のみ（ユーザーごと）
+            people_memories = self.people_memory.recall(message, n_results=3, user_id=user_id)
             if people_memories:
                 system_parts.append("【ユーザーについて】")
                 for m in people_memories:

@@ -55,6 +55,12 @@ class BaseUnit(commands.Cog):
             if channel:
                 await channel.send(message)
 
+    async def notify_user(self, message: str, user_id: str = "") -> None:
+        """ユーザーメンション付きで管理チャンネルに通知する。"""
+        if user_id and user_id != "webgui":
+            message = f"<@{user_id}> {message}"
+        await self.notify(message)
+
     async def notify_error(self, message: str) -> None:
         await self.notify(f"[Error] {message}")
 

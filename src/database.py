@@ -14,13 +14,14 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     content    TEXT NOT NULL,
     tags       TEXT,
+    user_id    TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS todos (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     title      TEXT NOT NULL,
     done       BOOLEAN NOT NULL DEFAULT 0,
+    user_id    TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     done_at    DATETIME
 );
@@ -40,6 +42,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     repeat_interval INTEGER,
     active          BOOLEAN NOT NULL DEFAULT 1,
     notified        BOOLEAN NOT NULL DEFAULT 0,
+    user_id         TEXT NOT NULL DEFAULT '',
     done_at         DATETIME
 );
 
@@ -49,6 +52,7 @@ CREATE TABLE IF NOT EXISTS conversation_log (
     channel   TEXT NOT NULL,
     role      TEXT NOT NULL,
     content   TEXT NOT NULL,
+    user_id   TEXT NOT NULL DEFAULT '',
     mode      TEXT,
     unit      TEXT
 );
@@ -80,6 +84,12 @@ class Database:
             2: [
                 "ALTER TABLE reminders ADD COLUMN notified BOOLEAN NOT NULL DEFAULT 0",
                 "ALTER TABLE reminders ADD COLUMN done_at DATETIME",
+            ],
+            3: [
+                "ALTER TABLE reminders ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE todos ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE memos ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE conversation_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -130,10 +140,11 @@ class Database:
     async def log_conversation(
         self, channel: str, role: str, content: str,
         mode: str | None = None, unit: str | None = None,
+        user_id: str = "",
     ) -> None:
         await self.execute(
-            "INSERT INTO conversation_log (timestamp, channel, role, content, mode, unit) VALUES (?, ?, ?, ?, ?, ?)",
-            (jst_now(), channel, role, content, mode, unit),
+            "INSERT INTO conversation_log (timestamp, channel, role, content, user_id, mode, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), channel, role, content, user_id, mode, unit),
         )
 
     async def get_conversation_logs(

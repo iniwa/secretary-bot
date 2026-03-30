@@ -26,10 +26,13 @@ class ChromaMemory:
             metadatas=[metadata or {}],
         )
 
-    def search(self, collection_name: str, query: str, n_results: int = 5) -> list[dict]:
+    def search(self, collection_name: str, query: str, n_results: int = 5, where: dict | None = None) -> list[dict]:
         col = self.get_collection(collection_name)
         try:
-            results = col.query(query_texts=[query], n_results=n_results)
+            kwargs = {"query_texts": [query], "n_results": n_results}
+            if where:
+                kwargs["where"] = where
+            results = col.query(**kwargs)
         except Exception:
             return []
 

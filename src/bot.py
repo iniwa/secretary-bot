@@ -103,7 +103,7 @@ class SecretaryBot(commands.Bot):
             await ft.emit("LOCK", "done", {"user_id": user_id}, flow_id)
 
             # 会話ログ保存
-            await self.database.log_conversation("discord", "user", content)
+            await self.database.log_conversation("discord", "user", content, user_id=user_id)
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
@@ -118,7 +118,7 @@ class SecretaryBot(commands.Bot):
                 try:
                     actual_unit = getattr(unit, "unit", unit)
                     actual_unit.session_done = False
-                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "flow_id": flow_id})
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id})
                     if actual_unit.session_done:
                         self.unit_router.clear_session("discord", user_id)
                         actual_unit.clear_exchange(lock_key)
@@ -134,7 +134,7 @@ class SecretaryBot(commands.Bot):
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
+                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
                 await ft.emit("REPLY", "done", {"channel": "discord"}, flow_id)
             await ft.end_flow(flow_id)
