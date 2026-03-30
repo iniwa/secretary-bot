@@ -94,6 +94,32 @@ class BaseUnit(commands.Cog):
         await ft.emit("PERSONA_GEN", "done", {}, flow_id)
         return result
 
+    async def personalize_list(self, formatted_list: str, user_message: str, flow_id: str | None = None) -> str:
+        """リスト表示用: 整形済みリストを壊さず、前置きコメントをペルソナで生成して結合する。"""
+        ft = get_flow_tracker()
+        await ft.emit("PERSONA", "active", {}, flow_id)
+        if not self.bot.llm_router.ollama_available:
+            await ft.emit("PERSONA", "done", {"skipped": True}, flow_id)
+            return formatted_list
+        persona = self.bot.config.get("character", {}).get("persona", "")
+        if not persona:
+            await ft.emit("PERSONA", "done", {"skipped": True, "reason": "no_persona"}, flow_id)
+            return formatted_list
+        await ft.emit("PERSONA_GEN", "active", {}, flow_id)
+        system = (
+            f"{persona}\n\n"
+            "ユーザーのリスト表示リクエストに対して、リストを渡す前の一言コメントだけを生成してください。"
+            "リストの内容そのものは出力しないでください。1〜2文で簡潔に。"
+        )
+        prompt = (
+            f"ユーザーの発言: {user_message}\n\n"
+            "このリスト表示に対するキャラクターらしい短い前置きコメントを生成してください。"
+            "（リスト本体は別途表示されます）"
+        )
+        intro = await self.llm.generate(prompt, system=system)
+        await ft.emit("PERSONA_GEN", "done", {}, flow_id)
+        return f"{intro}\n{formatted_list}"
+
     # --- セッション文脈 ---
 
     def save_exchange(self, channel: str, user_msg: str, bot_response: str) -> None:

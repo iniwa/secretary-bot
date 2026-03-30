@@ -57,8 +57,9 @@ class MemoUnit(BaseUnit):
             else:
                 result = await self._save(extracted, user_id)
                 self.session_done = True
-            # リスト・検索結果は整形済みなので personalize しない
-            if action not in ("list", "search"):
+            if action in ("list", "search"):
+                result = await self.personalize_list(result, message, flow_id)
+            else:
                 result = await self.personalize(result, message, flow_id)
             self.breaker.record_success()
             await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": action}, flow_id)
