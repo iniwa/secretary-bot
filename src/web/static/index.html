@@ -103,10 +103,23 @@ td .done { text-decoration: line-through; color: var(--text-dim); }
 /* Flow page */
 #page-flow { flex-direction: row; gap: 0; padding: 0; }
 .flow-chart-area {
-  flex: 1; overflow: auto; padding: 1.5rem; touch-action: pinch-zoom;
-  display: flex; flex-direction: column; align-items: center;
+  flex: 1; overflow: hidden; position: relative;
+  touch-action: none; /* handled by JS pan/zoom */
 }
-.flow-chart-area svg { max-width: 100%; height: auto; cursor: pointer; }
+.flow-chart-area svg { cursor: grab; user-select: none; }
+.flow-chart-area svg:active { cursor: grabbing; }
+.flow-zoom-controls {
+  position: absolute; top: 0.8rem; right: 0.8rem; display: flex; flex-direction: column; gap: 0.3rem; z-index: 10;
+}
+.flow-zoom-controls button {
+  width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 1.2rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; opacity: 0.85;
+}
+.flow-zoom-controls button:hover { opacity: 1; background: var(--primary); }
+.flow-zoom-level {
+  font-size: 0.7rem; text-align: center; color: var(--text-dim); user-select: none;
+}
 .flow-info-panel {
   width: 300px; background: var(--surface); border-left: 1px solid var(--border);
   padding: 1rem; overflow-y: auto; flex-shrink: 0;
@@ -194,8 +207,14 @@ nav.bottom-nav { display: none; }
         <span id="flow-status-text">待機中</span>
         <span id="flow-duration" style="margin-left:auto;color:var(--text-dim)"></span>
       </div>
-      <div class="flow-chart-area">
+      <div class="flow-chart-area" id="flow-chart-area">
         <div id="flow-mermaid"></div>
+        <div class="flow-zoom-controls">
+          <button onclick="flowZoom(0.2)" title="ズームイン">+</button>
+          <button onclick="flowZoom(-0.2)" title="ズームアウト">−</button>
+          <button onclick="flowZoomReset()" title="リセット">⟲</button>
+          <div class="flow-zoom-level" id="flow-zoom-level">100%</div>
+        </div>
       </div>
     </div>
     <div class="flow-info-panel" id="flow-info-panel">
@@ -769,6 +788,92 @@ let flowSSE = null;
 let flowNodeStates = {}; // nodeId -> {status, detail, updated_at, started_at, duration_ms}
 let flowActive = false;
 
+// --- Zoom & Pan state ---
+let flowScale = 1.5;  // default: 150% for better readability
+let flowPanX = 0, flowPanY = 0;
+let flowIsPanning = false, flowPanStartX = 0, flowPanStartY = 0;
+const FLOW_SCALE_MIN = 0.5, FLOW_SCALE_MAX = 4.0, FLOW_SCALE_DEFAULT = 1.5;
+
+function flowApplyTransform() {
+  const svgEl = document.querySelector('#flow-mermaid svg');
+  if (!svgEl) return;
+  svgEl.style.transformOrigin = '0 0';
+  svgEl.style.transform = `translate(${flowPanX}px, ${flowPanY}px) scale(${flowScale})`;
+  document.getElementById('flow-zoom-level').textContent = Math.round(flowScale * 100) + '%';
+}
+
+function flowZoom(delta) {
+  const area = document.getElementById('flow-chart-area');
+  const rect = area.getBoundingClientRect();
+  const cx = rect.width / 2, cy = rect.height / 2;
+  flowZoomAt(delta, cx, cy);
+}
+
+function flowZoomAt(delta, cx, cy) {
+  const prev = flowScale;
+  flowScale = Math.min(FLOW_SCALE_MAX, Math.max(FLOW_SCALE_MIN, flowScale + delta));
+  const ratio = flowScale / prev;
+  flowPanX = cx - ratio * (cx - flowPanX);
+  flowPanY = cy - ratio * (cy - flowPanY);
+  flowApplyTransform();
+}
+
+function flowZoomReset() {
+  flowScale = FLOW_SCALE_DEFAULT;
+  flowPanX = 0; flowPanY = 0;
+  flowApplyTransform();
+}
+
+function flowInitPanZoom() {
+  const area = document.getElementById('flow-chart-area');
+  // Wheel zoom
+  area.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = area.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const delta = e.deltaY < 0 ? 0.15 : -0.15;
+    flowZoomAt(delta, cx, cy);
+  }, { passive: false });
+  // Mouse pan
+  area.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.node')) return; // allow node click
+    flowIsPanning = true; flowPanStartX = e.clientX - flowPanX; flowPanStartY = e.clientY - flowPanY;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!flowIsPanning) return;
+    flowPanX = e.clientX - flowPanStartX; flowPanY = e.clientY - flowPanStartY;
+    flowApplyTransform();
+  });
+  window.addEventListener('mouseup', () => { flowIsPanning = false; });
+  // Touch pan/pinch
+  let touchDist = 0;
+  area.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1 && !e.target.closest('.node')) {
+      flowIsPanning = true; flowPanStartX = e.touches[0].clientX - flowPanX; flowPanStartY = e.touches[0].clientY - flowPanY;
+    } else if (e.touches.length === 2) {
+      flowIsPanning = false;
+      touchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    }
+  }, { passive: false });
+  area.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 1 && flowIsPanning) {
+      flowPanX = e.touches[0].clientX - flowPanStartX; flowPanY = e.touches[0].clientY - flowPanStartY;
+      flowApplyTransform();
+    } else if (e.touches.length === 2) {
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      const rect = area.getBoundingClientRect();
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+      flowZoomAt((d - touchDist) * 0.005, cx, cy);
+      touchDist = d;
+    }
+  }, { passive: false });
+  area.addEventListener('touchend', () => { flowIsPanning = false; });
+  // Apply initial zoom
+  flowApplyTransform();
+}
+
 async function initFlow() {
   if (!flowInitialized) {
     mermaid.initialize({
@@ -787,8 +892,13 @@ async function initFlow() {
     const container = document.getElementById('flow-mermaid');
     const { svg } = await mermaid.render('flow-svg', FLOW_CHART_DEF);
     container.innerHTML = svg;
+    // Remove mermaid's default max-width so zoom works freely
+    const svgEl = container.querySelector('svg');
+    if (svgEl) { svgEl.style.maxWidth = 'none'; svgEl.style.height = 'auto'; }
     // Add click handlers to nodes
     addNodeClickHandlers();
+    // Init pan & zoom
+    flowInitPanZoom();
     flowInitialized = true;
   }
   // Load initial state

@@ -28,7 +28,13 @@
       "Bash(npx playwright:*)",
       "Bash(pkill -f debug_webgui)",
       "Bash(xargs grep:*)",
-      "Bash(grep -n DELEGATE_TO D:Gitai-mimich-agentsrcunits*.py)"
+      "Bash(grep -n DELEGATE_TO D:Gitai-mimich-agentsrcunits*.py)",
+      "Bash(find /d/Git/ai-mimich-agent -path */venv -prune -o -type f -name *.html -o -name *flow* -type f -print)",
+      "Bash(wc:*)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(pip list:*)",
+      "Bash(done)"
     ]
   }
 }
