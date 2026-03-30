@@ -22,6 +22,10 @@ class CircuitBreaker:
     _state: str = field(default="closed", init=False)  # closed / open / half_open
 
     @property
+    def state(self) -> str:
+        return self._state
+
+    @property
     def is_open(self) -> bool:
         if self._state == "open":
             if time.monotonic() - self._last_failure >= self.recovery_timeout:

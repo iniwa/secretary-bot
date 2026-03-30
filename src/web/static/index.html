@@ -100,6 +100,48 @@ nav.sidebar .nav-group button { padding-left: 1.4rem; font-size: 0.9rem; }
 td .tag { display: inline-block; background: var(--primary); padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; margin-right: 0.3rem; }
 td .done { text-decoration: line-through; color: var(--text-dim); }
 
+/* Flow page */
+#page-flow { flex-direction: row; gap: 0; padding: 0; }
+.flow-chart-area {
+  flex: 1; overflow: auto; padding: 1.5rem; touch-action: pinch-zoom;
+  display: flex; flex-direction: column; align-items: center;
+}
+.flow-chart-area svg { max-width: 100%; height: auto; cursor: pointer; }
+.flow-info-panel {
+  width: 300px; background: var(--surface); border-left: 1px solid var(--border);
+  padding: 1rem; overflow-y: auto; flex-shrink: 0;
+}
+.flow-info-panel h3 { margin-bottom: 0.8rem; font-size: 1rem; color: var(--accent); }
+.flow-info-row { padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+.flow-info-row .label { color: var(--text-dim); font-size: 0.8rem; }
+.flow-info-row .value { font-weight: bold; }
+.flow-status-bar {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.8rem 1.5rem;
+  background: var(--surface); border-bottom: 1px solid var(--border); font-size: 0.85rem;
+}
+.flow-status-indicator { width: 10px; height: 10px; border-radius: 50%; }
+.flow-status-indicator.idle { background: #555; }
+.flow-status-indicator.active { background: #f39c12; animation: pulse-glow 1.5s ease-in-out infinite; }
+.flow-status-indicator.done { background: #27ae60; }
+
+/* Mermaid node state overrides (applied to SVG) */
+.node-idle rect, .node-idle polygon { fill: #555 !important; stroke: #666 !important; }
+.node-active rect, .node-active polygon { fill: #f39c12 !important; stroke: #e67e22 !important; animation: pulse-glow 1.5s ease-in-out infinite; }
+.node-done rect, .node-done polygon { fill: #27ae60 !important; stroke: #2ecc71 !important; }
+.node-error rect, .node-error polygon { fill: #e74c3c !important; stroke: #c0392b !important; animation: shake 0.5s; }
+.node-skipped rect, .node-skipped polygon { fill: #444 !important; stroke: #555 !important; opacity: 0.6; }
+.node-active .nodeLabel, .node-done .nodeLabel, .node-error .nodeLabel { fill: #fff !important; color: #fff !important; }
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.7; filter: brightness(1.3); }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
 /* Mobile bottom nav */
 nav.bottom-nav { display: none; }
 @media (max-width: 768px) {
@@ -111,6 +153,9 @@ nav.bottom-nav { display: none; }
   nav.bottom-nav button.active { color: var(--accent); }
   body { flex-direction: column; }
   main { padding-bottom: 60px; }
+  /* Flow: info panel moves below chart on mobile */
+  #page-flow { flex-direction: column; }
+  .flow-info-panel { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 200px; }
 }
 </style>
 </head>
@@ -118,6 +163,7 @@ nav.bottom-nav { display: none; }
 <nav class="sidebar">
   <h1>Secretary Bot</h1>
   <button class="active" onclick="showPage('chat')">Chat</button>
+  <button onclick="showPage('flow')">Flow</button>
   <button onclick="showPage('status')">Status</button>
   <button onclick="showPage('logs')">Logs</button>
   <button onclick="showPage('maint')">Maintenance</button>
@@ -138,6 +184,26 @@ nav.bottom-nav { display: none; }
       <input type="text" id="chat-input" placeholder="メッセージを入力..." autocomplete="off">
       <button type="submit">送信</button>
     </form>
+  </div>
+
+  <!-- Flow -->
+  <div id="page-flow" class="page">
+    <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+      <div class="flow-status-bar">
+        <div id="flow-indicator" class="flow-status-indicator idle"></div>
+        <span id="flow-status-text">待機中</span>
+        <span id="flow-duration" style="margin-left:auto;color:var(--text-dim)"></span>
+      </div>
+      <div class="flow-chart-area">
+        <div id="flow-mermaid"></div>
+      </div>
+    </div>
+    <div class="flow-info-panel" id="flow-info-panel">
+      <h3>Node Info</h3>
+      <div id="flow-info-content">
+        <p style="color:var(--text-dim)">ノードをクリックすると詳細が表示されます</p>
+      </div>
+    </div>
   </div>
 
   <!-- Status -->
@@ -279,6 +345,7 @@ nav.bottom-nav { display: none; }
   <button onclick="showPage('unit-memo')">Memo</button>
 </nav>
 
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script>
 let logOffset = 0;
 
@@ -296,6 +363,7 @@ function showPage(name) {
     if (btn.startsWith(target.substring(0, 4))) b.classList.add('active');
   });
   saveState('page', name);
+  if (name === 'flow') initFlow();
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
@@ -638,6 +706,255 @@ async function loadTimers() {
     html += '</tbody></table>';
     container.innerHTML = html;
   } catch (err) { console.error(err); }
+}
+
+// ======================
+// Flow Chart
+// ======================
+
+const FLOW_CHART_DEF = `graph TD
+    MSG["MSG<br/>メッセージ受信"] --> LOCK["LOCK<br/>ユーザーロック取得"]
+    LOCK --> SESSION{"SESSION<br/>セッション継続?"}
+    SESSION -->|継続| REUSE["REUSE<br/>前回ユニット再利用"]
+    SESSION -->|新規| ROUTE_LLM["ROUTE_LLM<br/>ルーティングLLM"]
+    ROUTE_LLM --> LLM_SELECT_R{"LLM_SELECT_R<br/>LLM選択"}
+    LLM_SELECT_R -->|利用可| OLLAMA_R["OLLAMA_R<br/>Ollama"]
+    LLM_SELECT_R -->|FB| GEMINI_R["GEMINI_R<br/>Gemini"]
+    OLLAMA_R --> UNIT_DECIDE["UNIT_DECIDE<br/>ユニット決定"]
+    GEMINI_R --> UNIT_DECIDE
+    REUSE --> UNIT_DECIDE
+    UNIT_DECIDE --> CB_CHECK{"CB_CHECK<br/>サーキットブレーカー"}
+    CB_CHECK -->|OK| DELEGATE{"DELEGATE<br/>Windows委託?"}
+    CB_CHECK -->|open| CB_ERROR["CB_ERROR<br/>実行ブロック"]
+    DELEGATE -->|ローカル| MEM_SEARCH["MEM_SEARCH<br/>記憶検索"]
+    DELEGATE -->|委託| AGENT_SELECT["AGENT_SELECT<br/>エージェント選択"]
+    AGENT_SELECT --> AGENT_HEALTH{"AGENT_HEALTH<br/>ヘルスチェック"}
+    AGENT_HEALTH -->|OK| REMOTE_EXEC["REMOTE_EXEC<br/>リモート実行"]
+    AGENT_HEALTH -->|NG| MEM_SEARCH
+    MEM_SEARCH --> UNIT_EXEC["UNIT_EXEC<br/>ユニット実行"]
+    UNIT_EXEC --> LLM_SELECT{"LLM_SELECT<br/>応答LLM選択"}
+    LLM_SELECT -->|利用可| OLLAMA["OLLAMA<br/>Ollama"]
+    LLM_SELECT -->|FB| GEMINI["GEMINI<br/>Gemini"]
+    LLM_SELECT -->|全停止| ECO["ECO<br/>省エネモード"]
+    OLLAMA --> PERSONA{"PERSONA<br/>ペルソナ注入?"}
+    GEMINI --> PERSONA
+    PERSONA -->|Ollama有| PERSONA_GEN["PERSONA_GEN<br/>ペルソナ適用"]
+    PERSONA -->|Ollama無| SKIP_PERSONA["SKIP_PERSONA<br/>スキップ"]
+    PERSONA_GEN --> MEM_WRITE["MEM_WRITE<br/>記憶書き込み"]
+    SKIP_PERSONA --> MEM_WRITE
+    ECO --> MEM_WRITE
+    REMOTE_EXEC --> MEM_WRITE
+    MEM_WRITE --> DB_LOG["DB_LOG<br/>DB保存"]
+    DB_LOG --> SESSION_UPDATE["SESSION_UPDATE<br/>セッション更新"]
+    SESSION_UPDATE --> REPLY["REPLY<br/>返答送信"]
+    CB_ERROR --> REPLY`;
+
+// Node metadata for info panel
+const NODE_LABELS = {
+  MSG: 'メッセージ受信', LOCK: 'ユーザーロック取得', SESSION: 'セッション継続判定',
+  REUSE: '前回ユニット再利用', ROUTE_LLM: 'ルーティングLLM呼び出し',
+  LLM_SELECT_R: 'ルーティングLLM選択', OLLAMA_R: 'Ollama (ルーティング)', GEMINI_R: 'Gemini (ルーティング)',
+  UNIT_DECIDE: 'ユニット決定', CB_CHECK: 'サーキットブレーカー',
+  DELEGATE: 'Windows委託判定', CB_ERROR: '実行ブロック',
+  MEM_SEARCH: '記憶検索 (ChromaDB)', AGENT_SELECT: 'エージェント選択',
+  AGENT_HEALTH: 'ヘルスチェック', REMOTE_EXEC: 'リモート実行',
+  UNIT_EXEC: 'ユニット実行', LLM_SELECT: '応答LLM選択',
+  OLLAMA: 'Ollama', GEMINI: 'Gemini', ECO: '省エネモード',
+  PERSONA: 'ペルソナ注入判定', PERSONA_GEN: 'ペルソナ適用', SKIP_PERSONA: 'スキップ',
+  MEM_WRITE: '記憶書き込み', DB_LOG: 'DB保存', SESSION_UPDATE: 'セッション更新', REPLY: '返答送信',
+};
+
+let flowInitialized = false;
+let flowSSE = null;
+let flowNodeStates = {}; // nodeId -> {status, detail, updated_at, started_at, duration_ms}
+let flowActive = false;
+
+async function initFlow() {
+  if (!flowInitialized) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#555',
+        primaryTextColor: '#eee',
+        primaryBorderColor: '#666',
+        lineColor: '#888',
+        secondaryColor: '#16213e',
+        tertiaryColor: '#1a1a2e',
+      },
+      flowchart: { curve: 'basis', padding: 15 },
+    });
+    const container = document.getElementById('flow-mermaid');
+    const { svg } = await mermaid.render('flow-svg', FLOW_CHART_DEF);
+    container.innerHTML = svg;
+    // Add click handlers to nodes
+    addNodeClickHandlers();
+    flowInitialized = true;
+  }
+  // Load initial state
+  await loadFlowState();
+  // Connect SSE
+  connectFlowSSE();
+}
+
+function addNodeClickHandlers() {
+  const svgEl = document.querySelector('#flow-mermaid svg');
+  if (!svgEl) return;
+  // Mermaid generates nodes with ids like "flowchart-MSG-0"
+  const nodes = svgEl.querySelectorAll('.node');
+  nodes.forEach(node => {
+    node.style.cursor = 'pointer';
+    node.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nodeId = extractNodeId(node.id);
+      if (nodeId) showNodeInfo(nodeId);
+    });
+  });
+}
+
+function extractNodeId(svgId) {
+  // SVG id format: "flowchart-NODEID-N"
+  const m = svgId.match(/^flowchart-(.+?)-\d+$/);
+  return m ? m[1] : null;
+}
+
+function highlightNode(nodeId, status) {
+  const svgEl = document.querySelector('#flow-mermaid svg');
+  if (!svgEl) return;
+  // Find the node group
+  const nodes = svgEl.querySelectorAll('.node');
+  nodes.forEach(node => {
+    const nid = extractNodeId(node.id);
+    if (nid === nodeId) {
+      node.classList.remove('node-idle', 'node-active', 'node-done', 'node-error', 'node-skipped');
+      node.classList.add('node-' + status);
+    }
+  });
+}
+
+function resetAllNodes() {
+  const svgEl = document.querySelector('#flow-mermaid svg');
+  if (!svgEl) return;
+  svgEl.querySelectorAll('.node').forEach(node => {
+    node.classList.remove('node-idle', 'node-active', 'node-done', 'node-error', 'node-skipped');
+    node.classList.add('node-idle');
+  });
+}
+
+async function loadFlowState() {
+  try {
+    const res = await fetch('/api/flow/state');
+    const data = await res.json();
+    if (data.flow) {
+      flowNodeStates = data.flow.nodes || {};
+      flowActive = data.active;
+      // Apply states to chart
+      Object.entries(flowNodeStates).forEach(([nodeId, info]) => {
+        highlightNode(nodeId, info.status || 'idle');
+      });
+      updateFlowStatusBar(data.active, data.flow);
+    } else {
+      resetAllNodes();
+      updateFlowStatusBar(false, null);
+    }
+  } catch (err) { console.error('Flow state load failed:', err); }
+}
+
+function connectFlowSSE() {
+  if (flowSSE) {
+    flowSSE.close();
+  }
+  flowSSE = new EventSource('/api/flow/stream');
+  flowSSE.onmessage = (e) => {
+    try {
+      const event = JSON.parse(e.data);
+      handleFlowEvent(event);
+    } catch (err) { console.error('SSE parse error:', err); }
+  };
+  flowSSE.onerror = () => {
+    // Reconnect after 3s
+    setTimeout(() => {
+      if (document.getElementById('page-flow').classList.contains('active')) {
+        connectFlowSSE();
+      }
+    }, 3000);
+  };
+}
+
+function handleFlowEvent(event) {
+  if (event.type === 'flow_start') {
+    flowActive = true;
+    flowNodeStates = {};
+    resetAllNodes();
+    updateFlowStatusBar(true, { started_at: event.timestamp });
+  } else if (event.type === 'node_update') {
+    const { node, status, detail, timestamp } = event;
+    flowNodeStates[node] = flowNodeStates[node] || {};
+    flowNodeStates[node].status = status;
+    flowNodeStates[node].detail = detail;
+    flowNodeStates[node].updated_at = timestamp;
+    if (status === 'active' && !flowNodeStates[node].started_at) {
+      flowNodeStates[node].started_at = timestamp;
+    }
+    if ((status === 'done' || status === 'error') && flowNodeStates[node].started_at) {
+      flowNodeStates[node].duration_ms = Math.round((timestamp - flowNodeStates[node].started_at) * 1000);
+    }
+    highlightNode(node, status);
+  } else if (event.type === 'flow_end') {
+    flowActive = false;
+    updateFlowStatusBar(false, { duration_ms: event.duration_ms });
+  }
+}
+
+function updateFlowStatusBar(active, flow) {
+  const indicator = document.getElementById('flow-indicator');
+  const text = document.getElementById('flow-status-text');
+  const duration = document.getElementById('flow-duration');
+  indicator.classList.remove('idle', 'active', 'done');
+  if (active) {
+    indicator.classList.add('active');
+    text.textContent = '処理中...';
+    duration.textContent = '';
+  } else if (flow && flow.duration_ms !== undefined) {
+    indicator.classList.add('done');
+    text.textContent = '最後の処理完了';
+    duration.textContent = (flow.duration_ms / 1000).toFixed(1) + '秒';
+  } else {
+    indicator.classList.add('idle');
+    text.textContent = '待機中';
+    duration.textContent = '';
+  }
+}
+
+function showNodeInfo(nodeId) {
+  const panel = document.getElementById('flow-info-content');
+  const label = NODE_LABELS[nodeId] || nodeId;
+  const state = flowNodeStates[nodeId];
+
+  let html = `<div class="flow-info-row"><div class="label">ノード</div><div class="value">${escapeHtml(label)}</div></div>`;
+
+  if (state) {
+    const statusMap = { active: '処理中', done: '完了', error: 'エラー', skipped: 'スキップ', idle: '待機' };
+    const statusColor = { active: '#f39c12', done: '#27ae60', error: '#e74c3c', skipped: '#555', idle: '#999' };
+    const st = state.status || 'idle';
+    html += `<div class="flow-info-row"><div class="label">状態</div><div class="value" style="color:${statusColor[st]}">${statusMap[st] || st}</div></div>`;
+
+    if (state.duration_ms !== undefined) {
+      html += `<div class="flow-info-row"><div class="label">処理時間</div><div class="value">${state.duration_ms}ms</div></div>`;
+    }
+
+    // Detail fields
+    if (state.detail && Object.keys(state.detail).length > 0) {
+      html += `<div class="flow-info-row" style="margin-top:0.5rem"><div class="label">詳細</div></div>`;
+      for (const [key, val] of Object.entries(state.detail)) {
+        html += `<div class="flow-info-row" style="padding-left:0.5rem"><div class="label">${escapeHtml(key)}</div><div class="value" style="font-size:0.85rem">${escapeHtml(String(val))}</div></div>`;
+      }
+    }
+  } else {
+    html += `<div class="flow-info-row"><div class="label">状態</div><div class="value" style="color:#999">待機中</div></div>`;
+  }
+
+  panel.innerHTML = html;
 }
 
 // --- チャット履歴をバックエンドから復元 ---

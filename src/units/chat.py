@@ -1,6 +1,7 @@
 """雑談・相談ユニット（フォールバック先）。"""
 
 from src.errors import AllLLMsUnavailableError
+from src.flow_tracker import get_flow_tracker
 from src.memory.ai_memory import AIMemory
 from src.memory.people_memory import PeopleMemory
 from src.units.base_unit import BaseUnit
@@ -16,37 +17,50 @@ class ChatUnit(BaseUnit):
         self.people_memory = PeopleMemory(bot)
 
     async def execute(self, ctx, parsed: dict) -> str | None:
+        ft = get_flow_tracker()
+        flow_id = parsed.get("flow_id")
+        await ft.emit("CB_CHECK", "active", {"unit": self.UNIT_NAME}, flow_id)
         self.breaker.check()
+        await ft.emit("CB_CHECK", "done", {"state": self.breaker.state}, flow_id)
+
         message = parsed.get("message", "")
         if not message:
             return None
 
+        await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
         try:
-            response = await self._generate_response(message)
+            response = await self._generate_response(message, flow_id)
             self.breaker.record_success()
+            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME}, flow_id)
 
             # 記憶抽出（非同期・失敗しても無視）
+            await ft.emit("MEM_WRITE", "active", {}, flow_id)
             conversation = f"user: {message}\nassistant: {response}"
             try:
                 await self.ai_memory.extract_and_save(conversation)
                 await self.people_memory.extract_and_save(conversation)
+                await ft.emit("MEM_WRITE", "done", {}, flow_id)
             except Exception:
-                pass
+                await ft.emit("MEM_WRITE", "error", {}, flow_id)
 
             return response
         except AllLLMsUnavailableError:
             self.breaker.record_failure()
+            await ft.emit("UNIT_EXEC", "error", {"reason": "all_llms_unavailable"}, flow_id)
             return "今はちょっと頭が働かないので、また後で話しかけてね。"
         except Exception:
             self.breaker.record_failure()
+            await ft.emit("UNIT_EXEC", "error", {}, flow_id)
             raise
 
-    async def _generate_response(self, message: str) -> str:
+    async def _generate_response(self, message: str, flow_id: str | None = None) -> str:
+        ft = get_flow_tracker()
         config = self.bot.config
         character = config.get("character", {})
         ollama_available = self.bot.llm_router.ollama_available
 
-        # システムプロンプト構築
+        # 記憶検索
+        await ft.emit("MEM_SEARCH", "active", {}, flow_id)
         system_parts = []
 
         if ollama_available:
@@ -75,6 +89,8 @@ class ChatUnit(BaseUnit):
                 system_parts.append("【ユーザーについて】")
                 for m in people_memories:
                     system_parts.append(f"- {m['text']}")
+
+        await ft.emit("MEM_SEARCH", "done", {"count": len(system_parts)}, flow_id)
 
         system = "\n".join(system_parts) if system_parts else None
 

@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from src.database import JST, jst_now
+from src.flow_tracker import get_flow_tracker
 from src.units.base_unit import BaseUnit
 
 _WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
@@ -44,7 +45,13 @@ class ReminderUnit(BaseUnit):
     # --- メイン処理 ---
 
     async def execute(self, ctx, parsed: dict) -> str | None:
+        ft = get_flow_tracker()
+        flow_id = parsed.get("flow_id")
+        await ft.emit("CB_CHECK", "active", {"unit": self.UNIT_NAME}, flow_id)
         self.breaker.check()
+        await ft.emit("CB_CHECK", "done", {"state": self.breaker.state}, flow_id)
+        await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
+
         message = parsed.get("message", "")
         channel = parsed.get("channel", "")
         try:
@@ -85,11 +92,13 @@ class ReminderUnit(BaseUnit):
                 self.session_done = True
             # リスト表示は整形済みなので personalize しない
             if action not in ("list", "todo_list"):
-                result = await self.personalize(result, message)
+                result = await self.personalize(result, message, flow_id)
             self.breaker.record_success()
+            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": action}, flow_id)
             return result
         except Exception:
             self.breaker.record_failure()
+            await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
             raise
 
     async def _extract_params(self, user_input: str, channel: str = "") -> dict:

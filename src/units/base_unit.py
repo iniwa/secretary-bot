@@ -5,6 +5,7 @@ import os
 from discord.ext import commands
 
 from src.circuit_breaker import CircuitBreaker
+from src.flow_tracker import get_flow_tracker
 from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger
 
@@ -36,7 +37,10 @@ class BaseUnit(commands.Cog):
         )
 
     async def execute(self, ctx, parsed: dict) -> str | None:
-        """ユニットの主処理。サブクラスでオーバーライドする。"""
+        """ユニットの主処理。サブクラスでオーバーライドする。
+
+        サブクラスは _do_execute() をオーバーライドしてください。
+        """
         raise NotImplementedError
 
     async def on_heartbeat(self) -> None:
@@ -56,13 +60,20 @@ class BaseUnit(commands.Cog):
 
     # --- キャラクター変換 ---
 
-    async def personalize(self, raw_result: str, user_message: str) -> str:
+    async def personalize(self, raw_result: str, user_message: str, flow_id: str | None = None) -> str:
         """Ollama稼働中のみペルソナを注入して返答を生成。省エネ時は定型文をそのまま返す。"""
+        ft = get_flow_tracker()
+        await ft.emit("PERSONA", "active", {}, flow_id)
         if not self.bot.llm_router.ollama_available:
+            await ft.emit("PERSONA", "done", {"skipped": True}, flow_id)
+            await ft.emit("SKIP_PERSONA", "done", {}, flow_id)
             return raw_result
         persona = self.bot.config.get("character", {}).get("persona", "")
         if not persona:
+            await ft.emit("PERSONA", "done", {"skipped": True, "reason": "no_persona"}, flow_id)
+            await ft.emit("SKIP_PERSONA", "done", {}, flow_id)
             return raw_result
+        await ft.emit("PERSONA_GEN", "active", {}, flow_id)
         system = (
             f"{persona}\n\n"
             "以下の処理結果をユーザーに伝えてください。"
@@ -73,7 +84,9 @@ class BaseUnit(commands.Cog):
             f"処理結果: {raw_result}\n\n"
             "この処理結果をキャラクターらしい口調でユーザーに伝えてください。"
         )
-        return await self.llm.generate(prompt, system=system)
+        result = await self.llm.generate(prompt, system=system)
+        await ft.emit("PERSONA_GEN", "done", {}, flow_id)
+        return result
 
     # --- セッション文脈 ---
 

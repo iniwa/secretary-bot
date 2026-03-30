@@ -1,6 +1,7 @@
 """メモの保存・キーワード検索ユニット。"""
 
 from src.database import jst_now
+from src.flow_tracker import get_flow_tracker
 from src.units.base_unit import BaseUnit
 
 _EXTRACT_PROMPT = """\
@@ -29,7 +30,13 @@ class MemoUnit(BaseUnit):
     UNIT_DESCRIPTION = "メモの保存やキーワード検索。「〜をメモして」「〜のメモある？」など。"
 
     async def execute(self, ctx, parsed: dict) -> str | None:
+        ft = get_flow_tracker()
+        flow_id = parsed.get("flow_id")
+        await ft.emit("CB_CHECK", "active", {"unit": self.UNIT_NAME}, flow_id)
         self.breaker.check()
+        await ft.emit("CB_CHECK", "done", {"state": self.breaker.state}, flow_id)
+        await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
+
         message = parsed.get("message", "")
         channel = parsed.get("channel", "")
         try:
@@ -51,11 +58,13 @@ class MemoUnit(BaseUnit):
                 self.session_done = True
             # リスト・検索結果は整形済みなので personalize しない
             if action not in ("list", "search"):
-                result = await self.personalize(result, message)
+                result = await self.personalize(result, message, flow_id)
             self.breaker.record_success()
+            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": action}, flow_id)
             return result
         except Exception:
             self.breaker.record_failure()
+            await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
             raise
 
     async def _extract_params(self, user_input: str, channel: str = "") -> dict:

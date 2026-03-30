@@ -2,6 +2,7 @@
 
 import time
 
+from src.flow_tracker import get_flow_tracker
 from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger, new_trace_id
 
@@ -76,18 +77,26 @@ class UnitRouter:
         session_key = f"{channel}:{user_id}" if user_id else channel
         self._sessions.pop(session_key, None)
 
-    async def route(self, user_input: str, channel: str = "discord", user_id: str = "") -> dict:
+    async def route(self, user_input: str, channel: str = "discord", user_id: str = "", flow_id: str | None = None) -> dict:
         trace_id = new_trace_id()
         log.info("Routing input (trace=%s): %.80s", trace_id, user_input)
+        ft = get_flow_tracker()
 
         session_key = f"{channel}:{user_id}" if user_id else channel
 
         # 直前のユニットとの会話継続判定
+        await ft.emit("SESSION", "active", {"session_key": session_key}, flow_id)
         prev_unit = self._get_session(session_key)
         if prev_unit and prev_unit != "chat" and self._is_continuation(user_input):
             log.info("Continuing with unit: %s (trace=%s)", prev_unit, trace_id)
             self._set_session(session_key, prev_unit)
+            await ft.emit("SESSION", "done", {"continued": True, "unit": prev_unit}, flow_id)
+            await ft.emit("REUSE", "done", {"unit": prev_unit}, flow_id)
+            await ft.emit("UNIT_DECIDE", "done", {"unit": prev_unit}, flow_id)
             return {"unit": prev_unit, "message": user_input}
+
+        await ft.emit("SESSION", "done", {"continued": False}, flow_id)
+        await ft.emit("ROUTE_LLM", "active", {}, flow_id)
 
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
             units_text=self._build_units_text(),
@@ -101,8 +110,12 @@ class UnitRouter:
             unit_name = result["unit"]
             log.info("Routed to: %s (trace=%s)", unit_name, trace_id)
             self._set_session(session_key, unit_name)
+            await ft.emit("ROUTE_LLM", "done", {"unit": unit_name}, flow_id)
+            await ft.emit("UNIT_DECIDE", "done", {"unit": unit_name}, flow_id)
             return {"unit": unit_name, "message": user_input}
         except Exception as e:
             log.warning("Routing failed (%s), falling back to chat (trace=%s)", e, trace_id)
             self._set_session(session_key, "chat")
+            await ft.emit("ROUTE_LLM", "error", {"error": str(e)}, flow_id)
+            await ft.emit("UNIT_DECIDE", "done", {"unit": "chat", "fallback": True}, flow_id)
             return {"unit": "chat", "message": user_input}

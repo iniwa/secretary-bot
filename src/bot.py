@@ -11,6 +11,7 @@ import yaml
 from discord.ext import commands
 
 from src.database import Database
+from src.flow_tracker import get_flow_tracker
 from src.heartbeat import Heartbeat
 from src.llm.router import LLMRouter
 from src.logger import get_logger, setup_logging
@@ -96,12 +97,17 @@ class SecretaryBot(commands.Bot):
             self._user_locks[lock_key] = asyncio.Lock()
 
         async with self._user_locks[lock_key]:
+            ft = get_flow_tracker()
+            flow_id = await ft.start_flow()
+            await ft.emit("MSG", "done", {"content": content[:80], "channel": "discord"}, flow_id)
+            await ft.emit("LOCK", "done", {"user_id": user_id}, flow_id)
+
             # 会話ログ保存
             await self.database.log_conversation("discord", "user", content)
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                result = await self.unit_router.route(content, channel="discord", user_id=user_id)
+                result = await self.unit_router.route(content, channel="discord", user_id=user_id, flow_id=flow_id)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", content)
 
@@ -112,20 +118,26 @@ class SecretaryBot(commands.Bot):
                 try:
                     actual_unit = getattr(unit, "unit", unit)
                     actual_unit.session_done = False
-                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key})
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "flow_id": flow_id})
                     if actual_unit.session_done:
                         self.unit_router.clear_session("discord", user_id)
                         actual_unit.clear_exchange(lock_key)
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                     elif response:
                         actual_unit.save_exchange(lock_key, user_message, response)
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
                 except Exception as e:
                     log.error("Unit execution failed: %s", e, exc_info=True)
                     response = "ごめんなさい、処理中にエラーが発生しました。"
+                    await ft.emit("SESSION_UPDATE", "error", {"error": str(e)}, flow_id)
 
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
                 await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name)
+                await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
+                await ft.emit("REPLY", "done", {"channel": "discord"}, flow_id)
+            await ft.end_flow(flow_id)
 
     async def notify_admin(self, message: str) -> None:
         if self._admin_channel_id:

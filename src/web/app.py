@@ -1,6 +1,7 @@
 """FastAPI WebGUI + /health エンドポイント。"""
 
 import asyncio
+import json
 import os
 import secrets
 import subprocess
@@ -10,7 +11,9 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import StreamingResponse
 
+from src.flow_tracker import get_flow_tracker
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -57,9 +60,13 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(400, "message is required")
 
         async with _webgui_lock:
+            ft = get_flow_tracker()
+            flow_id = await ft.start_flow()
+            await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
+            await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
             try:
                 await bot.database.log_conversation("webgui", "user", message)
-                result = await bot.unit_router.route(message, channel="webgui")
+                result = await bot.unit_router.route(message, channel="webgui", flow_id=flow_id)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", message)
 
@@ -69,18 +76,25 @@ def create_web_app(bot) -> FastAPI:
 
                 actual_unit = getattr(unit, "unit", unit)
                 actual_unit.session_done = False
-                response = await unit.execute(None, {"message": user_message, "channel": "webgui"})
+                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "flow_id": flow_id})
                 if actual_unit.session_done:
                     bot.unit_router.clear_session("webgui")
                     actual_unit.clear_exchange("webgui")
+                    await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                 elif response:
                     actual_unit.save_exchange("webgui", user_message, response)
+                    await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
                 if response:
                     mode = "eco" if not bot.llm_router.ollama_available else "normal"
                     await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name)
+                    await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
+                    await ft.emit("REPLY", "done", {"channel": "webgui"}, flow_id)
+                await ft.end_flow(flow_id)
                 return {"response": response or "", "unit": unit_name}
             except Exception as e:
                 log.error("WebGUI chat error: %s", e, exc_info=True)
+                await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
+                await ft.end_flow(flow_id)
                 return JSONResponse(
                     status_code=200,
                     content={"response": f"Error: {e}", "unit": "system"},
@@ -289,6 +303,37 @@ def create_web_app(bot) -> FastAPI:
         persona = body.get("persona", "")
         bot.config.setdefault("character", {})["persona"] = persona
         return {"ok": True}
+
+    # --- フロー追跡 ---
+
+    @app.get("/api/flow/state", dependencies=[Depends(_verify)])
+    async def get_flow_state():
+        tracker = get_flow_tracker()
+        return tracker.get_state()
+
+    @app.get("/api/flow/stream", dependencies=[Depends(_verify)])
+    async def flow_stream():
+        tracker = get_flow_tracker()
+        queue = tracker.subscribe()
+
+        async def event_generator():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                tracker.unsubscribe(queue)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # --- 静的ファイル & フロントエンド ---
 

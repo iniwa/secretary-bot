@@ -1,6 +1,7 @@
 """LLMルーター — Ollama優先・Geminiフォールバック。"""
 
 from src.errors import AllLLMsUnavailableError, GeminiError, OllamaUnavailableError
+from src.flow_tracker import get_flow_tracker
 from src.llm.gemini_client import GeminiClient
 from src.llm.ollama_client import OllamaClient
 from src.logger import get_logger
@@ -66,7 +67,9 @@ class LLMRouter:
         ollama_only: bool = False,
         ollama_model: str | None = None,
         gemini_model: str | None = None,
+        flow_id: str | None = None,
     ) -> str:
+        ft = get_flow_tracker()
         debug_cfg = self._config.get("debug", {})
         dry_run = debug_cfg.get("dry_run", False)
         if dry_run:
@@ -75,22 +78,37 @@ class LLMRouter:
                 return responses[purpose]
             return f"[dry_run] purpose={purpose}"
 
+        await ft.emit("LLM_SELECT", "active", {"purpose": purpose}, flow_id)
+
         # Ollama を優先
         if self.ollama_available:
             try:
-                return await self.ollama.generate(prompt, system=system, model=ollama_model)
+                await ft.emit("OLLAMA", "active", {"model": ollama_model or self.ollama.model}, flow_id)
+                result = await self.ollama.generate(prompt, system=system, model=ollama_model)
+                await ft.emit("OLLAMA", "done", {"model": ollama_model or self.ollama.model}, flow_id)
+                await ft.emit("LLM_SELECT", "done", {"selected": "ollama"}, flow_id)
+                return result
             except OllamaUnavailableError:
                 self.ollama_available = False
                 log.warning("Ollama became unavailable, checking Gemini fallback")
+                await ft.emit("OLLAMA", "error", {"reason": "unavailable"}, flow_id)
 
         if ollama_only:
+            await ft.emit("LLM_SELECT", "error", {"reason": "ollama_only_but_unavailable"}, flow_id)
             raise AllLLMsUnavailableError("Ollama required but unavailable")
 
         # Gemini フォールバック
         if self._is_gemini_allowed(purpose):
             try:
-                return await self.gemini.generate(prompt, system=system, model=gemini_model)
+                await ft.emit("GEMINI", "active", {"purpose": purpose}, flow_id)
+                result = await self.gemini.generate(prompt, system=system, model=gemini_model)
+                await ft.emit("GEMINI", "done", {"purpose": purpose}, flow_id)
+                await ft.emit("LLM_SELECT", "done", {"selected": "gemini"}, flow_id)
+                return result
             except GeminiError as e:
                 log.error("Gemini also failed: %s", e)
+                await ft.emit("GEMINI", "error", {"error": str(e)}, flow_id)
 
+        await ft.emit("ECO", "done", {"reason": "all_llms_unavailable"}, flow_id)
+        await ft.emit("LLM_SELECT", "error", {"reason": "all_unavailable"}, flow_id)
         raise AllLLMsUnavailableError(f"No LLM available for purpose={purpose}")
