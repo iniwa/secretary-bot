@@ -190,6 +190,21 @@ nav.bottom-nav { display: none; }
     </div>
 
     <div class="maint-section" style="margin-top:1rem">
+      <h3>LLM Settings</h3>
+      <div class="setting-row">
+        <span>Ollama Model (Global)</span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="text" id="ollama-model" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+        </div>
+      </div>
+      <div id="unit-model-list"></div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.8rem;align-items:center">
+        <button class="btn-update" onclick="saveLLMConfig()">保存</button>
+        <span id="llm-status" style="font-size:0.85rem;color:var(--text-dim)"></span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
       <h3>Gemini Settings</h3>
       <div id="gemini-settings"></div>
     </div>
@@ -284,7 +299,7 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
@@ -449,6 +464,49 @@ async function savePersona() {
   status.textContent = '保存中...';
   try {
     await fetch('/api/persona', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({persona}) });
+    status.textContent = '保存しました';
+    status.style.color = '#4caf50';
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+    status.style.color = 'var(--accent)';
+  }
+  btn.disabled = false;
+  setTimeout(() => { status.textContent = ''; }, 3000);
+}
+
+const UNIT_NAMES = ['reminder', 'memo', 'timer', 'status', 'chat'];
+
+async function loadLLMConfig() {
+  try {
+    const res = await fetch('/api/llm-config');
+    const data = await res.json();
+    document.getElementById('ollama-model').value = data.ollama_model || '';
+    const container = document.getElementById('unit-model-list');
+    container.innerHTML = '';
+    UNIT_NAMES.forEach(name => {
+      const val = (data.unit_models && data.unit_models[name]) || '';
+      container.innerHTML += `
+        <div class="setting-row">
+          <span style="font-size:0.9rem;color:var(--text-dim)">${name}</span>
+          <input type="text" id="unit-model-${name}" value="${val}" placeholder="(global)" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.9rem">
+        </div>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function saveLLMConfig() {
+  const btn = document.querySelector('#page-settings .maint-section:nth-child(2) .btn-update');
+  const status = document.getElementById('llm-status');
+  const ollama_model = document.getElementById('ollama-model').value.trim();
+  const unit_models = {};
+  UNIT_NAMES.forEach(name => {
+    const el = document.getElementById('unit-model-' + name);
+    if (el) unit_models[name] = el.value.trim();
+  });
+  btn.disabled = true;
+  status.textContent = '保存中...';
+  try {
+    await fetch('/api/llm-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ollama_model, unit_models}) });
     status.textContent = '保存しました';
     status.style.color = '#4caf50';
   } catch (err) {

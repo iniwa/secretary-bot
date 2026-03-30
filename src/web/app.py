@@ -230,6 +230,53 @@ def create_web_app(bot) -> FastAPI:
         bot.llm_router._gemini_config = gemini_cfg
         return {"ok": True}
 
+    # --- LLM設定 ---
+
+    @app.get("/api/llm-config", dependencies=[Depends(_verify)])
+    async def get_llm_config():
+        llm_cfg = bot.config.get("llm", {})
+        units_cfg = bot.config.get("units", {})
+        # ユニットごとのモデル上書き情報を収集
+        unit_models = {}
+        for name, ucfg in units_cfg.items():
+            unit_llm = ucfg.get("llm", {})
+            if unit_llm.get("ollama_model"):
+                unit_models[name] = unit_llm["ollama_model"]
+        return {
+            "ollama_model": llm_cfg.get("ollama_model", "qwen3"),
+            "unit_models": unit_models,
+        }
+
+    @app.post("/api/llm-config", dependencies=[Depends(_verify)])
+    async def set_llm_config(request: Request):
+        body = await request.json()
+
+        # グローバルモデル変更
+        if "ollama_model" in body:
+            model = body["ollama_model"].strip()
+            bot.config.setdefault("llm", {})["ollama_model"] = model
+            bot.llm_router.ollama.model = model
+            # ユニット別上書きが無いユニットにも反映
+            for cog in bot.cogs.values():
+                if hasattr(cog, "llm") and cog.llm._ollama_model is None:
+                    pass  # model=None → OllamaClient.model を参照するので自動反映
+
+        # ユニット別モデル変更
+        if "unit_models" in body:
+            for unit_name, model in body["unit_models"].items():
+                model = model.strip() if model else ""
+                ucfg = bot.config.setdefault("units", {}).setdefault(unit_name, {})
+                if model:
+                    ucfg.setdefault("llm", {})["ollama_model"] = model
+                else:
+                    ucfg.get("llm", {}).pop("ollama_model", None)
+                # 実行中のユニットのUnitLLMにも反映
+                cog = bot.cogs.get(unit_name)
+                if cog and hasattr(cog, "llm"):
+                    cog.llm._ollama_model = model or None
+
+        return {"ok": True}
+
     # --- ペルソナ設定 ---
 
     @app.get("/api/persona", dependencies=[Depends(_verify)])
