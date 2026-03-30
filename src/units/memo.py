@@ -1,5 +1,6 @@
 """メモの保存・キーワード検索ユニット。"""
 
+from src.database import jst_now
 from src.units.base_unit import BaseUnit
 
 _EXTRACT_PROMPT = """\
@@ -71,8 +72,8 @@ class MemoUnit(BaseUnit):
         if not content:
             return "メモする内容を教えてください。"
         await self.bot.database.execute(
-            "INSERT INTO memos (content, tags) VALUES (?, ?)",
-            (content, tags),
+            "INSERT INTO memos (content, tags, created_at) VALUES (?, ?, ?)",
+            (content, tags, jst_now()),
         )
         return f"メモしました: {content}"
 

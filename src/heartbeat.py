@@ -2,6 +2,7 @@
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from src.database import jst_now
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -57,8 +58,8 @@ class Heartbeat:
         try:
             summary = await self.bot.llm_router.generate(summary_prompt, purpose="memory_extraction")
             await self.bot.database.execute(
-                "INSERT INTO conversation_summary (summary) VALUES (?)",
-                (summary,),
+                "INSERT INTO conversation_summary (summary, created_at) VALUES (?, ?)",
+                (summary, jst_now()),
             )
             log.info("Context compacted")
         except Exception as e:

@@ -317,6 +317,15 @@ function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function fmtTime(ts) {
+  if (!ts) return '-';
+  // DB timestamps are JST strings like "2026-03-30 14:00:00"
+  // Just format to MM/DD HH:MM for display
+  const m = ts.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
+  if (!m) return ts;
+  return `${parseInt(m[2])}/${parseInt(m[3])} ${m[4]}:${m[5]}`;
+}
+
 function appendMsg(role, text, unit, channel) {
   const el = document.createElement('div');
   el.className = 'msg ' + role;
@@ -374,7 +383,7 @@ async function loadLogs(offset) {
     tbody.innerHTML = '';
     (data.logs || []).forEach(l => {
       const mode = l.mode === 'eco' ? ' <span style="color:var(--accent)">⚡省エネ</span>' : '';
-      tbody.innerHTML += `<tr><td>${l.timestamp}</td><td>${l.channel}</td><td>${l.role}</td><td>${l.content}${mode}</td><td>${l.unit || ''}</td></tr>`;
+      tbody.innerHTML += `<tr><td>${fmtTime(l.timestamp)}</td><td>${l.channel}</td><td>${l.role}</td><td>${l.content}${mode}</td><td>${l.unit || ''}</td></tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -466,7 +475,7 @@ async function loadReminders() {
     data.items.forEach(r => {
       const active = r.active ? 'Active' : 'Done';
       const cls = r.active ? 'ok' : 'ng';
-      tbody.innerHTML += `<tr><td>${r.id}</td><td>${r.message}</td><td>${r.remind_at}</td><td><span class="val ${cls}">${active}</span></td></tr>`;
+      tbody.innerHTML += `<tr><td>${r.id}</td><td>${r.message}</td><td>${fmtTime(r.remind_at)}</td><td><span class="val ${cls}">${active}</span></td></tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -487,7 +496,7 @@ async function loadTodos() {
     }
     data.items.forEach(t => {
       const titleCls = t.done ? 'done' : '';
-      tbody.innerHTML += `<tr><td>${t.id}</td><td class="${titleCls}">${t.title}</td><td>${t.created_at}</td><td>${t.done_at || '-'}</td></tr>`;
+      tbody.innerHTML += `<tr><td>${t.id}</td><td class="${titleCls}">${t.title}</td><td>${fmtTime(t.created_at)}</td><td>${fmtTime(t.done_at)}</td></tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -508,7 +517,7 @@ async function loadMemos() {
     }
     data.items.forEach(m => {
       const tags = (m.tags || '').split(',').filter(t => t.trim()).map(t => `<span class="tag">${t.trim()}</span>`).join('');
-      tbody.innerHTML += `<tr><td>${m.id}</td><td>${m.content}</td><td>${tags || '-'}</td><td>${m.created_at}</td></tr>`;
+      tbody.innerHTML += `<tr><td>${m.id}</td><td>${m.content}</td><td>${tags || '-'}</td><td>${fmtTime(m.created_at)}</td></tr>`;
     });
   } catch (err) { console.error(err); }
 }

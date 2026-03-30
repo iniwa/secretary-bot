@@ -1,8 +1,16 @@
 """SQLite操作（aiosqlite・WALモード）。"""
 
 import aiosqlite
+from datetime import datetime, timezone, timedelta
 
 from src.logger import get_logger
+
+JST = timezone(timedelta(hours=9))
+
+
+def jst_now() -> str:
+    """現在の日本時間をISO形式文字列で返す（DB保存用）。"""
+    return datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
 
 log = get_logger(__name__)
 
@@ -124,8 +132,8 @@ class Database:
         mode: str | None = None, unit: str | None = None,
     ) -> None:
         await self.execute(
-            "INSERT INTO conversation_log (channel, role, content, mode, unit) VALUES (?, ?, ?, ?, ?)",
-            (channel, role, content, mode, unit),
+            "INSERT INTO conversation_log (timestamp, channel, role, content, mode, unit) VALUES (?, ?, ?, ?, ?, ?)",
+            (jst_now(), channel, role, content, mode, unit),
         )
 
     async def get_conversation_logs(

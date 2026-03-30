@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from src.database import JST, jst_now
 from src.units.base_unit import BaseUnit
 
 _WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
@@ -93,7 +94,7 @@ class ReminderUnit(BaseUnit):
 
     async def _extract_params(self, user_input: str, channel: str = "") -> dict:
         """ユーザー入力からLLMでパラメータを抽出する。"""
-        now = datetime.now()
+        now = datetime.now(JST)
         context = self.get_context(channel) if channel else ""
         prompt = _EXTRACT_PROMPT.format(
             now=now.strftime("%Y-%m-%d %H:%M"),
@@ -201,8 +202,8 @@ class ReminderUnit(BaseUnit):
                 results.append(f"#{rid} が見つかりません")
             else:
                 await self.bot.database.execute(
-                    "UPDATE reminders SET active = 0, done_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (rid,),
+                    "UPDATE reminders SET active = 0, done_at = ? WHERE id = ?",
+                    (jst_now(), rid),
                 )
                 results.append(f"#{rid}「{row['message']}」を完了にしました")
         return "\n".join(results)
@@ -214,7 +215,7 @@ class ReminderUnit(BaseUnit):
         if not title:
             return "ToDoの内容を教えてください。"
         await self.bot.database.execute(
-            "INSERT INTO todos (title) VALUES (?)", (title,)
+            "INSERT INTO todos (title, created_at) VALUES (?, ?)", (title, jst_now())
         )
         return f"ToDoに追加しました: {title}"
 
@@ -239,8 +240,8 @@ class ReminderUnit(BaseUnit):
         if not row:
             return f"ToDo #{todo_id} が見つかりません。"
         await self.bot.database.execute(
-            "UPDATE todos SET done = 1, done_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (todo_id,),
+            "UPDATE todos SET done = 1, done_at = ? WHERE id = ?",
+            (jst_now(), todo_id),
         )
         return f"ToDo #{todo_id}「{row['title']}」を完了にしました。"
 
@@ -277,7 +278,7 @@ class ReminderUnit(BaseUnit):
 
     async def on_heartbeat(self) -> None:
         """期限切れリマインダーを通知（notified=0のみ）。完了はユーザーが明示的に行う。"""
-        now = datetime.now().isoformat()
+        now = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
         rows = await self.bot.database.fetchall(
             "SELECT * FROM reminders WHERE active = 1 AND notified = 0 AND remind_at <= ?",
             (now,),
