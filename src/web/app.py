@@ -230,6 +230,19 @@ def create_web_app(bot) -> FastAPI:
         bot.llm_router._gemini_config = gemini_cfg
         return {"ok": True}
 
+    # --- ペルソナ設定 ---
+
+    @app.get("/api/persona", dependencies=[Depends(_verify)])
+    async def get_persona():
+        return {"persona": bot.config.get("character", {}).get("persona", "")}
+
+    @app.post("/api/persona", dependencies=[Depends(_verify)])
+    async def set_persona(request: Request):
+        body = await request.json()
+        persona = body.get("persona", "")
+        bot.config.setdefault("character", {})["persona"] = persona
+        return {"ok": True}
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
