@@ -29,7 +29,11 @@ BASE_DIR = os.environ.get("BOT_BASE_DIR", "/app")
 
 
 def _git_dir() -> str:
-    return os.environ.get("GIT_REPO_DIR") or BASE_DIR
+    env = os.environ.get("GIT_REPO_DIR")
+    if env:
+        return env
+    src_dir = os.path.join(BASE_DIR, "src")
+    return src_dir if os.path.isdir(os.path.join(src_dir, ".git")) else BASE_DIR
 
 
 def get_commit_hash() -> str:
