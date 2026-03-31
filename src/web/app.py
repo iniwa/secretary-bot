@@ -204,28 +204,64 @@ def create_web_app(bot) -> FastAPI:
                 capture_output=True, text=True, timeout=10,
             ).stdout.strip()
 
-            # リモートから明示的にfetch
+            # リモート名を動的取得
+            remote_name_result = subprocess.run(
+                ["git", "remote"], cwd=git_dir,
+                capture_output=True, text=True, timeout=10,
+            )
+            remote_name = remote_name_result.stdout.strip().splitlines()[0] if remote_name_result.stdout.strip() else "origin"
+
+            # 現在のリモートURL取得
+            remote_url_result = subprocess.run(
+                ["git", "remote", "get-url", remote_name], cwd=git_dir,
+                capture_output=True, text=True, timeout=10,
+            )
+            remote_url = remote_url_result.stdout.strip()
+
+            # GiteaトークンがあればHTTPS URLに認証情報を埋め込む
+            gitea_token = os.environ.get("GITEA_TOKEN", "")
+            gitea_user = os.environ.get("GITEA_USER", "")
+            fetch_url = remote_url
+            if gitea_token and remote_url:
+                from urllib.parse import urlparse, urlunparse
+                parsed = urlparse(remote_url)
+                if parsed.scheme in ("http", "https"):
+                    # http(s)://user:token@host/... 形式に組み立て
+                    authed = parsed._replace(netloc=f"{gitea_user}:{gitea_token}@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
+                    fetch_url = urlunparse(authed)
+
+            log.info("git fetch: remote=%s url=%s", remote_name, remote_url)  # URLはログに出さない（トークン含む可能性）
+
+            # fetch
             fetch_result = subprocess.run(
-                ["git", "fetch", "origin"], cwd=git_dir,
+                ["git", "fetch", fetch_url], cwd=git_dir,
                 capture_output=True, text=True, timeout=30,
             )
             if fetch_result.returncode != 0:
                 err = fetch_result.stderr.strip()
                 log.error("git fetch failed: %s", err)
-                return {"updated": False, "message": f"git fetch 失敗: {err}", "restarted": False, "restart_detail": "fetchエラー"}
+                hint = "GITEA_TOKEN / GITEA_USER が未設定の場合は .env に追加してください" if not gitea_token else ""
+                return {"updated": False, "message": f"git fetch 失敗\n{err}\n{hint}".strip(), "restarted": False, "restart_detail": "fetchエラー"}
 
-            # リモートHEADハッシュと比較
+            # ブランチ名を取得
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_dir,
+                capture_output=True, text=True, timeout=10,
+            )
+            branch = branch_result.stdout.strip() or "main"
+
+            # fetch後のリモートHEADと比較
             remote_hash = subprocess.run(
-                ["git", "rev-parse", "origin/main"], cwd=git_dir,
+                ["git", "rev-parse", f"FETCH_HEAD"], cwd=git_dir,
                 capture_output=True, text=True, timeout=10,
             ).stdout.strip()
 
             if hash_before == remote_hash:
                 return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
-            # 差分があるのでpull
+            # pull（fetchと同じ認証URLで）
             pull_result = subprocess.run(
-                ["git", "pull", "origin", "main"], cwd=git_dir,
+                ["git", "pull", fetch_url, branch], cwd=git_dir,
                 capture_output=True, text=True, timeout=30,
             )
             if pull_result.returncode != 0:
