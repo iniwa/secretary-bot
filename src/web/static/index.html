@@ -539,12 +539,15 @@ async function updateCode() {
   try {
     const res = await fetch('/api/update-code', { method: 'POST' });
     const data = await res.json();
-    if (data.updated) {
-      result.style.background = '#1b5e20';
-      result.textContent = '✅ ' + data.message;
-    } else {
+    if (!data.updated) {
       result.style.background = 'var(--primary)';
-      result.textContent = '✅ ' + data.message;
+      result.innerHTML = `✅ ${data.message}<br><span style="color:var(--text-dim);font-size:0.85rem">再起動: ${data.restart_detail}</span>`;
+    } else if (data.restarted) {
+      result.style.background = '#1b5e20';
+      result.innerHTML = `✅ ${data.message}<br><span style="font-size:0.85rem">🔄 ${data.restart_detail}</span>`;
+    } else {
+      result.style.background = '#7f4000';
+      result.innerHTML = `✅ git pull 成功<br>${data.message}<br><span style="color:#ffcc80;font-size:0.85rem">⚠️ 再起動失敗: ${data.restart_detail}</span>`;
     }
   } catch (err) {
     result.style.background = '#b71c1c';

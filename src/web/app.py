@@ -149,24 +149,41 @@ def create_web_app(bot) -> FastAPI:
             )
             output = result.stdout.strip()
             if "Already up to date" in output:
-                return {"updated": False, "message": output}
+                return {"updated": False, "message": output, "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
             # Portainer API でスタック再起動
             portainer_url = os.environ.get("PORTAINER_URL", "")
             portainer_token = os.environ.get("PORTAINER_API_TOKEN", "")
             stack_id = os.environ.get("PORTAINER_STACK_ID", "")
 
-            if portainer_url and portainer_token and stack_id:
-                env_id = os.environ.get("PORTAINER_ENV_ID", "1")
-                async with httpx.AsyncClient(timeout=30, verify=False) as client:
-                    await client.post(
-                        f"{portainer_url}/api/stacks/{stack_id}/redeploy",
-                        headers={"X-API-Key": portainer_token},
-                        params={"endpointId": env_id},
-                        json={"pullImage": False},
-                    )
+            restarted = False
+            restart_detail = ""
 
-            return {"updated": True, "message": output}
+            if not (portainer_url and portainer_token and stack_id):
+                restart_detail = "Portainer設定なし（PORTAINER_URL / PORTAINER_API_TOKEN / PORTAINER_STACK_ID）"
+                log.warning("Portainer env vars not set — skipping restart")
+            else:
+                try:
+                    env_id = os.environ.get("PORTAINER_ENV_ID", "1")
+                    async with httpx.AsyncClient(timeout=30, verify=False) as client:
+                        resp = await client.post(
+                            f"{portainer_url}/api/stacks/{stack_id}/redeploy",
+                            headers={"X-API-Key": portainer_token},
+                            params={"endpointId": env_id},
+                            json={"pullImage": False},
+                        )
+                    if resp.status_code < 300:
+                        restarted = True
+                        restart_detail = f"Portainer API 成功 (HTTP {resp.status_code})"
+                        log.info("Portainer redeploy triggered: %s", resp.status_code)
+                    else:
+                        restart_detail = f"Portainer API エラー (HTTP {resp.status_code}): {resp.text[:200]}"
+                        log.error("Portainer redeploy failed: %s %s", resp.status_code, resp.text)
+                except Exception as e:
+                    restart_detail = f"Portainer API 接続失敗: {e}"
+                    log.error("Portainer API error: %s", e)
+
+            return {"updated": True, "message": output, "restarted": restarted, "restart_detail": restart_detail}
         except Exception as e:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
