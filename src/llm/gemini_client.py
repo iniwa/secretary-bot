@@ -9,7 +9,7 @@ log = get_logger(__name__)
 
 
 class GeminiClient:
-    _DEFAULT_MODEL = "gemini-2.0-flash"
+    _DEFAULT_MODEL = "gemini-3-flash-preview"
 
     def __init__(self):
         self._models: dict[str, object] = {}
