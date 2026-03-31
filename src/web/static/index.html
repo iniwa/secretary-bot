@@ -535,7 +535,7 @@ async function loadStatus() {
     grid.innerHTML = '';
     grid.innerHTML += card('Version', data.version);
     grid.innerHTML += card('Uptime', Math.floor(data.uptime / 60) + ' min');
-    grid.innerHTML += card('Ollama', data.ollama ? 'Active' : 'Inactive', data.ollama);
+    grid.innerHTML += card('Ollama', data.ollama ? 'Active' : 'Inactive', data.ollama) + '<button onclick="recheckOllama()" style="margin-left:-0.5rem;padding:0.3rem 0.7rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.8rem">再チェック</button>';
     (data.agents || []).forEach(a => {
       grid.innerHTML += card(a.name, (a.alive ? 'Active' : 'Inactive') + ' / ' + a.mode, a.alive);
     });
@@ -550,6 +550,15 @@ async function loadStatus() {
       ulist.innerHTML += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.8rem;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><span class="val ${state}" style="font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:4px">${u.breaker_state}</span><strong>${u.name}</strong>${delegate}<span style="color:var(--text-dim);font-size:0.85rem;margin-left:auto">${u.description}</span></div>`;
     });
   } catch (err) { console.error(err); }
+}
+
+async function recheckOllama() {
+  try {
+    const res = await fetch('/api/ollama-recheck', { method: 'POST' });
+    const data = await res.json();
+    alert(data.ollama_available ? 'Ollama: 接続OK' : 'Ollama: 接続できません');
+    loadStatus();
+  } catch (err) { alert('エラー: ' + err); }
 }
 
 function card(title, value, ok) {

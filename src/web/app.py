@@ -136,6 +136,14 @@ def create_web_app(bot) -> FastAPI:
             "agents": agents_status,
         }
 
+    @app.post("/api/ollama-recheck", dependencies=[Depends(_verify)])
+    async def ollama_recheck():
+        """Ollamaの接続状態を手動で再チェックする。"""
+        available = await bot.llm_router.check_ollama()
+        # ハートビート間隔も再調整
+        bot.heartbeat._reschedule()
+        return {"ollama_available": available}
+
     @app.post("/api/delegation-mode", dependencies=[Depends(_verify)])
     async def set_delegation_mode(request: Request):
         body = await request.json()

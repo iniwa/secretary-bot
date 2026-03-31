@@ -81,6 +81,10 @@ class LLMRouter:
 
         await ft.emit("LLM_SELECT", "active", {"purpose": purpose}, flow_id)
 
+        # Ollama未接続なら再チェック（復帰検出）
+        if not self.ollama_available:
+            await self.check_ollama()
+
         # Ollama を優先
         if self.ollama_available:
             try:
