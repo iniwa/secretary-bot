@@ -120,9 +120,18 @@ class SecretaryBot(commands.Bot):
             # 会話ログ保存
             await self.database.log_conversation("discord", "user", content, user_id=user_id)
 
+            # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
+            recent_rows = await self.database.get_recent_channel_messages(
+                "discord", limit=6, user_id=user_id,
+            )
+            # 現在のメッセージは既にログ保存済みなので除外
+            conversation_context = [
+                r for r in recent_rows if r["content"] != content
+            ][-4:]  # 直近4件（2往復分）
+
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                result = await self.unit_router.route(content, channel="discord", user_id=user_id, flow_id=flow_id)
+                result = await self.unit_router.route(content, channel="discord", user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", content)
 
@@ -133,7 +142,7 @@ class SecretaryBot(commands.Bot):
                 try:
                     actual_unit = getattr(unit, "unit", unit)
                     actual_unit.session_done = False
-                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id})
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": conversation_context})
                     if actual_unit.session_done:
                         self.unit_router.clear_session("discord", user_id)
                         actual_unit.clear_exchange(lock_key)

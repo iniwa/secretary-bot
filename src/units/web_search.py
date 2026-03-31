@@ -17,11 +17,14 @@ _EXTRACT_PROMPT = """\
 ユーザーの発言から検索クエリを抽出してください。
 質問文はそのまま使わず、検索に適したキーワードに変換してください。
 
+重要: ユーザーの入力が「調べて」「検索して」のような短い指示の場合、
+直前の会話履歴から検索すべきトピックを読み取ってクエリを生成してください。
+
 ## 出力形式（厳守）
 {{"query": "検索キーワード"}}
 
 - JSON1つだけを返してください。
-
+{context_block}
 ## ユーザー入力
 {user_input}
 """
@@ -330,10 +333,11 @@ class WebSearchUnit(BaseUnit):
 
         await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
         message = parsed.get("message", "")
+        conversation_context = parsed.get("conversation_context", [])
 
         try:
-            # 1. LLMで検索クエリを抽出
-            extracted = await self._extract_query(message)
+            # 1. LLMで検索クエリを抽出（会話コンテキスト付き）
+            extracted = await self._extract_query(message, conversation_context)
             query = extracted.get("query", message)
             log.info("web_search query: %s", query)
 
@@ -354,8 +358,8 @@ class WebSearchUnit(BaseUnit):
                 if text:
                     results[i]["page_text"] = text
 
-            # 4. LLM で要約
-            summary = await self._summarize(message, results)
+            # 4. LLM で要約（会話コンテキスト付き）
+            summary = await self._summarize(message, results, conversation_context)
 
             # 5. 出典リストを付与
             sources = self._format_sources(results)
@@ -371,8 +375,15 @@ class WebSearchUnit(BaseUnit):
             await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
             raise
 
-    async def _extract_query(self, user_input: str) -> dict:
-        prompt = _EXTRACT_PROMPT.format(user_input=user_input)
+    async def _extract_query(self, user_input: str, conversation_context: list[dict] | None = None) -> dict:
+        context_block = ""
+        if conversation_context:
+            lines = []
+            for row in conversation_context:
+                role = "ユーザー" if row["role"] == "user" else "アシスタント"
+                lines.append(f"{role}: {row['content']}")
+            context_block = "\n## 直前の会話履歴\n" + "\n".join(lines) + "\n\n"
+        prompt = _EXTRACT_PROMPT.format(user_input=user_input, context_block=context_block)
         return await self.llm.extract_json(prompt)
 
     async def _search(self, query: str) -> list[dict]:
@@ -416,7 +427,7 @@ class WebSearchUnit(BaseUnit):
         tasks = [self._fetch_page_text(r["url"]) for r in results]
         return await asyncio.gather(*tasks)
 
-    async def _summarize(self, question: str, results: list[dict]) -> str:
+    async def _summarize(self, question: str, results: list[dict], conversation_context: list[dict] | None = None) -> str:
         """検索結果（スニペット + ページ本文）をLLMで要約する。"""
         results_text = ""
         for i, r in enumerate(results, 1):
@@ -424,8 +435,17 @@ class WebSearchUnit(BaseUnit):
             body = r.get("page_text") or r.get("content", "")
             results_text += f"[{i}] {r['title']}\nURL: {r['url']}\n{body}\n\n"
 
+        # 短い指示（「調べて」等）の場合、会話履歴から元の質問を復元
+        effective_question = question
+        if conversation_context and len(question) <= 20:
+            ctx_lines = []
+            for row in conversation_context:
+                role = "ユーザー" if row["role"] == "user" else "アシスタント"
+                ctx_lines.append(f"{role}: {row['content']}")
+            effective_question = "\n".join(ctx_lines) + f"\nユーザー: {question}"
+
         prompt = _SUMMARIZE_PROMPT.format(
-            question=question,
+            question=effective_question,
             results=results_text.strip(),
         )
         return await self.llm.generate(prompt)

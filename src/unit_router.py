@@ -15,6 +15,9 @@ _ROUTE_PROMPT_TEMPLATE = """\
 あなたはユニットルーターです。ユーザーの入力を分析し、最適なユニットを1つ選んでください。
 ユニットの選択のみを行ってください。パラメータの解析は不要です。
 
+重要: ユーザーの入力が短い場合や指示的な場合（例:「調べて」「検索して」「詳しく」など）は、
+直前の会話履歴を参考にして、ユーザーが何を求めているかを判断してください。
+
 ## ユニット一覧
 {units_text}
 
@@ -22,7 +25,7 @@ _ROUTE_PROMPT_TEMPLATE = """\
 {{"unit": "ユニット名"}}
 
 JSON以外は返さないでください。
-
+{context_block}
 ## ユーザー入力
 {user_input}
 """
@@ -77,7 +80,18 @@ class UnitRouter:
         session_key = f"{channel}:{user_id}" if user_id else channel
         self._sessions.pop(session_key, None)
 
-    async def route(self, user_input: str, channel: str = "discord", user_id: str = "", flow_id: str | None = None) -> dict:
+    @staticmethod
+    def _format_context(conversation_context: list[dict]) -> str:
+        """会話履歴をプロンプト用テキストに変換する。"""
+        if not conversation_context:
+            return ""
+        lines = []
+        for row in conversation_context:
+            role = "ユーザー" if row["role"] == "user" else "アシスタント"
+            lines.append(f"{role}: {row['content']}")
+        return "\n## 直前の会話履歴\n" + "\n".join(lines) + "\n\n"
+
+    async def route(self, user_input: str, channel: str = "discord", user_id: str = "", flow_id: str | None = None, conversation_context: list[dict] | None = None) -> dict:
         trace_id = new_trace_id()
         log.info("Routing input (trace=%s): %.80s", trace_id, user_input)
         ft = get_flow_tracker()
@@ -98,9 +112,11 @@ class UnitRouter:
         await ft.emit("SESSION", "done", {"continued": False}, flow_id)
         await ft.emit("ROUTE_LLM", "active", {}, flow_id)
 
+        context_block = self._format_context(conversation_context or [])
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
             units_text=self._build_units_text(),
             user_input=user_input,
+            context_block=context_block,
         )
 
         try:

@@ -67,7 +67,16 @@ def create_web_app(bot) -> FastAPI:
             await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
             try:
                 await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
-                result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id)
+
+                # 直近の会話履歴を取得
+                recent_rows = await bot.database.get_recent_channel_messages(
+                    "webgui", limit=6, user_id=_webgui_user_id,
+                )
+                conversation_context = [
+                    r for r in recent_rows if r["content"] != message
+                ][-4:]
+
+                result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", message)
 
@@ -77,7 +86,7 @@ def create_web_app(bot) -> FastAPI:
 
                 actual_unit = getattr(unit, "unit", unit)
                 actual_unit.session_done = False
-                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id})
+                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id, "conversation_context": conversation_context})
                 if actual_unit.session_done:
                     bot.unit_router.clear_session("webgui", _webgui_user_id)
                     actual_unit.clear_exchange("webgui")
