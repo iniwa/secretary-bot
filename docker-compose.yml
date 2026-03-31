@@ -11,6 +11,8 @@ services:
       - "8100:8100"
     env_file:
       - /home/iniwa/docker/secretary-bot/.env
+    extra_hosts:
+      - "gitea:host-gateway"
     restart: unless-stopped
     environment:
       - TZ=Asia/Tokyo
