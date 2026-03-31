@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # システム依存パッケージ
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # 非rootユーザー作成
