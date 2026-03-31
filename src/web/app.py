@@ -198,30 +198,47 @@ def create_web_app(bot) -> FastAPI:
             git_dir = os.environ.get("GIT_REPO_DIR") or (
                 os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
             )
-            # 更新前のコミットハッシュを取得
+            # ローカルHEADハッシュ
             hash_before = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=git_dir,
                 capture_output=True, text=True, timeout=10,
             ).stdout.strip()
 
-            result = subprocess.run(
-                ["git", "pull"], cwd=git_dir,
+            # リモートから明示的にfetch
+            fetch_result = subprocess.run(
+                ["git", "fetch", "origin"], cwd=git_dir,
                 capture_output=True, text=True, timeout=30,
             )
-            output = result.stdout.strip()
+            if fetch_result.returncode != 0:
+                err = fetch_result.stderr.strip()
+                log.error("git fetch failed: %s", err)
+                return {"updated": False, "message": f"git fetch 失敗: {err}", "restarted": False, "restart_detail": "fetchエラー"}
 
-            # 更新後のコミットハッシュを取得して比較
-            hash_after = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=git_dir,
+            # リモートHEADハッシュと比較
+            remote_hash = subprocess.run(
+                ["git", "rev-parse", "origin/main"], cwd=git_dir,
                 capture_output=True, text=True, timeout=10,
             ).stdout.strip()
 
-            if hash_before == hash_after:
-                return {"updated": False, "message": output or "Already up to date.", "restarted": False, "restart_detail": "変更なしのためスキップ"}
+            if hash_before == remote_hash:
+                return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
+
+            # 差分があるのでpull
+            pull_result = subprocess.run(
+                ["git", "pull", "origin", "main"], cwd=git_dir,
+                capture_output=True, text=True, timeout=30,
+            )
+            if pull_result.returncode != 0:
+                err = pull_result.stderr.strip()
+                log.error("git pull failed: %s", err)
+                return {"updated": False, "message": f"git pull 失敗: {err}", "restarted": False, "restart_detail": "pullエラー"}
+
+            output = pull_result.stdout.strip()
+            log.info("Code updated: %s -> %s", hash_before[:7], remote_hash[:7])
 
             # レスポンス送信後に再起動（遅延付き）
             background_tasks.add_task(_delayed_restart, 2)
-            return {"updated": True, "message": output, "restarted": True, "restart_detail": "まもなく再起動します…"}
+            return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…"}
         except Exception as e:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
