@@ -218,17 +218,35 @@ def create_web_app(bot) -> FastAPI:
             )
             remote_url = remote_url_result.stdout.strip()
 
-            # GiteaトークンがあればHTTPS URLに認証情報を埋め込む
+            # SSHのURLをGitea HTTPSに変換してトークン認証
             gitea_token = os.environ.get("GITEA_TOKEN", "")
             gitea_user = os.environ.get("GITEA_USER", "")
+            gitea_url = os.environ.get("GITEA_URL", "").rstrip("/")  # 例: http://192.168.1.10:3000
             fetch_url = remote_url
-            if gitea_token and remote_url:
-                from urllib.parse import urlparse, urlunparse
-                parsed = urlparse(remote_url)
-                if parsed.scheme in ("http", "https"):
-                    # http(s)://user:token@host/... 形式に組み立て
-                    authed = parsed._replace(netloc=f"{gitea_user}:{gitea_token}@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
-                    fetch_url = urlunparse(authed)
+
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(remote_url)
+
+            if parsed.scheme in ("http", "https"):
+                # すでにHTTPS: トークンを埋め込むだけ
+                if gitea_token:
+                    netloc = f"{gitea_user}:{gitea_token}@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else "")
+                    fetch_url = urlunparse(parsed._replace(netloc=netloc))
+            else:
+                # SSH形式 → HTTPS+トークンに変換
+                # git@host:user/repo.git または ssh://git@host:port/user/repo.git
+                if not gitea_url:
+                    return {"updated": False, "message": "SSH URLを使用中ですが GITEA_URL が未設定です。\n.env に GITEA_URL=http://<giteaのIP>:<port> を追加してください。", "restarted": False, "restart_detail": "設定エラー"}
+                # パス部分（/user/repo.git）を抽出
+                if parsed.scheme == "ssh":
+                    repo_path = parsed.path  # /user/repo.git
+                else:
+                    # git@host:user/repo.git → path = "user/repo.git"
+                    repo_path = "/" + remote_url.split(":", 1)[-1] if ":" in remote_url else parsed.path
+                base_parsed = urlparse(gitea_url)
+                netloc = f"{gitea_user}:{gitea_token}@{base_parsed.hostname}" + (f":{base_parsed.port}" if base_parsed.port else "") if gitea_token else base_parsed.netloc
+                fetch_url = urlunparse(base_parsed._replace(netloc=netloc, path=repo_path))
+                log.info("Converted SSH to HTTPS for Gitea fetch")
 
             log.info("git fetch: remote=%s url=%s", remote_name, remote_url)  # URLはログに出さない（トークン含む可能性）
 
