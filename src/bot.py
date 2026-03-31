@@ -196,6 +196,21 @@ async def _restore_settings(bot: SecretaryBot) -> None:
         bot.llm_router._gemini_config = gemini_cfg
         log.info("Restored gemini settings from DB")
 
+    # LLMモデル設定
+    saved_model = await bot.database.get_setting("llm.ollama_model")
+    if saved_model:
+        bot.config.setdefault("llm", {})["ollama_model"] = saved_model
+        bot.llm_router.ollama.model = saved_model
+        log.info("Restored ollama model from DB: %s", saved_model)
+
+    unit_llm = await bot.database.get_all_settings("unit_llm.")
+    if unit_llm:
+        for key, value in unit_llm.items():
+            unit_name = key.removeprefix("unit_llm.")
+            ucfg = bot.config.setdefault("units", {}).setdefault(unit_name, {})
+            ucfg.setdefault("llm", {})["ollama_model"] = value
+        log.info("Restored unit llm models from DB")
+
     # ユニット別Gemini許可設定
     unit_gemini = await bot.database.get_all_settings("unit_gemini.")
     if unit_gemini:

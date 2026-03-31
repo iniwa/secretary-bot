@@ -555,6 +555,7 @@ def create_web_app(bot) -> FastAPI:
             model = body["ollama_model"].strip()
             bot.config.setdefault("llm", {})["ollama_model"] = model
             bot.llm_router.ollama.model = model
+            await bot.database.set_setting("llm.ollama_model", model)
             # ユニット別上書きが無いユニットにも反映
             for cog in bot.cogs.values():
                 if hasattr(cog, "llm") and cog.llm._ollama_model is None:
@@ -567,8 +568,10 @@ def create_web_app(bot) -> FastAPI:
                 ucfg = bot.config.setdefault("units", {}).setdefault(unit_name, {})
                 if model:
                     ucfg.setdefault("llm", {})["ollama_model"] = model
+                    await bot.database.set_setting(f"unit_llm.{unit_name}", model)
                 else:
                     ucfg.get("llm", {}).pop("ollama_model", None)
+                    await bot.database.delete_setting(f"unit_llm.{unit_name}")
                 # 実行中のユニットのUnitLLMにも反映
                 cog = bot.cogs.get(unit_name)
                 if cog and hasattr(cog, "llm"):

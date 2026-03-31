@@ -213,6 +213,9 @@ class Database:
             (key, value),
         )
 
+    async def delete_setting(self, key: str) -> None:
+        await self.execute("DELETE FROM settings WHERE key = ?", (key,))
+
     async def get_all_settings(self, prefix: str = "") -> dict[str, str]:
         if prefix:
             rows = await self.fetchall(
