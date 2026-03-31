@@ -9,6 +9,8 @@ _EXTRACT_PROMPT = """\
 
 ## アクション一覧
 - save: メモを保存（content が必要、tags は任意）
+- edit: メモを編集（id が必要、content や tags を変更）
+- append: メモに追記（id が必要、content に追記内容）
 - search: メモをキーワード検索（keyword が必要）
 - list: メモを一覧表示
 - delete: メモを削除（id が必要。「全部削除」なら id="all"）
@@ -53,6 +55,12 @@ class MemoUnit(BaseUnit):
                 # listの後はIDで削除等の操作が続く可能性があるのでセッション維持
             elif action == "delete":
                 result = await self._delete(extracted, user_id)
+                self.session_done = True
+            elif action == "edit":
+                result = await self._edit(extracted, user_id)
+                self.session_done = True
+            elif action == "append":
+                result = await self._append(extracted, user_id)
                 self.session_done = True
             else:
                 result = await self._save(extracted, user_id)
@@ -168,6 +176,60 @@ class MemoUnit(BaseUnit):
             tags = f"  [{r['tags']}]" if r.get("tags") else ""
             lines.append(f"  #{r['id']}  {r['content']}{tags}")
         return "\n".join(lines)
+
+
+    async def _edit(self, extracted: dict, user_id: str = "") -> str:
+        memo_id = extracted.get("id")
+        if not memo_id:
+            return "編集するメモのIDを指定してください。"
+        try:
+            mid = int(memo_id)
+        except ValueError:
+            return f"#{memo_id} はIDとして不正です。"
+        if user_id:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM memos WHERE id = ? AND user_id = ?", (mid, user_id)
+            )
+        else:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM memos WHERE id = ?", (mid,)
+            )
+        if not row:
+            return f"メモ #{mid} が見つかりません。"
+        new_content = extracted.get("content") or row["content"]
+        new_tags = extracted.get("tags") if "tags" in extracted else row.get("tags", "")
+        await self.bot.database.execute(
+            "UPDATE memos SET content = ?, tags = ? WHERE id = ?",
+            (new_content, new_tags, mid),
+        )
+        return f"メモ #{mid} を更新しました: {new_content}"
+
+    async def _append(self, extracted: dict, user_id: str = "") -> str:
+        memo_id = extracted.get("id")
+        if not memo_id:
+            return "追記するメモのIDを指定してください。"
+        append_content = extracted.get("content", "")
+        if not append_content:
+            return "追記する内容を教えてください。"
+        try:
+            mid = int(memo_id)
+        except ValueError:
+            return f"#{memo_id} はIDとして不正です。"
+        if user_id:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM memos WHERE id = ? AND user_id = ?", (mid, user_id)
+            )
+        else:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM memos WHERE id = ?", (mid,)
+            )
+        if not row:
+            return f"メモ #{mid} が見つかりません。"
+        updated = row["content"] + "\n" + append_content
+        await self.bot.database.execute(
+            "UPDATE memos SET content = ? WHERE id = ?", (updated, mid)
+        )
+        return f"メモ #{mid} に追記しました: {append_content}"
 
 
 async def setup(bot) -> None:

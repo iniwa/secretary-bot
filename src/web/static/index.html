@@ -114,6 +114,20 @@ nav.sidebar .nav-group button { padding-left: 1.4rem; font-size: 0.9rem; }
 .unit-filter button { cursor: pointer; background: var(--primary); }
 .unit-empty { color: var(--text-dim); padding: 1rem 0; }
 td .tag { display: inline-block; background: var(--primary); padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; margin-right: 0.3rem; }
+.act-btn { background: none; border: none; cursor: pointer; font-size: 1rem; padding: 0.2rem 0.4rem; border-radius: 4px; opacity: 0.7; }
+.act-btn:hover { opacity: 1; background: var(--border); }
+td.actions { white-space: nowrap; }
+.edit-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.edit-modal .modal-content { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.5rem; min-width: 340px; max-width: 90vw; }
+.edit-modal h3 { margin-bottom: 1rem; }
+.edit-modal label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; color: var(--text-dim); }
+.edit-modal input, .edit-modal textarea { width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.95rem; margin-bottom: 0.8rem; box-sizing: border-box; font-family: inherit; }
+.edit-modal textarea { resize: vertical; min-height: 60px; }
+.edit-modal .modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.edit-modal .modal-actions button { padding: 0.5rem 1rem; border-radius: 6px; border: none; cursor: pointer; font-size: 0.9rem; }
+.edit-modal .btn-save { background: var(--accent); color: #fff; }
+.edit-modal .btn-cancel { background: var(--border); color: var(--text); }
+td.done-cell { text-decoration: line-through; opacity: 0.6; }
 td .done { text-decoration: line-through; color: var(--text-dim); }
 
 /* Flow page */
@@ -341,7 +355,7 @@ nav.bottom-nav { display: none; }
       </div>
       <div style="overflow:auto">
         <table>
-          <thead><tr><th>#</th><th>Message</th><th>Remind At</th><th>Active</th></tr></thead>
+          <thead><tr><th>#</th><th>Message</th><th>Remind At</th><th>Active</th><th></th></tr></thead>
           <tbody id="reminder-body"></tbody>
         </table>
       </div>
@@ -358,7 +372,7 @@ nav.bottom-nav { display: none; }
       </div>
       <div style="overflow:auto">
         <table>
-          <thead><tr><th>#</th><th>Title</th><th>Created</th><th>Done At</th></tr></thead>
+          <thead><tr><th>#</th><th>Title</th><th>Due</th><th>Created</th><th>Done At</th><th></th></tr></thead>
           <tbody id="todo-body"></tbody>
         </table>
       </div>
@@ -374,7 +388,7 @@ nav.bottom-nav { display: none; }
     </div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th>#</th><th>Content</th><th>Tags</th><th>Created</th></tr></thead>
+        <thead><tr><th>#</th><th>Content</th><th>Tags</th><th>Created</th><th></th></tr></thead>
         <tbody id="memo-body"></tbody>
       </table>
     </div>
@@ -800,13 +814,16 @@ async function loadReminders() {
     const tbody = document.getElementById('reminder-body');
     tbody.innerHTML = '';
     if (!data.items || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No reminders</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="unit-empty">No reminders</td></tr>';
       return;
     }
     data.items.forEach(r => {
       const active = r.active ? 'Active' : 'Done';
       const cls = r.active ? 'ok' : 'ng';
-      tbody.innerHTML += `<tr><td>${r.id}</td><td>${r.message}</td><td>${fmtTime(r.remind_at)}</td><td><span class="val ${cls}">${active}</span></td></tr>`;
+      const actions = r.active
+        ? `<td class="actions"><button class="act-btn" title="編集" onclick="editReminder(${r.id}, '${esc(r.message)}', '${r.remind_at || ''}')">✏️</button><button class="act-btn" title="完了" onclick="doneReminder(${r.id})">✅</button><button class="act-btn" title="削除" onclick="deleteReminder(${r.id})">🗑️</button></td>`
+        : `<td class="actions"><button class="act-btn" title="削除" onclick="deleteReminder(${r.id})">🗑️</button></td>`;
+      tbody.innerHTML += `<tr><td>${r.id}</td><td>${r.message}</td><td>${fmtTime(r.remind_at)}</td><td><span class="val ${cls}">${active}</span></td>${actions}</tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -822,12 +839,16 @@ async function loadTodos() {
     const tbody = document.getElementById('todo-body');
     tbody.innerHTML = '';
     if (!data.items || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No todos</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="unit-empty">No todos</td></tr>';
       return;
     }
     data.items.forEach(t => {
-      const titleCls = t.done ? 'done' : '';
-      tbody.innerHTML += `<tr><td>${t.id}</td><td class="${titleCls}">${t.title}</td><td>${fmtTime(t.created_at)}</td><td>${fmtTime(t.done_at)}</td></tr>`;
+      const titleCls = t.done ? 'done-cell' : '';
+      const dueStr = t.due_date ? t.due_date.slice(0, 10) : '-';
+      const actions = t.done
+        ? `<td class="actions"><button class="act-btn" title="削除" onclick="deleteTodo(${t.id})">🗑️</button></td>`
+        : `<td class="actions"><button class="act-btn" title="編集" onclick="editTodo(${t.id}, '${esc(t.title)}', '${t.due_date || ''}')">✏️</button><button class="act-btn" title="完了" onclick="doneTodo(${t.id})">✅</button><button class="act-btn" title="削除" onclick="deleteTodo(${t.id})">🗑️</button></td>`;
+      tbody.innerHTML += `<tr><td>${t.id}</td><td class="${titleCls}">${t.title}</td><td>${dueStr}</td><td>${fmtTime(t.created_at)}</td><td>${fmtTime(t.done_at)}</td>${actions}</tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -843,12 +864,14 @@ async function loadMemos() {
     const tbody = document.getElementById('memo-body');
     tbody.innerHTML = '';
     if (!data.items || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No memos</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="unit-empty">No memos</td></tr>';
       return;
     }
     data.items.forEach(m => {
       const tags = (m.tags || '').split(',').filter(t => t.trim()).map(t => `<span class="tag">${t.trim()}</span>`).join('');
-      tbody.innerHTML += `<tr><td>${m.id}</td><td>${m.content}</td><td>${tags || '-'}</td><td>${fmtTime(m.created_at)}</td></tr>`;
+      const contentHtml = (m.content || '').replace(/\n/g, '<br>');
+      const actions = `<td class="actions"><button class="act-btn" title="編集" onclick="editMemo(${m.id}, '${esc(m.content)}', '${esc(m.tags || '')}')">✏️</button><button class="act-btn" title="追記" onclick="appendMemo(${m.id})">➕</button><button class="act-btn" title="削除" onclick="deleteMemo(${m.id})">🗑️</button></td>`;
+      tbody.innerHTML += `<tr><td>${m.id}</td><td>${contentHtml}</td><td>${tags || '-'}</td><td>${fmtTime(m.created_at)}</td>${actions}</tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -872,6 +895,156 @@ async function loadTimers() {
     html += '</tbody></table>';
     container.innerHTML = html;
   } catch (err) { console.error(err); }
+}
+
+// --- CRUD helpers ---
+
+function esc(s) { return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n'); }
+
+function showModal(html) {
+  const overlay = document.createElement('div');
+  overlay.className = 'edit-modal';
+  overlay.innerHTML = `<div class="modal-content">${html}</div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  const first = overlay.querySelector('input, textarea');
+  if (first) first.focus();
+  return overlay;
+}
+
+async function apiCall(method, url, body) {
+  const opts = { method, headers: {'Content-Type': 'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// --- Reminder actions ---
+
+function editReminder(id, message, remindAt) {
+  const dtVal = remindAt ? remindAt.slice(0, 16) : '';
+  const decoded = message.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+  const modal = showModal(`
+    <h3>リマインダー #${id} 編集</h3>
+    <label>内容</label><input id="ed-r-msg">
+    <label>日時</label><input id="ed-r-dt" type="datetime-local" value="${dtVal}">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="this.closest('.edit-modal').remove()">キャンセル</button>
+      <button class="btn-save" onclick="saveReminder(${id})">保存</button>
+    </div>
+  `);
+  modal.querySelector('#ed-r-msg').value = decoded;
+}
+async function saveReminder(id) {
+  const msg = document.getElementById('ed-r-msg').value.trim();
+  const dt = document.getElementById('ed-r-dt').value;
+  if (!msg) return;
+  try {
+    await apiCall('PUT', `/api/units/reminders/${id}`, { message: msg, remind_at: dt || undefined });
+    document.querySelector('.edit-modal').remove();
+    loadReminders();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function doneReminder(id) {
+  if (!confirm('このリマインダーを完了にしますか？')) return;
+  try { await apiCall('POST', `/api/units/reminders/${id}/done`); loadReminders(); }
+  catch (e) { alert('Error: ' + e.message); }
+}
+async function deleteReminder(id) {
+  if (!confirm('このリマインダーを削除しますか？')) return;
+  try { await apiCall('DELETE', `/api/units/reminders/${id}`); loadReminders(); }
+  catch (e) { alert('Error: ' + e.message); }
+}
+
+// --- ToDo actions ---
+
+function editTodo(id, title, dueDate) {
+  const dueVal = dueDate ? dueDate.slice(0, 10) : '';
+  const decoded = title.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+  const modal = showModal(`
+    <h3>ToDo #${id} 編集</h3>
+    <label>タイトル</label><input id="ed-t-title">
+    <label>期限（任意）</label><input id="ed-t-due" type="date" value="${dueVal}">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="this.closest('.edit-modal').remove()">キャンセル</button>
+      <button class="btn-save" onclick="saveTodo(${id})">保存</button>
+    </div>
+  `);
+  modal.querySelector('#ed-t-title').value = decoded;
+}
+async function saveTodo(id) {
+  const title = document.getElementById('ed-t-title').value.trim();
+  const due = document.getElementById('ed-t-due').value || null;
+  if (!title) return;
+  try {
+    await apiCall('PUT', `/api/units/todos/${id}`, { title, due_date: due });
+    document.querySelector('.edit-modal').remove();
+    loadTodos();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function doneTodo(id) {
+  if (!confirm('このToDoを完了にしますか？')) return;
+  try { await apiCall('POST', `/api/units/todos/${id}/done`); loadTodos(); }
+  catch (e) { alert('Error: ' + e.message); }
+}
+async function deleteTodo(id) {
+  if (!confirm('このToDoを削除しますか？')) return;
+  try { await apiCall('DELETE', `/api/units/todos/${id}`); loadTodos(); }
+  catch (e) { alert('Error: ' + e.message); }
+}
+
+// --- Memo actions ---
+
+function editMemo(id, content, tags) {
+  // esc()で\\nにされた改行を復元
+  const decoded = content.replace(/\\n/g, '\n').replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+  const decodedTags = tags.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
+  const modal = showModal(`
+    <h3>メモ #${id} 編集</h3>
+    <label>内容</label><textarea id="ed-m-content" rows="3"></textarea>
+    <label>タグ</label><input id="ed-m-tags" value="">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="this.closest('.edit-modal').remove()">キャンセル</button>
+      <button class="btn-save" onclick="saveMemo(${id})">保存</button>
+    </div>
+  `);
+  modal.querySelector('#ed-m-content').value = decoded;
+  modal.querySelector('#ed-m-tags').value = decodedTags;
+}
+async function saveMemo(id) {
+  const content = document.getElementById('ed-m-content').value.trim();
+  const tags = document.getElementById('ed-m-tags').value.trim();
+  if (!content) return;
+  try {
+    await apiCall('PUT', `/api/units/memos/${id}`, { content, tags });
+    document.querySelector('.edit-modal').remove();
+    loadMemos();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+function appendMemo(id) {
+  showModal(`
+    <h3>メモ #${id} に追記</h3>
+    <label>追記内容</label><textarea id="ed-m-append" rows="3"></textarea>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="this.closest('.edit-modal').remove()">キャンセル</button>
+      <button class="btn-save" onclick="saveAppendMemo(${id})">追記</button>
+    </div>
+  `);
+}
+async function saveAppendMemo(id) {
+  const content = document.getElementById('ed-m-append').value.trim();
+  if (!content) return;
+  try {
+    await apiCall('POST', `/api/units/memos/${id}/append`, { content });
+    document.querySelector('.edit-modal').remove();
+    loadMemos();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+async function deleteMemo(id) {
+  if (!confirm('このメモを削除しますか？')) return;
+  try { await apiCall('DELETE', `/api/units/memos/${id}`); loadMemos(); }
+  catch (e) { alert('Error: ' + e.message); }
 }
 
 // ======================

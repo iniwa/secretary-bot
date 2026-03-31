@@ -1,6 +1,6 @@
 """リマインダー・ToDo管理ユニット。"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.database import JST, jst_now
 from src.flow_tracker import get_flow_tracker
@@ -24,14 +24,14 @@ _EXTRACT_PROMPT = """\
 - edit: リマインダー編集（id または message_query が必要、変更する message または time を含める）
 - delete: リマインダー削除（id または message_query が必要）
 - done: リマインダー完了（id または message_query が必要）
-- todo_add: ToDo追加（title が必要）
+- todo_add: ToDo追加（title が必要、due_date は任意）
 - todo_list: ToDo一覧表示
 - todo_done: ToDo完了（id が必要）
-- todo_edit: ToDo編集（id と title が必要）
+- todo_edit: ToDo編集（id が必要、title や due_date を変更）
 - todo_delete: ToDo削除（id が必要）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値, "ids": [数値], "message_query": "検索キーワード"}}
+{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "due_date": "YYYY-MM-DD", "id": 数値, "ids": [数値], "message_query": "検索キーワード"}}
 
 - 不要なフィールドは省略してください。
 - 日時表現は必ずISO形式に変換してください。
@@ -372,10 +372,13 @@ class ReminderUnit(BaseUnit):
         title = extracted.get("title") or extracted.get("message", "")
         if not title:
             return "ToDoの内容を教えてください。"
+        due_date = extracted.get("due_date") or None
         await self.bot.database.execute(
-            "INSERT INTO todos (title, user_id, created_at) VALUES (?, ?, ?)", (title, user_id, jst_now())
+            "INSERT INTO todos (title, user_id, created_at, due_date) VALUES (?, ?, ?, ?)",
+            (title, user_id, jst_now(), due_date),
         )
-        return f"ToDoに追加しました: {title}"
+        due_str = f"（期限: {due_date}）" if due_date else ""
+        return f"ToDoに追加しました: {title}{due_str}"
 
     async def _list_todos(self, user_id: str = "") -> str:
         if user_id:
@@ -391,7 +394,8 @@ class ReminderUnit(BaseUnit):
             return "未完了のToDoはありません。"
         lines = [f"\U0001f4dd ToDo一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            lines.append(f"  #{r['id']}  {r['title']}")
+            due = f"  📅{r['due_date'][:10]}" if r.get("due_date") else ""
+            lines.append(f"  #{r['id']}  {r['title']}{due}")
         return "\n".join(lines)
 
     async def _done_todo(self, extracted: dict, user_id: str = "") -> str:
@@ -416,11 +420,8 @@ class ReminderUnit(BaseUnit):
 
     async def _edit_todo(self, extracted: dict, user_id: str = "") -> str:
         tid = extracted.get("id")
-        title = extracted.get("title")
         if not tid:
             return "編集するToDoのIDを指定してください。"
-        if not title:
-            return "新しいタイトルを指定してください。"
         if user_id:
             row = await self.bot.database.fetchone(
                 "SELECT * FROM todos WHERE id = ? AND done = 0 AND user_id = ?", (tid, user_id)
@@ -431,10 +432,13 @@ class ReminderUnit(BaseUnit):
             )
         if not row:
             return f"ToDo #{tid} が見つかりません。"
+        new_title = extracted.get("title") or row["title"]
+        new_due = extracted.get("due_date") if "due_date" in extracted else row.get("due_date")
         await self.bot.database.execute(
-            "UPDATE todos SET title = ? WHERE id = ?", (title, tid)
+            "UPDATE todos SET title = ?, due_date = ? WHERE id = ?", (new_title, new_due, tid)
         )
-        return f"ToDo #{tid} を「{title}」に更新しました。"
+        due_str = f"（期限: {new_due}）" if new_due else ""
+        return f"ToDo #{tid} を「{new_title}」{due_str}に更新しました。"
 
     async def _delete_todo(self, extracted: dict, user_id: str = "") -> str:
         tid = extracted.get("id")
@@ -452,6 +456,68 @@ class ReminderUnit(BaseUnit):
             return f"ToDo #{tid} が見つかりません。"
         await self.bot.database.execute("DELETE FROM todos WHERE id = ?", (tid,))
         return f"ToDo #{tid}「{row['title']}」を削除しました。"
+
+
+    # --- ハートビートでToDo通知 ---
+
+    async def on_heartbeat(self) -> None:
+        """未完了ToDoの放置通知・期限通知。"""
+        now = datetime.now(JST)
+        today_str = now.strftime("%Y-%m-%d")
+        tomorrow = now + timedelta(days=1)
+        tomorrow_str = tomorrow.strftime("%Y-%m-%d")
+
+        todos = await self.bot.database.fetchall(
+            "SELECT * FROM todos WHERE done = 0 ORDER BY created_at"
+        )
+        if not todos:
+            return
+
+        due_today = []
+        due_tomorrow = []
+        stale = []  # 7日以上放置（期限なし）
+
+        for t in todos:
+            due = t.get("due_date")
+            if due:
+                due_day = due[:10]
+                if due_day <= today_str:
+                    due_today.append(t)
+                elif due_day == tomorrow_str:
+                    due_tomorrow.append(t)
+            else:
+                # 期限なし → 作成日からの経過日数チェック
+                created = t.get("created_at", "")
+                if created:
+                    try:
+                        created_dt = datetime.fromisoformat(created)
+                        if created_dt.tzinfo is None:
+                            created_dt = created_dt.replace(tzinfo=JST)
+                        days_old = (now - created_dt).days
+                        if days_old >= 7:
+                            stale.append((t, days_old))
+                    except Exception:
+                        pass
+
+        lines = []
+        if due_today:
+            lines.append("⚠️ **期限が今日のToDo:**")
+            for t in due_today:
+                lines.append(f"  #{t['id']} {t['title']}（期限: {t['due_date'][:10]}）")
+        if due_tomorrow:
+            lines.append("📅 **明日が期限のToDo:**")
+            for t in due_tomorrow:
+                lines.append(f"  #{t['id']} {t['title']}")
+        if stale:
+            lines.append(f"📋 **{len(stale)}件のToDoが7日以上未完了です:**")
+            for t, days in stale[:5]:
+                lines.append(f"  #{t['id']} {t['title']}（{days}日経過）")
+            if len(stale) > 5:
+                lines.append(f"  …他{len(stale) - 5}件")
+
+        if lines:
+            msg = "\n".join(lines)
+            await self.notify(msg)
 
 
 async def setup(bot) -> None:

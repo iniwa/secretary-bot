@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS todos (
     done       BOOLEAN NOT NULL DEFAULT 0,
     user_id    TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    done_at    DATETIME
+    done_at    DATETIME,
+    due_date   DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS reminders (
@@ -95,6 +96,9 @@ class Database:
                 "ALTER TABLE todos ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE memos ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE conversation_log ADD COLUMN user_id TEXT NOT NULL DEFAULT ''",
+            ],
+            4: [
+                "ALTER TABLE todos ADD COLUMN due_date DATETIME",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

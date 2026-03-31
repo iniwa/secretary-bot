@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import subprocess
+from datetime import datetime
 
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
@@ -311,6 +312,120 @@ def create_web_app(bot) -> FastAPI:
                 "SELECT * FROM memos ORDER BY created_at DESC LIMIT 100"
             )
         return {"items": rows}
+
+    # --- リマインダー CRUD ---
+
+    @app.put("/api/units/reminders/{rid}", dependencies=[Depends(_verify)])
+    async def update_reminder(rid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ?", (rid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        message = body.get("message", row["message"])
+        remind_at = body.get("remind_at", row["remind_at"])
+        await bot.database.execute(
+            "UPDATE reminders SET message = ?, remind_at = ?, notified = 0 WHERE id = ?",
+            (message, remind_at, rid),
+        )
+        try:
+            dt = datetime.fromisoformat(remind_at)
+            bot.heartbeat.schedule_reminder(rid, dt, message, row.get("user_id", ""))
+        except Exception:
+            pass
+        return {"ok": True}
+
+    @app.post("/api/units/reminders/{rid}/done", dependencies=[Depends(_verify)])
+    async def done_reminder(rid: int):
+        from src.database import jst_now
+        row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ? AND active = 1", (rid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute(
+            "UPDATE reminders SET active = 0, done_at = ? WHERE id = ?", (jst_now(), rid)
+        )
+        bot.heartbeat.cancel_reminder(rid)
+        return {"ok": True}
+
+    @app.delete("/api/units/reminders/{rid}", dependencies=[Depends(_verify)])
+    async def delete_reminder(rid: int):
+        row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ?", (rid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+        bot.heartbeat.cancel_reminder(rid)
+        return {"ok": True}
+
+    # --- ToDo CRUD ---
+
+    @app.put("/api/units/todos/{tid}", dependencies=[Depends(_verify)])
+    async def update_todo(tid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ?", (tid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        title = body.get("title", row["title"])
+        due_date = body.get("due_date") if "due_date" in body else row.get("due_date")
+        await bot.database.execute(
+            "UPDATE todos SET title = ?, due_date = ? WHERE id = ?", (title, due_date, tid)
+        )
+        return {"ok": True}
+
+    @app.post("/api/units/todos/{tid}/done", dependencies=[Depends(_verify)])
+    async def done_todo(tid: int):
+        from src.database import jst_now
+        row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ? AND done = 0", (tid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute(
+            "UPDATE todos SET done = 1, done_at = ? WHERE id = ?", (jst_now(), tid)
+        )
+        return {"ok": True}
+
+    @app.delete("/api/units/todos/{tid}", dependencies=[Depends(_verify)])
+    async def delete_todo(tid: int):
+        row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ?", (tid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute("DELETE FROM todos WHERE id = ?", (tid,))
+        return {"ok": True}
+
+    # --- メモ CRUD ---
+
+    @app.put("/api/units/memos/{mid}", dependencies=[Depends(_verify)])
+    async def update_memo(mid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        content = body.get("content", row["content"])
+        tags = body.get("tags") if "tags" in body else row.get("tags", "")
+        await bot.database.execute(
+            "UPDATE memos SET content = ?, tags = ? WHERE id = ?", (content, tags, mid)
+        )
+        return {"ok": True}
+
+    @app.post("/api/units/memos/{mid}/append", dependencies=[Depends(_verify)])
+    async def append_memo(mid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        append_text = body.get("content", "")
+        if not append_text:
+            raise HTTPException(400, "content is required")
+        updated = row["content"] + "\n" + append_text
+        await bot.database.execute(
+            "UPDATE memos SET content = ? WHERE id = ?", (updated, mid)
+        )
+        return {"ok": True}
+
+    @app.delete("/api/units/memos/{mid}", dependencies=[Depends(_verify)])
+    async def delete_memo(mid: int):
+        row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute("DELETE FROM memos WHERE id = ?", (mid,))
+        return {"ok": True}
 
     @app.get("/api/units/timers", dependencies=[Depends(_verify)])
     async def get_timers():
