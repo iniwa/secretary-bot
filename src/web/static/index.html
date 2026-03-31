@@ -258,8 +258,15 @@ nav.bottom-nav { display: none; }
     <div class="maint-section">
       <h3>Code Update</h3>
       <p id="current-version" style="margin-bottom:1rem;color:var(--text-dim)"></p>
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.8rem">更新がある場合のみ自動で再起動します。</p>
       <button class="btn-update" id="btn-update" onclick="updateCode()">コードを更新する</button>
       <div id="update-result"></div>
+    </div>
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>Restart</h3>
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.8rem">コード更新なしでコンテナを再起動します。</p>
+      <button class="btn-update" id="btn-restart" onclick="restartContainer()" style="background:#7f4000">再起動する</button>
+      <div id="restart-result"></div>
     </div>
   </div>
 
@@ -548,6 +555,31 @@ async function updateCode() {
     } else {
       result.style.background = '#7f4000';
       result.innerHTML = `✅ git pull 成功<br>${data.message}<br><span style="color:#ffcc80;font-size:0.85rem">⚠️ 再起動失敗: ${data.restart_detail}</span>`;
+    }
+  } catch (err) {
+    result.style.background = '#b71c1c';
+    result.textContent = '❌ Error: ' + err.message;
+  }
+  btn.disabled = false;
+}
+
+async function restartContainer() {
+  const btn = document.getElementById('btn-restart');
+  const result = document.getElementById('restart-result');
+  if (!confirm('コンテナを再起動しますか？')) return;
+  btn.disabled = true;
+  result.style.display = 'block';
+  result.style.background = 'var(--surface)';
+  result.textContent = '再起動中...';
+  try {
+    const res = await fetch('/api/restart', { method: 'POST' });
+    const data = await res.json();
+    if (data.restarted) {
+      result.style.background = '#1b5e20';
+      result.textContent = '🔄 ' + data.detail;
+    } else {
+      result.style.background = '#b71c1c';
+      result.textContent = '❌ ' + data.detail;
     }
   } catch (err) {
     result.style.background = '#b71c1c';

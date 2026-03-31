@@ -136,6 +136,47 @@ def create_web_app(bot) -> FastAPI:
         bot.unit_manager.agent_pool.set_mode(agent_id, mode)
         return {"ok": True}
 
+    async def _restart_container() -> dict:
+        """Portainer API 経由でコンテナを再起動する。{"restarted": bool, "detail": str} を返す。"""
+        portainer_url = os.environ.get("PORTAINER_URL", "")
+        portainer_token = os.environ.get("PORTAINER_API_TOKEN", "")
+        if not (portainer_url and portainer_token):
+            msg = "Portainer設定なし（PORTAINER_URL / PORTAINER_API_TOKEN）"
+            log.warning("Portainer env vars not set — skipping restart")
+            return {"restarted": False, "detail": msg}
+        try:
+            env_id = os.environ.get("PORTAINER_ENV_ID", "1")
+            container_name = os.environ.get("CONTAINER_NAME", "secretary-bot")
+            headers = {"X-API-Key": portainer_token}
+            async with httpx.AsyncClient(timeout=30, verify=False) as client:
+                filters = f'{{"name":["{container_name}"]}}'
+                list_resp = await client.get(
+                    f"{portainer_url}/api/endpoints/{env_id}/docker/containers/json",
+                    headers=headers,
+                    params={"filters": filters},
+                )
+                list_resp.raise_for_status()
+                containers = list_resp.json()
+                if not containers:
+                    msg = f"コンテナ '{container_name}' が見つかりません"
+                    log.error("Container not found: %s", container_name)
+                    return {"restarted": False, "detail": msg}
+                container_id = containers[0]["Id"]
+                restart_resp = await client.post(
+                    f"{portainer_url}/api/endpoints/{env_id}/docker/containers/{container_id}/restart",
+                    headers=headers,
+                )
+                if restart_resp.status_code < 300:
+                    log.info("Container restarted: %s", container_name)
+                    return {"restarted": True, "detail": f"コンテナ '{container_name}' を再起動しました"}
+                else:
+                    msg = f"再起動API エラー (HTTP {restart_resp.status_code}): {restart_resp.text[:200]}"
+                    log.error("Container restart failed: %s %s", restart_resp.status_code, restart_resp.text)
+                    return {"restarted": False, "detail": msg}
+        except Exception as e:
+            log.error("Portainer API error: %s", e)
+            return {"restarted": False, "detail": f"Portainer API 接続失敗: {e}"}
+
     @app.post("/api/update-code", dependencies=[Depends(_verify)])
     async def update_code():
         try:
@@ -151,42 +192,16 @@ def create_web_app(bot) -> FastAPI:
             if "Already up to date" in output:
                 return {"updated": False, "message": output, "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
-            # Portainer API でスタック再起動
-            portainer_url = os.environ.get("PORTAINER_URL", "")
-            portainer_token = os.environ.get("PORTAINER_API_TOKEN", "")
-            stack_id = os.environ.get("PORTAINER_STACK_ID", "")
-
-            restarted = False
-            restart_detail = ""
-
-            if not (portainer_url and portainer_token and stack_id):
-                restart_detail = "Portainer設定なし（PORTAINER_URL / PORTAINER_API_TOKEN / PORTAINER_STACK_ID）"
-                log.warning("Portainer env vars not set — skipping restart")
-            else:
-                try:
-                    env_id = os.environ.get("PORTAINER_ENV_ID", "1")
-                    async with httpx.AsyncClient(timeout=30, verify=False) as client:
-                        resp = await client.post(
-                            f"{portainer_url}/api/stacks/{stack_id}/redeploy",
-                            headers={"X-API-Key": portainer_token},
-                            params={"endpointId": env_id},
-                            json={"pullImage": False},
-                        )
-                    if resp.status_code < 300:
-                        restarted = True
-                        restart_detail = f"Portainer API 成功 (HTTP {resp.status_code})"
-                        log.info("Portainer redeploy triggered: %s", resp.status_code)
-                    else:
-                        restart_detail = f"Portainer API エラー (HTTP {resp.status_code}): {resp.text[:200]}"
-                        log.error("Portainer redeploy failed: %s %s", resp.status_code, resp.text)
-                except Exception as e:
-                    restart_detail = f"Portainer API 接続失敗: {e}"
-                    log.error("Portainer API error: %s", e)
-
-            return {"updated": True, "message": output, "restarted": restarted, "restart_detail": restart_detail}
+            r = await _restart_container()
+            return {"updated": True, "message": output, "restarted": r["restarted"], "restart_detail": r["detail"]}
         except Exception as e:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
+
+    @app.post("/api/restart", dependencies=[Depends(_verify)])
+    async def restart():
+        r = await _restart_container()
+        return {"restarted": r["restarted"], "detail": r["detail"]}
 
     # --- Units データ閲覧 API ---
 

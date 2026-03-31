@@ -121,7 +121,8 @@ WEBGUI_PORT=8100
 # === Portainer ===
 PORTAINER_URL=http://192.168.1.1:9000
 PORTAINER_API_TOKEN=your-portainer-api-token-here
-PORTAINER_STACK_ID=1
+PORTAINER_ENV_ID=1
+CONTAINER_NAME=secretary-bot
 
 # === Windows Agent ===
 AGENT_SECRET_TOKEN=your-shared-secret-here
