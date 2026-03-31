@@ -157,14 +157,13 @@ def create_web_app(bot) -> FastAPI:
             stack_id = os.environ.get("PORTAINER_STACK_ID", "")
 
             if portainer_url and portainer_token and stack_id:
-                async with httpx.AsyncClient(timeout=10) as client:
+                env_id = os.environ.get("PORTAINER_ENV_ID", "1")
+                async with httpx.AsyncClient(timeout=30, verify=False) as client:
                     await client.post(
-                        f"{portainer_url}/api/stacks/{stack_id}/stop",
+                        f"{portainer_url}/api/stacks/{stack_id}/redeploy",
                         headers={"X-API-Key": portainer_token},
-                    )
-                    await client.post(
-                        f"{portainer_url}/api/stacks/{stack_id}/start",
-                        headers={"X-API-Key": portainer_token},
+                        params={"endpointId": env_id},
+                        json={"pullImage": False},
                     )
 
             return {"updated": True, "message": output}
