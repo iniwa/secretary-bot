@@ -14,6 +14,7 @@ _UNIT_MODULES = {
     "timer": "src.units.timer",
     "status": "src.units.status",
     "chat": "src.units.chat",
+    "web_search": "src.units.web_search",
 }
 
 

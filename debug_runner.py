@@ -180,6 +180,10 @@ SCENARIOS: dict[str, list[dict]] = {
     "chat": [
         {"label": "chat", "parsed": {"message": "こんにちは、元気？"}},
     ],
+    "web_search": [
+        {"label": "search", "parsed": {"message": "Raspberry Pi 5の発売日を調べて"}},
+        {"label": "search_en", "parsed": {"message": "What is SearXNG?"}},
+    ],
 }
 
 

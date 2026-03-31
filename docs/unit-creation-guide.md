@@ -495,6 +495,37 @@ python debug_runner.py my_unit action_a # 特定シナリオ
 python debug_runner.py --all           # 全ユニット一括
 ```
 
+## 外部API通信ユニット
+
+ユニットから外部サービス（SearXNG、REST APIなど）に通信する場合のパターン:
+
+```python
+import httpx
+
+class MyApiUnit(BaseUnit):
+    UNIT_NAME = "my_api"
+    UNIT_DESCRIPTION = "外部APIと連携するユニット"
+
+    def __init__(self, bot):
+        super().__init__(bot)
+        # config.yaml から設定を読み込む
+        cfg = bot.config.get("my_service", {})
+        self._base_url = cfg.get("url", "http://localhost:8080")
+
+    async def _call_api(self, endpoint: str, params: dict) -> dict:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{self._base_url}/{endpoint}", params=params)
+            resp.raise_for_status()
+            return resp.json()
+```
+
+### 注意点
+
+- `httpx.AsyncClient` を使う（`requests` は非同期非対応）
+- `timeout` を必ず設定する（デフォルトは無制限で応答が返らない場合にハングする）
+- `config.yaml` でURL等を設定可能にする（ハードコード禁止）
+- 外部通信の失敗はサーキットブレーカーで保護される
+
 ## チェックリスト
 
 新しいユニットを作成したら以下を確認:
