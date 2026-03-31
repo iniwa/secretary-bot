@@ -140,9 +140,11 @@ def create_web_app(bot) -> FastAPI:
     async def update_code():
         try:
             from src.bot import BASE_DIR
-            src_dir = os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+            git_dir = os.environ.get("GIT_REPO_DIR") or (
+                os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+            )
             result = subprocess.run(
-                ["git", "pull"], cwd=src_dir,
+                ["git", "pull"], cwd=git_dir,
                 capture_output=True, text=True, timeout=30,
             )
             output = result.stdout.strip()

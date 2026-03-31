@@ -2,8 +2,9 @@ services:
   secretary-bot:
     image: ghcr.io/iniwa/secretary-bot:latest
     volumes:
-      - /home/iniwa/docker/secretary-bot/src:/app/src
-      - /home/iniwa/docker/secretary-bot/config.yaml:/app/config.yaml
+      - /home/iniwa/docker/secretary-bot/app:/app/repo
+      - /home/iniwa/docker/secretary-bot/app/src:/app/src
+      - /home/iniwa/docker/secretary-bot/app/config.yaml:/app/config.yaml
       - /home/iniwa/docker/secretary-bot/data:/app/data
     ports:
       - "8100:8100"
@@ -12,6 +13,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Tokyo
+      - BOT_BASE_DIR=/app/repo
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
       interval: 30s
