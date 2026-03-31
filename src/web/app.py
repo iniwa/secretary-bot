@@ -271,6 +271,27 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- デバッグ: LLM状態確認 ---
+
+    @app.get("/api/debug/llm-state", dependencies=[Depends(_verify)])
+    async def debug_llm_state():
+        units_info = {}
+        for name, cog in bot.cogs.items():
+            if hasattr(cog, "llm"):
+                llm = cog.llm
+                units_info[name] = {
+                    "purpose": llm._purpose,
+                    "ollama_only": llm._ollama_only,
+                    "gemini_allowed": llm._gemini_allowed,
+                    "ollama_model": llm._ollama_model,
+                    "gemini_model": llm._gemini_model,
+                }
+        return {
+            "ollama_available": bot.llm_router.ollama_available,
+            "gemini_config": bot.llm_router._gemini_config,
+            "units": units_info,
+        }
+
     # --- LLM設定 ---
 
     @app.get("/api/llm-config", dependencies=[Depends(_verify)])

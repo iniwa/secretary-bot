@@ -28,11 +28,15 @@ _start_time = time.monotonic()
 BASE_DIR = os.environ.get("BOT_BASE_DIR", "/app")
 
 
+def _git_dir() -> str:
+    return os.environ.get("GIT_REPO_DIR") or BASE_DIR
+
+
 def get_commit_hash() -> str:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR,
+            cwd=_git_dir(),
             text=True,
         ).strip()
     except Exception:
