@@ -8,6 +8,11 @@ from src.units.base_unit import BaseUnit
 
 _WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
+_ACTION_LABELS = {"edit": "編集", "delete": "削除", "done": "完了に"}
+
+_CONFIRM_YES = ("はい", "うん", "yes", "ok", "おk", "おけ", "お願い", "そう", "合ってる", "合ってます", "それで")
+_CONFIRM_NO = ("いいえ", "いや", "no", "やめ", "キャンセル", "違う", "ちがう", "やめて", "違います")
+
 _EXTRACT_PROMPT = """\
 現在日時: {now} ({weekday}曜日)
 
@@ -16,9 +21,9 @@ _EXTRACT_PROMPT = """\
 ## アクション一覧
 - add: リマインダー登録（message と time が必要）
 - list: リマインダー一覧表示
-- edit: リマインダー編集（id が必要、変更する message または time を含める）
-- delete: リマインダー削除（id が必要）
-- done: リマインダー完了（id が必要）
+- edit: リマインダー編集（id または message_query が必要、変更する message または time を含める）
+- delete: リマインダー削除（id または message_query が必要）
+- done: リマインダー完了（id または message_query が必要）
 - todo_add: ToDo追加（title が必要）
 - todo_list: ToDo一覧表示
 - todo_done: ToDo完了（id が必要）
@@ -26,11 +31,12 @@ _EXTRACT_PROMPT = """\
 - todo_delete: ToDo削除（id が必要）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値, "ids": [数値]}}
+{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "id": 数値, "ids": [数値], "message_query": "検索キーワード"}}
 
 - 不要なフィールドは省略してください。
 - 日時表現は必ずISO形式に変換してください。
 - 複数IDの操作（例:「1と2を削除」）は ids フィールドに配列で指定してください。単一IDの場合は id を使用。
+- edit/delete/done で id が分からない場合は message_query にリマインダーの内容キーワードを指定してください。
 - JSON1つだけを返してください。複数のJSONを返さないでください。
 
 ## ユーザー入力
@@ -38,9 +44,22 @@ _EXTRACT_PROMPT = """\
 """
 
 
+def _format_dt(remind_at: str) -> str:
+    try:
+        dt = datetime.fromisoformat(remind_at)
+        return dt.strftime("%m/%d %H:%M")
+    except Exception:
+        return remind_at
+
+
 class ReminderUnit(BaseUnit):
     UNIT_NAME = "reminder"
     UNIT_DESCRIPTION = "リマインダーやToDoの登録・一覧・編集・削除・完了管理。「〜時に教えて」「やることリスト」など。"
+
+    def __init__(self, bot):
+        super().__init__(bot)
+        # チャネルごとの保留アクション（確認待ち）
+        self._pending_actions: dict[str, dict] = {}
 
     # --- メイン処理 ---
 
@@ -56,6 +75,16 @@ class ReminderUnit(BaseUnit):
         channel = parsed.get("channel", "")
         user_id = parsed.get("user_id", "")
         try:
+            # 確認待ちの保留アクションがある場合
+            if channel and channel in self._pending_actions:
+                result = await self._handle_confirmation(channel, message, user_id)
+                if result is not None:
+                    result = await self.personalize(result, message, flow_id)
+                    self.breaker.record_success()
+                    await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "confirm"}, flow_id)
+                    return result
+                # None = 確認応答と認識できなかった → 通常フローへ
+
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "add")
 
@@ -65,15 +94,8 @@ class ReminderUnit(BaseUnit):
                 self.session_done = True
             elif action == "list":
                 result = await self._list_reminders(user_id)
-            elif action == "edit":
-                result = await self._edit_reminder(extracted, user_id)
-                self.session_done = True
-            elif action == "delete":
-                result = await self._delete_reminder(extracted, user_id)
-                self.session_done = True
-            elif action == "done":
-                result = await self._done_reminder(extracted, user_id)
-                self.session_done = True
+            elif action in ("edit", "delete", "done"):
+                result = await self._handle_action_with_query(action, extracted, channel, user_id)
             elif action == "todo_add":
                 result = await self._add_todo(extracted, user_id)
                 self.session_done = True
@@ -116,6 +138,106 @@ class ReminderUnit(BaseUnit):
             prompt = prompt + context
         return await self.llm.extract_json(prompt)
 
+    # --- 確認フロー ---
+
+    def _check_confirmation(self, message: str) -> bool | None:
+        """短文の確認応答を判定する。判定不能ならNoneを返す。"""
+        msg = message.strip()
+        if len(msg) > 30:
+            return None
+        msg_lower = msg.lower()
+        if any(w in msg_lower for w in _CONFIRM_NO):
+            return False
+        if any(w in msg_lower for w in _CONFIRM_YES):
+            return True
+        return None
+
+    async def _handle_confirmation(self, channel: str, message: str, user_id: str) -> str | None:
+        """保留アクションの確認応答を処理する。判定不能ならNone（通常フローへ）。"""
+        pending = self._pending_actions.pop(channel)
+        confirmed = self._check_confirmation(message)
+
+        if confirmed is None:
+            return None
+
+        if not confirmed:
+            self.session_done = True
+            return "キャンセルしました。"
+
+        # 確認OK → アクション実行
+        action = pending["action"]
+        extracted = pending["extracted"]
+        extracted["id"] = pending["reminder_id"]
+
+        if action == "edit":
+            result = await self._edit_reminder(extracted, user_id)
+        elif action == "delete":
+            result = await self._delete_reminder(extracted, user_id)
+        else:
+            result = await self._done_reminder(extracted, user_id)
+
+        self.session_done = True
+        return result
+
+    async def _handle_action_with_query(self, action: str, extracted: dict, channel: str, user_id: str) -> str:
+        """IDまたはmessage_queryでリマインダーを特定して操作する。"""
+        # IDが指定されている場合は従来通り直接実行
+        if extracted.get("id") or extracted.get("ids"):
+            if action == "edit":
+                result = await self._edit_reminder(extracted, user_id)
+            elif action == "delete":
+                result = await self._delete_reminder(extracted, user_id)
+            else:
+                result = await self._done_reminder(extracted, user_id)
+            self.session_done = True
+            return result
+
+        # message_queryで検索
+        query = extracted.get("message_query", "")
+        if not query:
+            self.session_done = True
+            label = _ACTION_LABELS.get(action, action)
+            return f"{label}するリマインダーのIDまたは内容を指定してください。"
+
+        matches = await self._find_by_query(query, user_id)
+
+        if not matches:
+            self.session_done = True
+            return f"「{query}」に一致するリマインダーが見つかりません。"
+
+        if len(matches) == 1:
+            # 1件マッチ → 確認待ち
+            r = matches[0]
+            dt_str = _format_dt(r["remind_at"])
+            label = _ACTION_LABELS.get(action, action)
+            self._pending_actions[channel] = {
+                "action": action,
+                "reminder_id": r["id"],
+                "extracted": extracted,
+            }
+            self.session_done = False
+            return f"#{r['id']} {dt_str}「{r['message']}」を{label}します。これで合っていますか？"
+
+        # 複数マッチ → 候補表示してIDで選んでもらう
+        lines = [f"「{query}」に複数のリマインダーが見つかりました。IDで指定してください。"]
+        for r in matches:
+            dt_str = _format_dt(r["remind_at"])
+            lines.append(f"  #{r['id']}  {dt_str}  {r['message']}")
+        self.session_done = False
+        return "\n".join(lines)
+
+    async def _find_by_query(self, query: str, user_id: str = "") -> list[dict]:
+        """メッセージ内容でリマインダーをLIKE検索する。"""
+        if user_id:
+            return await self.bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = 1 AND user_id = ? AND message LIKE ? ORDER BY remind_at",
+                (user_id, f"%{query}%"),
+            )
+        return await self.bot.database.fetchall(
+            "SELECT * FROM reminders WHERE active = 1 AND message LIKE ? ORDER BY remind_at",
+            (f"%{query}%",),
+        )
+
     # --- リマインダー ---
 
     async def _add_reminder(self, extracted: dict, user_id: str = "") -> str:
@@ -129,10 +251,14 @@ class ReminderUnit(BaseUnit):
             dt = datetime.fromisoformat(time_str)
         except ValueError:
             return "日時の解析ができませんでした。「明日の10時」「2025-01-01 08:00」のような形式で指定してください。"
-        await self.bot.database.execute(
+        cursor = await self.bot.database.execute(
             "INSERT INTO reminders (message, remind_at, user_id) VALUES (?, ?, ?)",
             (message, dt.isoformat(), user_id),
         )
+        # スケジューラにジョブ登録
+        reminder_id = cursor.lastrowid if hasattr(cursor, "lastrowid") else None
+        if reminder_id:
+            self.bot.heartbeat.schedule_reminder(reminder_id, dt, message, user_id)
         return f"リマインダーを設定しました: {dt.strftime('%m/%d %H:%M')} に「{message}」"
 
     async def _list_reminders(self, user_id: str = "") -> str:
@@ -147,15 +273,11 @@ class ReminderUnit(BaseUnit):
             )
         if not rows:
             return "アクティブなリマインダーはありません。"
-        lines = [f"📋 リマインダー一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
+        lines = [f"\U0001f4cb リマインダー一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
-            try:
-                dt = datetime.fromisoformat(r["remind_at"])
-                time_str = dt.strftime("%m/%d %H:%M")
-            except Exception:
-                time_str = r["remind_at"]
+            dt_str = _format_dt(r["remind_at"])
             status = " ⚠️通知済" if r.get("notified") else ""
-            lines.append(f"  #{r['id']}  {time_str}  {r['message']}{status}")
+            lines.append(f"  #{r['id']}  {dt_str}  {r['message']}{status}")
         return "\n".join(lines)
 
     async def _edit_reminder(self, extracted: dict, user_id: str = "") -> str:
@@ -184,7 +306,9 @@ class ReminderUnit(BaseUnit):
             "UPDATE reminders SET message = ?, remind_at = ?, notified = 0 WHERE id = ?",
             (new_message, new_time_str, rid),
         )
+        # スケジューラのジョブを再登録
         dt_display = datetime.fromisoformat(new_time_str)
+        self.bot.heartbeat.schedule_reminder(rid, dt_display, new_message, user_id)
         return f"リマインダー #{rid} を更新しました: {dt_display.strftime('%m/%d %H:%M')} に「{new_message}」"
 
     def _get_ids(self, extracted: dict) -> list[int]:
@@ -213,6 +337,7 @@ class ReminderUnit(BaseUnit):
                 results.append(f"#{rid} が見つかりません")
             else:
                 await self.bot.database.execute("DELETE FROM reminders WHERE id = ?", (rid,))
+                self.bot.heartbeat.cancel_reminder(rid)
                 results.append(f"#{rid}「{row['message']}」を削除しました")
         return "\n".join(results)
 
@@ -237,6 +362,7 @@ class ReminderUnit(BaseUnit):
                     "UPDATE reminders SET active = 0, done_at = ? WHERE id = ?",
                     (jst_now(), rid),
                 )
+                self.bot.heartbeat.cancel_reminder(rid)
                 results.append(f"#{rid}「{row['message']}」を完了にしました")
         return "\n".join(results)
 
@@ -263,7 +389,7 @@ class ReminderUnit(BaseUnit):
             )
         if not rows:
             return "未完了のToDoはありません。"
-        lines = [f"📝 ToDo一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
+        lines = [f"\U0001f4dd ToDo一覧（{len(rows)}件）", "━━━━━━━━━━━━━━━━━━━━"]
         for r in rows:
             lines.append(f"  #{r['id']}  {r['title']}")
         return "\n".join(lines)
@@ -326,25 +452,6 @@ class ReminderUnit(BaseUnit):
             return f"ToDo #{tid} が見つかりません。"
         await self.bot.database.execute("DELETE FROM todos WHERE id = ?", (tid,))
         return f"ToDo #{tid}「{row['title']}」を削除しました。"
-
-    # --- ハートビート ---
-
-    async def on_heartbeat(self) -> None:
-        """期限切れリマインダーを通知（notified=0のみ）。完了はユーザーが明示的に行う。"""
-        now = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-        rows = await self.bot.database.fetchall(
-            "SELECT * FROM reminders WHERE active = 1 AND notified = 0 AND remind_at <= ?",
-            (now,),
-        )
-        for r in rows:
-            await self.notify_user(
-                f"リマインド: {r['message']}\n"
-                f"完了したら「リマインダー{r['id']}番を完了にして」と教えてください。",
-                user_id=r.get("user_id", ""),
-            )
-            await self.bot.database.execute(
-                "UPDATE reminders SET notified = 1 WHERE id = ?", (r["id"],)
-            )
 
 
 async def setup(bot) -> None:

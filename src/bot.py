@@ -223,6 +223,7 @@ async def main() -> None:
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
     bot.heartbeat.start()
+    await bot.heartbeat.restore_reminders()
     log.info("Bot setup complete")
 
     if token:
