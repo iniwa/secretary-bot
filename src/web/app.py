@@ -7,7 +7,7 @@ import secrets
 import subprocess
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -177,31 +177,50 @@ def create_web_app(bot) -> FastAPI:
             log.error("Portainer API error: %s", e)
             return {"restarted": False, "detail": f"Portainer API 接続失敗: {e}"}
 
+    async def _delayed_restart(delay_seconds: float = 2):
+        """レスポンス送信後に遅延してコンテナを再起動する。"""
+        await asyncio.sleep(delay_seconds)
+        await _restart_container()
+
     @app.post("/api/update-code", dependencies=[Depends(_verify)])
-    async def update_code():
+    async def update_code(background_tasks: BackgroundTasks):
         try:
             from src.bot import BASE_DIR
             git_dir = os.environ.get("GIT_REPO_DIR") or (
                 os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
             )
+            # 更新前のコミットハッシュを取得
+            hash_before = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=git_dir,
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+
             result = subprocess.run(
                 ["git", "pull"], cwd=git_dir,
                 capture_output=True, text=True, timeout=30,
             )
             output = result.stdout.strip()
-            if "Already up to date" in output:
-                return {"updated": False, "message": output, "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
-            r = await _restart_container()
-            return {"updated": True, "message": output, "restarted": r["restarted"], "restart_detail": r["detail"]}
+            # 更新後のコミットハッシュを取得して比較
+            hash_after = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=git_dir,
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+
+            if hash_before == hash_after:
+                return {"updated": False, "message": output or "Already up to date.", "restarted": False, "restart_detail": "変更なしのためスキップ"}
+
+            # レスポンス送信後に再起動（遅延付き）
+            background_tasks.add_task(_delayed_restart, 2)
+            return {"updated": True, "message": output, "restarted": True, "restart_detail": "まもなく再起動します…"}
         except Exception as e:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
 
     @app.post("/api/restart", dependencies=[Depends(_verify)])
-    async def restart():
-        r = await _restart_container()
-        return {"restarted": r["restarted"], "detail": r["detail"]}
+    async def restart(background_tasks: BackgroundTasks):
+        background_tasks.add_task(_delayed_restart, 2)
+        return {"restarted": True, "detail": "まもなく再起動します…"}
 
     # --- Units データ閲覧 API ---
 
