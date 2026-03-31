@@ -293,6 +293,12 @@ nav.bottom-nav { display: none; }
       <h3>Gemini Settings</h3>
       <div id="gemini-settings"></div>
     </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>Unit Gemini Permission</h3>
+      <p style="font-size:0.85rem;color:var(--text-dim);margin-bottom:0.8rem">ユニットごとにGeminiの利用を許可/拒否します</p>
+      <div id="unit-gemini-settings"></div>
+    </div>
   </div>
 
   <!-- Unit: Reminder -->
@@ -386,7 +392,7 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
@@ -637,6 +643,36 @@ async function loadGeminiSettings() {
 async function setGemini(key, value) {
   try {
     await fetch('/api/gemini-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({[key]: value}) });
+  } catch (err) { console.error(err); }
+}
+
+async function loadUnitGeminiSettings() {
+  try {
+    const res = await fetch('/api/unit-gemini');
+    const data = await res.json();
+    const container = document.getElementById('unit-gemini-settings');
+    container.innerHTML = '';
+    const units = Object.keys(data);
+    if (units.length === 0) {
+      container.innerHTML = '<p class="unit-empty">No units configured</p>';
+      return;
+    }
+    units.forEach(name => {
+      container.innerHTML += `
+        <div class="setting-row">
+          <span>${name}</span>
+          <label class="toggle">
+            <input type="checkbox" ${data[name] ? 'checked' : ''} onchange="setUnitGemini('${name}', this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function setUnitGemini(unit, allowed) {
+  try {
+    await fetch('/api/unit-gemini', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({unit, allowed}) });
   } catch (err) { console.error(err); }
 }
 

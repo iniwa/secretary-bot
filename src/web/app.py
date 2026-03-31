@@ -243,7 +243,32 @@ def create_web_app(bot) -> FastAPI:
         for key in ("conversation", "memory_extraction", "unit_routing", "monthly_token_limit"):
             if key in body:
                 gemini_cfg[key] = body[key]
+                await bot.database.set_setting(f"gemini.{key}", json.dumps(body[key]))
         bot.llm_router._gemini_config = gemini_cfg
+        return {"ok": True}
+
+    # --- ユニット別Gemini許可 ---
+
+    @app.get("/api/unit-gemini", dependencies=[Depends(_verify)])
+    async def get_unit_gemini():
+        units_cfg = bot.config.get("units", {})
+        result = {}
+        for name in units_cfg:
+            result[name] = units_cfg[name].get("llm", {}).get("gemini_allowed", True)
+        return result
+
+    @app.post("/api/unit-gemini", dependencies=[Depends(_verify)])
+    async def set_unit_gemini(request: Request):
+        body = await request.json()
+        unit_name = body.get("unit", "")
+        allowed = bool(body.get("allowed", True))
+        ucfg = bot.config.setdefault("units", {}).setdefault(unit_name, {})
+        ucfg.setdefault("llm", {})["gemini_allowed"] = allowed
+        # 実行中ユニットにも反映
+        cog = bot.cogs.get(unit_name)
+        if cog and hasattr(cog, "llm"):
+            cog.llm._gemini_allowed = allowed
+        await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
     # --- LLM設定 ---

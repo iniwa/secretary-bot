@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS conversation_summary (
     summary    TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -172,3 +177,24 @@ class Database:
             "SELECT * FROM conversation_log ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         )
+
+    # --- 設定永続化 ---
+
+    async def get_setting(self, key: str) -> str | None:
+        row = await self.fetchone("SELECT value FROM settings WHERE key = ?", (key,))
+        return row["value"] if row else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    async def get_all_settings(self, prefix: str = "") -> dict[str, str]:
+        if prefix:
+            rows = await self.fetchall(
+                "SELECT key, value FROM settings WHERE key LIKE ?", (f"{prefix}%",)
+            )
+        else:
+            rows = await self.fetchall("SELECT key, value FROM settings")
+        return {r["key"]: r["value"] for r in rows}

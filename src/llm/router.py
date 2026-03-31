@@ -65,6 +65,7 @@ class LLMRouter:
         system: str | None = None,
         purpose: str = "conversation",
         ollama_only: bool = False,
+        gemini_allowed: bool = True,
         ollama_model: str | None = None,
         gemini_model: str | None = None,
         flow_id: str | None = None,
@@ -98,7 +99,7 @@ class LLMRouter:
             raise AllLLMsUnavailableError("Ollama required but unavailable")
 
         # Gemini フォールバック
-        if self._is_gemini_allowed(purpose):
+        if gemini_allowed and self._is_gemini_allowed(purpose):
             try:
                 await ft.emit("GEMINI", "active", {"purpose": purpose}, flow_id)
                 result = await self.gemini.generate(prompt, system=system, model=gemini_model)

@@ -35,12 +35,14 @@ class UnitLLM:
         ollama_model: str | None = None,
         gemini_model: str | None = None,
         ollama_only: bool = False,
+        gemini_allowed: bool = True,
     ):
         self._router = llm_router
         self._purpose = purpose
         self._ollama_model = ollama_model
         self._gemini_model = gemini_model
         self._ollama_only = ollama_only
+        self._gemini_allowed = gemini_allowed
 
     async def generate(self, prompt: str, *, system: str | None = None) -> str:
         """自由文生成。LLMRouterにインスタンスの設定を渡す。"""
@@ -49,6 +51,7 @@ class UnitLLM:
             system=system,
             purpose=self._purpose,
             ollama_only=self._ollama_only,
+            gemini_allowed=self._gemini_allowed,
             ollama_model=self._ollama_model,
             gemini_model=self._gemini_model,
         )
@@ -100,6 +103,7 @@ class UnitLLM:
         ollama_only = unit_llm_cfg.get(
             "ollama_only", character_cfg.get("ollama_only", False),
         )
+        gemini_allowed = unit_llm_cfg.get("gemini_allowed", True)
 
         return cls(
             llm_router,
@@ -107,4 +111,5 @@ class UnitLLM:
             ollama_model=ollama_model,
             gemini_model=gemini_model,
             ollama_only=ollama_only,
+            gemini_allowed=gemini_allowed,
         )

@@ -153,6 +153,32 @@ class SecretaryBot(commands.Bot):
         log.info("シャットダウン完了")
 
 
+async def _restore_settings(bot: SecretaryBot) -> None:
+    """DBに保存されたWebGUI設定をconfigに復元する。"""
+    import json as _json
+    saved = await bot.database.get_all_settings("gemini.")
+    if saved:
+        gemini_cfg = bot.config.setdefault("gemini", {})
+        for key, value in saved.items():
+            short_key = key.removeprefix("gemini.")
+            try:
+                gemini_cfg[short_key] = _json.loads(value)
+            except (ValueError, _json.JSONDecodeError):
+                gemini_cfg[short_key] = value
+        bot.llm_router._gemini_config = gemini_cfg
+        log.info("Restored gemini settings from DB")
+
+    # ユニット別Gemini許可設定
+    unit_gemini = await bot.database.get_all_settings("unit_gemini.")
+    if unit_gemini:
+        for key, value in unit_gemini.items():
+            unit_name = key.removeprefix("unit_gemini.")
+            allowed = value == "true"
+            ucfg = bot.config.setdefault("units", {}).setdefault(unit_name, {})
+            ucfg.setdefault("llm", {})["gemini_allowed"] = allowed
+        log.info("Restored unit gemini settings from DB")
+
+
 async def _run_web(bot: SecretaryBot) -> None:
     import uvicorn
     app = create_web_app(bot)
@@ -178,6 +204,7 @@ async def main() -> None:
 
     # DB/LLM/Unit の初期化（Discord接続前に実行）
     await bot.database.connect()
+    await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
     bot.heartbeat.start()
