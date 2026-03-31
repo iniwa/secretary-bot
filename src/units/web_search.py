@@ -52,15 +52,20 @@ class _HtmlToMarkdown(HTMLParser):
 
     _SKIP_TAGS = {"script", "style", "noscript", "head", "nav", "footer", "header", "aside", "form"}
     _HEADING_TAGS = {"h1": "#", "h2": "##", "h3": "###", "h4": "####", "h5": "#####", "h6": "######"}
+    # スキップするrole属性値
+    _SKIP_ROLES = {"navigation", "banner", "contentinfo", "complementary", "search"}
+    # スキップするclass名（部分一致）
+    _SKIP_CLASS_KEYWORDS = {"nav", "navigation", "breadcrumb", "sidebar", "menu", "cookie", "banner", "toolbar", "topbar"}
 
     def __init__(self):
         super().__init__()
         self._skip_depth = 0
+        self._skip_tag_stack: list[str] = []  # スキップ中タグ名のスタック
         self._out: list[str] = []
         # インライン要素バッファ（テキスト収集用）
         self._buf: list[str] = []
         # 状態フラグ
-        self._heading: str = ""          # 現在の見出しレベル ("##" など)
+        self._heading: str = ""
         self._in_pre = False
         self._in_code = False
         self._bold_depth = 0
@@ -75,8 +80,16 @@ class _HtmlToMarkdown(HTMLParser):
         self._current_row: list[str] = []
         self._current_cell: list[str] = []
         self._in_th = False
-        # リンク
-        self._a_href = ""
+        # リンク: ネスト対応のためスタックで管理 [(href, parent_buf), ...]
+        self._a_stack: list[tuple[str, list]] = []
+
+    def _should_skip(self, attr: dict) -> bool:
+        """role・class属性からナビゲーション系要素を判定する。"""
+        role = attr.get("role", "").lower()
+        if role in self._SKIP_ROLES:
+            return True
+        classes = set(attr.get("class", "").lower().split())
+        return bool(classes & self._SKIP_CLASS_KEYWORDS)
 
     # --- パーサーハンドラ ---
 
@@ -84,8 +97,9 @@ class _HtmlToMarkdown(HTMLParser):
         tag = tag.lower()
         attr = dict(attrs)
 
-        if tag in self._SKIP_TAGS:
+        if tag in self._SKIP_TAGS or self._should_skip(attr):
             self._skip_depth += 1
+            self._skip_tag_stack.append(tag)
             return
         if self._skip_depth:
             return
@@ -120,7 +134,9 @@ class _HtmlToMarkdown(HTMLParser):
                 self._buf.append("*")
 
         elif tag == "a":
-            self._a_href = attr.get("href", "")
+            # 現在のバッファをスタックに退避して新しいバッファで収集開始
+            self._a_stack.append((attr.get("href", ""), self._buf))
+            self._buf = []
 
         elif tag in ("ul", "ol"):
             self._flush_buf()
@@ -150,9 +166,10 @@ class _HtmlToMarkdown(HTMLParser):
     def handle_endtag(self, tag: str):
         tag = tag.lower()
 
-        if tag in self._SKIP_TAGS:
-            if self._skip_depth:
-                self._skip_depth -= 1
+        # スキップスタックの先頭と一致すれば深度を戻す
+        if self._skip_depth and self._skip_tag_stack and self._skip_tag_stack[-1] == tag:
+            self._skip_depth -= 1
+            self._skip_tag_stack.pop()
             return
         if self._skip_depth:
             return
@@ -192,13 +209,16 @@ class _HtmlToMarkdown(HTMLParser):
             self._em_depth = max(0, self._em_depth - 1)
 
         elif tag == "a":
+            if not self._a_stack:
+                return
+            href, parent_buf = self._a_stack.pop()
             text = "".join(self._buf).strip()
-            self._buf.clear()
-            if text and self._a_href:
-                self._buf.append(f"[{text}]({self._a_href})")
+            self._buf = parent_buf
+            if text and href:
+                self._buf.append(f"[{text}]({href})")
             elif text:
                 self._buf.append(text)
-            self._a_href = ""
+            # テキストなしリンク（アイコンのみ等）は破棄
 
         elif tag == "li":
             text = "".join(self._buf).strip()
