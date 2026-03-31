@@ -178,6 +178,25 @@ class Database:
             (limit,),
         )
 
+    async def get_recent_channel_messages(
+        self, channel: str, limit: int = 20, user_id: str = ""
+    ) -> list[dict]:
+        """チャネル・ユーザー単位の直近会話履歴を古い順で返す。"""
+        if user_id:
+            rows = await self.fetchall(
+                "SELECT role, content FROM conversation_log "
+                "WHERE channel = ? AND user_id = ? "
+                "ORDER BY timestamp DESC LIMIT ?",
+                (channel, user_id, limit),
+            )
+        else:
+            rows = await self.fetchall(
+                "SELECT role, content FROM conversation_log "
+                "WHERE channel = ? ORDER BY timestamp DESC LIMIT ?",
+                (channel, limit),
+            )
+        return list(reversed(rows))
+
     # --- 設定永続化 ---
 
     async def get_setting(self, key: str) -> str | None:

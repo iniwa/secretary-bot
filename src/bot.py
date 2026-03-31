@@ -94,8 +94,19 @@ class SecretaryBot(commands.Bot):
         if not content:
             return
 
-        # ユーザーごとにロックを取得（同一ユーザーのメッセージを直列化）
         user_id = str(message.author.id)
+
+        # メンションなしのメッセージは会話ログのみ保存して終了
+        if self.user not in message.mentions:
+            await self.database.log_conversation("discord", "user", content, user_id=user_id)
+            return
+
+        # メンション部分をテキストから除去
+        content = content.replace(f"<@{self.user.id}>", "").replace(f"<@!{self.user.id}>", "").strip()
+        if not content:
+            return
+
+        # ユーザーごとにロックを取得（同一ユーザーのメッセージを直列化）
         lock_key = f"discord:{user_id}"
         if lock_key not in self._user_locks:
             self._user_locks[lock_key] = asyncio.Lock()

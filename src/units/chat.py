@@ -95,7 +95,25 @@ class ChatUnit(BaseUnit):
 
         system = "\n".join(system_parts) if system_parts else None
 
-        response = await self.llm.generate(message, system=system)
+        # 直近の会話履歴をプロンプトに付加（現在のメッセージは除く）
+        history_limit = config.get("chat", {}).get("history_limit", 20)
+        history_rows = await self.bot.database.get_recent_channel_messages(
+            "discord", limit=history_limit + 1, user_id=user_id
+        )
+        # 末尾が今保存したばかりのユーザー発言と一致する場合は除外（重複防止）
+        if history_rows and history_rows[-1]["role"] == "user" and history_rows[-1]["content"] == message:
+            history_rows = history_rows[:-1]
+
+        if history_rows:
+            history_text = "\n".join(
+                f"{'ユーザー' if r['role'] == 'user' else 'アシスタント'}: {r['content']}"
+                for r in history_rows
+            )
+            prompt = f"【過去の会話履歴】\n{history_text}\n\n【現在のメッセージ】\n{message}"
+        else:
+            prompt = message
+
+        response = await self.llm.generate(prompt, system=system)
 
         # 省エネモード時は冒頭文言を付与
         if not ollama_available:
