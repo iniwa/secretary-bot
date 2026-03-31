@@ -229,6 +229,8 @@ nav.bottom-nav { display: none; }
   <div id="page-status" class="page">
     <h2 style="margin-bottom:1rem">System Status</h2>
     <div id="status-grid" class="status-grid"></div>
+    <h3 style="margin-top:1.5rem;margin-bottom:0.8rem">Loaded Units</h3>
+    <div id="units-list" style="display:flex;flex-direction:column;gap:0.4rem"></div>
   </div>
 
   <!-- Logs -->
@@ -480,6 +482,16 @@ async function loadStatus() {
     grid.innerHTML += card('Ollama', data.ollama ? 'Active' : 'Inactive', data.ollama);
     (data.agents || []).forEach(a => {
       grid.innerHTML += card(a.name, (a.alive ? 'Active' : 'Inactive') + ' / ' + a.mode, a.alive);
+    });
+    // ユニット一覧
+    const ures = await fetch('/api/units/loaded');
+    const udata = await ures.json();
+    const ulist = document.getElementById('units-list');
+    ulist.innerHTML = '';
+    (udata.units || []).forEach(u => {
+      const state = u.breaker_state === 'closed' ? 'ok' : 'ng';
+      const delegate = u.delegate_to ? ` <span style="color:var(--text-dim)">[${u.delegate_to}]</span>` : '';
+      ulist.innerHTML += `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.8rem;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><span class="val ${state}" style="font-size:0.75rem;padding:0.15rem 0.5rem;border-radius:4px">${u.breaker_state}</span><strong>${u.name}</strong>${delegate}<span style="color:var(--text-dim);font-size:0.85rem;margin-left:auto">${u.description}</span></div>`;
     });
   } catch (err) { console.error(err); }
 }

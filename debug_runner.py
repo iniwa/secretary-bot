@@ -52,6 +52,11 @@ _DEBUG_CONFIG = {
         "timer": {"enabled": True},
         "status": {"enabled": True},
         "chat": {"enabled": True},
+        "web_search": {"enabled": True},
+    },
+    "searxng": {
+        "url": "http://localhost:8888",
+        "max_results": 5,
     },
     "character": {"name": "ミミ", "persona": "テスト用ペルソナ"},
     "windows_agents": [],
@@ -133,6 +138,7 @@ def _load_unit_class(unit_name: str):
         "timer": "src.units.timer",
         "status": "src.units.status",
         "chat": "src.units.chat",
+        "web_search": "src.units.web_search",
     }
     module_path = module_map.get(unit_name)
     if not module_path:

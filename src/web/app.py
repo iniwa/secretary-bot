@@ -232,6 +232,20 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"items": items}
 
+    @app.get("/api/units/loaded", dependencies=[Depends(_verify)])
+    async def get_loaded_units():
+        """現在ロードされているユニット一覧を返す。"""
+        units = []
+        for name, unit in bot.unit_manager.units.items():
+            actual = getattr(unit, "unit", unit)
+            units.append({
+                "name": actual.UNIT_NAME,
+                "description": actual.UNIT_DESCRIPTION,
+                "delegate_to": actual.DELEGATE_TO,
+                "breaker_state": actual.breaker.state,
+            })
+        return {"units": units}
+
     @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
     async def get_gemini_config():
         return bot.config.get("gemini", {})
