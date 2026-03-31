@@ -6,7 +6,9 @@ services:
       - /home/iniwa/docker/secretary-bot/app/src:/app/src
       - /home/iniwa/docker/secretary-bot/app/config.yaml:/app/config.yaml
       - /home/iniwa/docker/secretary-bot/data:/app/data
-      - /home/iniwa/.ssh:/home/botuser/.ssh:ro
+      - /home/iniwa/.ssh/id_ed25519:/home/botuser/.ssh/id_ed25519:ro
+      - /home/iniwa/.ssh/known_hosts:/home/botuser/.ssh/known_hosts:ro
+      - /home/iniwa/docker/secretary-bot/ssh_config:/home/botuser/.ssh/config:ro
     ports:
       - "8100:8100"
     env_file:
