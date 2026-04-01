@@ -565,6 +565,7 @@ def create_web_app(bot) -> FastAPI:
                 unit_models[name] = unit_llm["ollama_model"]
         return {
             "ollama_model": llm_cfg.get("ollama_model", "qwen3"),
+            "ollama_timeout": int(llm_cfg.get("ollama_timeout", 300)),
             "unit_models": unit_models,
         }
 
@@ -582,6 +583,15 @@ def create_web_app(bot) -> FastAPI:
             for cog in bot.cogs.values():
                 if hasattr(cog, "llm") and cog.llm._ollama_model is None:
                     pass  # model=None → OllamaClient.model を参照するので自動反映
+
+        # タイムアウト変更
+        if "ollama_timeout" in body:
+            t = int(body["ollama_timeout"])
+            if t < 10:
+                raise HTTPException(400, "ollama_timeout must be >= 10")
+            bot.config.setdefault("llm", {})["ollama_timeout"] = t
+            bot.llm_router.ollama.timeout = t
+            await bot.database.set_setting("llm.ollama_timeout", str(t))
 
         # ユニット別モデル変更
         if "unit_models" in body:

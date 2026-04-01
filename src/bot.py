@@ -203,6 +203,13 @@ async def _restore_settings(bot: SecretaryBot) -> None:
         bot.llm_router.ollama.model = saved_model
         log.info("Restored ollama model from DB: %s", saved_model)
 
+    saved_timeout = await bot.database.get_setting("llm.ollama_timeout")
+    if saved_timeout:
+        t = int(saved_timeout)
+        bot.config.setdefault("llm", {})["ollama_timeout"] = t
+        bot.llm_router.ollama.timeout = t
+        log.info("Restored ollama timeout from DB: %s", t)
+
     unit_llm = await bot.database.get_all_settings("unit_llm.")
     if unit_llm:
         for key, value in unit_llm.items():
