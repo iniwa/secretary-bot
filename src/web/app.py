@@ -21,6 +21,9 @@ log = get_logger(__name__)
 def create_web_app(bot) -> FastAPI:
     app = FastAPI(title="Secretary Bot WebGUI")
 
+    async def _verify():
+        pass
+
     _webgui_user_id = os.environ.get("WEBGUI_USER_ID", "")
 
     # --- ヘルスチェック（認証不要） ---
