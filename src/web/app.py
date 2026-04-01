@@ -3,14 +3,12 @@
 import asyncio
 import json
 import os
-import secrets
 import subprocess
 from datetime import datetime
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse
 
@@ -22,21 +20,8 @@ log = get_logger(__name__)
 
 def create_web_app(bot) -> FastAPI:
     app = FastAPI(title="Secretary Bot WebGUI")
-    security = HTTPBasic()
 
-    _username = os.environ.get("WEBGUI_USERNAME", "admin")
-    _password = os.environ.get("WEBGUI_PASSWORD", "")
     _webgui_user_id = os.environ.get("WEBGUI_USER_ID", "")
-
-    def _verify(credentials: HTTPBasicCredentials = Depends(security)):
-        if not _password:
-            return credentials
-        ok_user = secrets.compare_digest(credentials.username, _username)
-        ok_pass = secrets.compare_digest(credentials.password, _password)
-        if not (ok_user and ok_pass):
-            raise HTTPException(status_code=401, detail="Unauthorized",
-                                headers={"WWW-Authenticate": "Basic"})
-        return credentials
 
     # --- ヘルスチェック（認証不要） ---
 
@@ -54,7 +39,7 @@ def create_web_app(bot) -> FastAPI:
     # WebGUIはシングルユーザー想定なのでロック1つ
     _webgui_lock = asyncio.Lock()
 
-    @app.post("/api/chat", dependencies=[Depends(_verify)])
+    @app.post("/api/chat", )
     async def chat(request: Request):
         body = await request.json()
         message = body.get("message", "").strip()
@@ -111,12 +96,12 @@ def create_web_app(bot) -> FastAPI:
                     content={"response": f"Error: {e}", "unit": "system"},
             )
 
-    @app.get("/api/logs", dependencies=[Depends(_verify)])
+    @app.get("/api/logs", )
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
         logs = await bot.database.get_conversation_logs(limit=limit, offset=offset, keyword=keyword, channel=channel)
         return {"logs": logs}
 
-    @app.get("/api/status", dependencies=[Depends(_verify)])
+    @app.get("/api/status", )
     async def get_status():
         from src.bot import get_commit_hash, get_uptime_seconds
         agents_status = []
@@ -136,7 +121,7 @@ def create_web_app(bot) -> FastAPI:
             "agents": agents_status,
         }
 
-    @app.post("/api/ollama-recheck", dependencies=[Depends(_verify)])
+    @app.post("/api/ollama-recheck", )
     async def ollama_recheck():
         """Ollamaの接続状態を手動で再チェックする。"""
         available = await bot.llm_router.check_ollama()
@@ -144,7 +129,7 @@ def create_web_app(bot) -> FastAPI:
         bot.heartbeat._reschedule()
         return {"ollama_available": available}
 
-    @app.post("/api/delegation-mode", dependencies=[Depends(_verify)])
+    @app.post("/api/delegation-mode", )
     async def set_delegation_mode(request: Request):
         body = await request.json()
         agent_id = body.get("agent_id", "")
@@ -200,7 +185,7 @@ def create_web_app(bot) -> FastAPI:
         await asyncio.sleep(delay_seconds)
         await _restart_container()
 
-    @app.post("/api/update-code", dependencies=[Depends(_verify)])
+    @app.post("/api/update-code", )
     async def update_code(background_tasks: BackgroundTasks):
         try:
             from src.bot import BASE_DIR
@@ -275,14 +260,14 @@ def create_web_app(bot) -> FastAPI:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")
 
-    @app.post("/api/restart", dependencies=[Depends(_verify)])
+    @app.post("/api/restart", )
     async def restart(background_tasks: BackgroundTasks):
         background_tasks.add_task(_delayed_restart, 2)
         return {"restarted": True, "detail": "まもなく再起動します…"}
 
     # --- Units データ閲覧 API ---
 
-    @app.get("/api/units/reminders", dependencies=[Depends(_verify)])
+    @app.get("/api/units/reminders", )
     async def get_reminders(active: int | None = None):
         if active is not None:
             rows = await bot.database.fetchall(
@@ -295,7 +280,7 @@ def create_web_app(bot) -> FastAPI:
             )
         return {"items": rows}
 
-    @app.get("/api/units/todos", dependencies=[Depends(_verify)])
+    @app.get("/api/units/todos", )
     async def get_todos(done: int | None = None):
         if done is not None:
             rows = await bot.database.fetchall(
@@ -308,7 +293,7 @@ def create_web_app(bot) -> FastAPI:
             )
         return {"items": rows}
 
-    @app.get("/api/units/memos", dependencies=[Depends(_verify)])
+    @app.get("/api/units/memos", )
     async def get_memos(keyword: str | None = None):
         if keyword:
             rows = await bot.database.fetchall(
@@ -323,7 +308,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- リマインダー CRUD ---
 
-    @app.put("/api/units/reminders/{rid}", dependencies=[Depends(_verify)])
+    @app.put("/api/units/reminders/{rid}", )
     async def update_reminder(rid: int, request: Request):
         body = await request.json()
         row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ?", (rid,))
@@ -342,7 +327,7 @@ def create_web_app(bot) -> FastAPI:
             pass
         return {"ok": True}
 
-    @app.post("/api/units/reminders/{rid}/done", dependencies=[Depends(_verify)])
+    @app.post("/api/units/reminders/{rid}/done", )
     async def done_reminder(rid: int):
         from src.database import jst_now
         row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ? AND active = 1", (rid,))
@@ -354,7 +339,7 @@ def create_web_app(bot) -> FastAPI:
         bot.heartbeat.cancel_reminder(rid)
         return {"ok": True}
 
-    @app.delete("/api/units/reminders/{rid}", dependencies=[Depends(_verify)])
+    @app.delete("/api/units/reminders/{rid}", )
     async def delete_reminder(rid: int):
         row = await bot.database.fetchone("SELECT * FROM reminders WHERE id = ?", (rid,))
         if not row:
@@ -365,7 +350,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- ToDo CRUD ---
 
-    @app.put("/api/units/todos/{tid}", dependencies=[Depends(_verify)])
+    @app.put("/api/units/todos/{tid}", )
     async def update_todo(tid: int, request: Request):
         body = await request.json()
         row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ?", (tid,))
@@ -378,7 +363,7 @@ def create_web_app(bot) -> FastAPI:
         )
         return {"ok": True}
 
-    @app.post("/api/units/todos/{tid}/done", dependencies=[Depends(_verify)])
+    @app.post("/api/units/todos/{tid}/done", )
     async def done_todo(tid: int):
         from src.database import jst_now
         row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ? AND done = 0", (tid,))
@@ -389,7 +374,7 @@ def create_web_app(bot) -> FastAPI:
         )
         return {"ok": True}
 
-    @app.delete("/api/units/todos/{tid}", dependencies=[Depends(_verify)])
+    @app.delete("/api/units/todos/{tid}", )
     async def delete_todo(tid: int):
         row = await bot.database.fetchone("SELECT * FROM todos WHERE id = ?", (tid,))
         if not row:
@@ -399,7 +384,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- メモ CRUD ---
 
-    @app.put("/api/units/memos/{mid}", dependencies=[Depends(_verify)])
+    @app.put("/api/units/memos/{mid}", )
     async def update_memo(mid: int, request: Request):
         body = await request.json()
         row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
@@ -412,7 +397,7 @@ def create_web_app(bot) -> FastAPI:
         )
         return {"ok": True}
 
-    @app.post("/api/units/memos/{mid}/append", dependencies=[Depends(_verify)])
+    @app.post("/api/units/memos/{mid}/append", )
     async def append_memo(mid: int, request: Request):
         body = await request.json()
         row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
@@ -427,7 +412,7 @@ def create_web_app(bot) -> FastAPI:
         )
         return {"ok": True}
 
-    @app.delete("/api/units/memos/{mid}", dependencies=[Depends(_verify)])
+    @app.delete("/api/units/memos/{mid}", )
     async def delete_memo(mid: int):
         row = await bot.database.fetchone("SELECT * FROM memos WHERE id = ?", (mid,))
         if not row:
@@ -435,7 +420,7 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.execute("DELETE FROM memos WHERE id = ?", (mid,))
         return {"ok": True}
 
-    @app.get("/api/units/timers", dependencies=[Depends(_verify)])
+    @app.get("/api/units/timers", )
     async def get_timers():
         import time as _time
         timer_unit = bot.unit_manager.get("timer")
@@ -455,7 +440,7 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"items": items}
 
-    @app.get("/api/units/loaded", dependencies=[Depends(_verify)])
+    @app.get("/api/units/loaded", )
     async def get_loaded_units():
         """現在ロードされているユニット一覧を返す。"""
         units = []
@@ -469,11 +454,11 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"units": units}
 
-    @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
+    @app.get("/api/gemini-config", )
     async def get_gemini_config():
         return bot.config.get("gemini", {})
 
-    @app.post("/api/gemini-config", dependencies=[Depends(_verify)])
+    @app.post("/api/gemini-config", )
     async def set_gemini_config(request: Request):
         body = await request.json()
         gemini_cfg = bot.config.setdefault("gemini", {})
@@ -486,7 +471,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- ユニット別Gemini許可 ---
 
-    @app.get("/api/unit-gemini", dependencies=[Depends(_verify)])
+    @app.get("/api/unit-gemini", )
     async def get_unit_gemini():
         units_cfg = bot.config.get("units", {})
         result = {}
@@ -494,7 +479,7 @@ def create_web_app(bot) -> FastAPI:
             result[name] = units_cfg[name].get("llm", {}).get("gemini_allowed", True)
         return result
 
-    @app.post("/api/unit-gemini", dependencies=[Depends(_verify)])
+    @app.post("/api/unit-gemini", )
     async def set_unit_gemini(request: Request):
         body = await request.json()
         unit_name = body.get("unit", "")
@@ -510,7 +495,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- デバッグ: LLM状態確認 ---
 
-    @app.get("/api/debug/llm-state", dependencies=[Depends(_verify)])
+    @app.get("/api/debug/llm-state", )
     async def debug_llm_state():
         units_info = {}
         for name, cog in bot.cogs.items():
@@ -531,7 +516,7 @@ def create_web_app(bot) -> FastAPI:
 
     # --- LLM設定 ---
 
-    @app.get("/api/llm-config", dependencies=[Depends(_verify)])
+    @app.get("/api/llm-config", )
     async def get_llm_config():
         llm_cfg = bot.config.get("llm", {})
         units_cfg = bot.config.get("units", {})
@@ -546,7 +531,7 @@ def create_web_app(bot) -> FastAPI:
             "unit_models": unit_models,
         }
 
-    @app.post("/api/llm-config", dependencies=[Depends(_verify)])
+    @app.post("/api/llm-config", )
     async def set_llm_config(request: Request):
         body = await request.json()
 
@@ -581,11 +566,11 @@ def create_web_app(bot) -> FastAPI:
 
     # --- ペルソナ設定 ---
 
-    @app.get("/api/persona", dependencies=[Depends(_verify)])
+    @app.get("/api/persona", )
     async def get_persona():
         return {"persona": bot.config.get("character", {}).get("persona", "")}
 
-    @app.post("/api/persona", dependencies=[Depends(_verify)])
+    @app.post("/api/persona", )
     async def set_persona(request: Request):
         body = await request.json()
         persona = body.get("persona", "")
@@ -594,12 +579,12 @@ def create_web_app(bot) -> FastAPI:
 
     # --- フロー追跡 ---
 
-    @app.get("/api/flow/state", dependencies=[Depends(_verify)])
+    @app.get("/api/flow/state", )
     async def get_flow_state():
         tracker = get_flow_tracker()
         return tracker.get_state()
 
-    @app.get("/api/flow/stream", dependencies=[Depends(_verify)])
+    @app.get("/api/flow/stream", )
     async def flow_stream():
         tracker = get_flow_tracker()
         queue = tracker.subscribe()
@@ -629,7 +614,7 @@ def create_web_app(bot) -> FastAPI:
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-    @app.get("/", response_class=HTMLResponse, dependencies=[Depends(_verify)])
+    @app.get("/", response_class=HTMLResponse, )
     async def index():
         html_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
         try:
