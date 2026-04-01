@@ -217,6 +217,14 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('unit-memo')">Memo</button>
     <button onclick="showPage('unit-timer')">Timer</button>
   </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Memory</div>
+    <button onclick="showPage('memory')">Memory</button>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Debug</div>
+    <button onclick="showPage('rakuten-debug')">楽天Search</button>
+  </div>
 </nav>
 
 <main>
@@ -321,10 +329,52 @@ nav.bottom-nav { display: none; }
           <input type="text" id="ollama-model" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
         </div>
       </div>
+      <div class="setting-row">
+        <span>Gemini Model</span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="text" id="gemini-model" style="width:220px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)" placeholder="gemini-2.0-flash">
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>Ollama Timeout (秒)<br><span style="font-size:0.8rem;color:var(--text-dim)">生成タイムアウト。ローカルLLMが重い場合は大きめに設定</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="ollama-timeout" min="10" max="3600" step="30" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">秒</span>
+        </div>
+      </div>
       <div id="unit-model-list"></div>
       <div style="display:flex;gap:0.5rem;margin-top:0.8rem;align-items:center">
         <button class="btn-update" onclick="saveLLMConfig()">保存</button>
         <span id="llm-status" style="font-size:0.85rem;color:var(--text-dim)"></span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>Heartbeat Settings</h3>
+      <div class="setting-row">
+        <span>Ollama稼働中の間隔<br><span style="font-size:0.8rem;color:var(--text-dim)">Ollamaが利用可能な場合のハートビート間隔</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="hb-with-ollama" min="1" max="1440" step="1" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">分</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>Ollama停止中の間隔<br><span style="font-size:0.8rem;color:var(--text-dim)">Ollamaが利用できない場合のハートビート間隔</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="hb-without-ollama" min="1" max="1440" step="1" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">分</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>コンテキスト圧縮しきい値<br><span style="font-size:0.8rem;color:var(--text-dim)">この件数を超えたらハートビート時に会話履歴を要約圧縮</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="hb-compact-threshold" min="1" max="500" step="1" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">件</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.8rem;align-items:center">
+        <button class="btn-update" onclick="saveHeartbeatConfig()">保存</button>
+        <span id="hb-status" style="font-size:0.85rem;color:var(--text-dim)"></span>
       </div>
     </div>
 
@@ -399,6 +449,61 @@ nav.bottom-nav { display: none; }
     <h2 style="margin-bottom:1rem">Timer</h2>
     <div id="timer-list"></div>
   </div>
+
+  <!-- Memory -->
+  <div id="page-memory" class="page">
+    <h2 style="margin-bottom:1rem">Memory (ChromaDB)</h2>
+    <div class="unit-filter" style="margin-bottom:1rem">
+      <select id="memory-collection" onchange="loadMemory()">
+        <option value="ai_memory">ai_memory（ミミ自身）</option>
+        <option value="people_memory">people_memory（人物情報）</option>
+        <option value="conversation_log">conversation_log（会話サマリー）</option>
+      </select>
+      <button onclick="loadMemory()">更新</button>
+      <span id="memory-count" style="color:var(--text-dim);font-size:0.9rem;align-self:center"></span>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table>
+        <thead><tr><th style="width:12rem">ID</th><th>Text</th><th style="width:14rem">Metadata</th><th style="width:4rem"></th></tr></thead>
+        <tbody id="memory-body"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:0.5rem;padding-top:0.5rem">
+      <button onclick="loadMemoryPage(memoryOffset-200)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Prev</button>
+      <button onclick="loadMemoryPage(memoryOffset+200)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Next</button>
+    </div>
+  </div>
+
+  <!-- Rakuten Search Debug -->
+  <div id="page-rakuten-debug" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>楽天Search デバッグ</h2>
+      <button onclick="loadRakutenDebug()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+    <div id="rakuten-debug-meta" style="background:var(--surface);padding:1rem;border-radius:8px;border:1px solid var(--border);margin-bottom:1rem;font-size:0.9rem">
+      <span style="color:var(--text-dim)">まだ実行されていません。チャットで「楽天で◯◯を探して」と送信してください。</span>
+    </div>
+
+    <div class="maint-section" id="rakuten-debug-results" style="display:none">
+      <h3>SearXNG 検索結果</h3>
+      <div id="rakuten-results-body"></div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-prompt-section">
+      <h3>LLM プロンプト</h3>
+      <pre id="rakuten-debug-prompt" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);overflow-x:auto;max-height:400px;overflow-y:auto"></pre>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-response-section">
+      <h3>LLM レスポンス（生）</h3>
+      <pre id="rakuten-debug-response" style="white-space:pre-wrap;word-break:break-word;font-size:0.85rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);max-height:400px;overflow-y:auto"></pre>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-output-section">
+      <h3>最終出力（ペルソナ注入前）</h3>
+      <pre id="rakuten-debug-output" style="white-space:pre-wrap;word-break:break-word;font-size:0.85rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);max-height:400px;overflow-y:auto"></pre>
+    </div>
+  </div>
 </main>
 
 <nav class="bottom-nav">
@@ -432,10 +537,12 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
+  if (name === 'memory') loadMemory();
+  if (name === 'rakuten-debug') loadRakutenDebug();
 }
 
 let chatBusy = false;
@@ -708,6 +815,8 @@ async function loadLLMConfig() {
     const res = await fetch('/api/llm-config');
     const data = await res.json();
     document.getElementById('ollama-model').value = data.ollama_model || '';
+    document.getElementById('gemini-model').value = data.gemini_model || '';
+    document.getElementById('ollama-timeout').value = data.ollama_timeout ?? 300;
     const container = document.getElementById('unit-model-list');
     container.innerHTML = '';
     UNIT_NAMES.forEach(name => {
@@ -725,6 +834,8 @@ async function saveLLMConfig() {
   const btn = document.querySelector('#page-settings .maint-section:nth-child(2) .btn-update');
   const status = document.getElementById('llm-status');
   const ollama_model = document.getElementById('ollama-model').value.trim();
+  const gemini_model = document.getElementById('gemini-model').value.trim();
+  const ollama_timeout = parseInt(document.getElementById('ollama-timeout').value, 10);
   const unit_models = {};
   UNIT_NAMES.forEach(name => {
     const el = document.getElementById('unit-model-' + name);
@@ -733,7 +844,7 @@ async function saveLLMConfig() {
   btn.disabled = true;
   status.textContent = '保存中...';
   try {
-    await fetch('/api/llm-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ollama_model, unit_models}) });
+    await fetch('/api/llm-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ollama_model, gemini_model, ollama_timeout, unit_models}) });
     status.textContent = '保存しました';
     status.style.color = '#4caf50';
   } catch (err) {
@@ -742,6 +853,35 @@ async function saveLLMConfig() {
   }
   btn.disabled = false;
   setTimeout(() => { status.textContent = ''; }, 3000);
+}
+
+async function loadHeartbeatConfig() {
+  try {
+    const res = await fetch('/api/heartbeat-config');
+    const data = await res.json();
+    document.getElementById('hb-with-ollama').value = data.interval_with_ollama_minutes ?? 15;
+    document.getElementById('hb-without-ollama').value = data.interval_without_ollama_minutes ?? 180;
+    document.getElementById('hb-compact-threshold').value = data.compact_threshold_messages ?? 20;
+  } catch(e) {
+    console.error('loadHeartbeatConfig:', e);
+  }
+}
+
+async function saveHeartbeatConfig() {
+  const status = document.getElementById('hb-status');
+  const payload = {
+    interval_with_ollama_minutes: parseInt(document.getElementById('hb-with-ollama').value),
+    interval_without_ollama_minutes: parseInt(document.getElementById('hb-without-ollama').value),
+    compact_threshold_messages: parseInt(document.getElementById('hb-compact-threshold').value),
+  };
+  try {
+    const res = await fetch('/api/heartbeat-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    status.textContent = data.ok ? '保存しました' : 'エラー';
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  } catch(e) {
+    status.textContent = 'エラー: ' + e;
+  }
 }
 
 async function loadGeminiSettings() {
@@ -1407,6 +1547,138 @@ async function loadChatHistory() {
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- Rakuten Search Debug ---
+
+async function loadRakutenDebug() {
+  const meta = document.getElementById('rakuten-debug-meta');
+  const resultsSection = document.getElementById('rakuten-debug-results');
+  const promptSection = document.getElementById('rakuten-debug-prompt-section');
+  const responseSection = document.getElementById('rakuten-debug-response-section');
+  const outputSection = document.getElementById('rakuten-debug-output-section');
+
+  meta.innerHTML = '<span style="color:var(--text-dim)">読み込み中...</span>';
+  try {
+    const res = await fetch('/api/debug/rakuten-search');
+    const json = await res.json();
+
+    if (!json.available) {
+      meta.innerHTML = '<span style="color:var(--accent)">rakuten_search ユニットがロードされていません。</span>';
+      return;
+    }
+    const d = json.data;
+    if (!d || !d.keyword) {
+      meta.innerHTML = '<span style="color:var(--text-dim)">まだ実行されていません。チャットで「楽天で◯◯を探して」と送信してください。</span>';
+      resultsSection.style.display = 'none';
+      promptSection.style.display = 'none';
+      responseSection.style.display = 'none';
+      outputSection.style.display = 'none';
+      return;
+    }
+
+    // メタ情報
+    const resultCount = (d.search_results || []).length;
+    meta.innerHTML = `
+      <div style="display:flex;gap:2rem;flex-wrap:wrap">
+        <div><span style="color:var(--text-dim)">キーワード: </span><strong>${escapeHtml(d.keyword)}</strong></div>
+        <div><span style="color:var(--text-dim)">SearXNGクエリ: </span><code style="font-size:0.9rem">${escapeHtml(d.query)}</code></div>
+        <div><span style="color:var(--text-dim)">検索結果件数: </span><strong>${resultCount}件</strong></div>
+      </div>`;
+
+    // 検索結果
+    resultsSection.style.display = 'block';
+    const rb = document.getElementById('rakuten-results-body');
+    rb.innerHTML = '';
+    (d.search_results || []).forEach((r, i) => {
+      const fetched = r.page_text_chars > 0
+        ? `<span style="color:#4caf50">✓ ${r.page_text_chars}文字取得</span>`
+        : '<span style="color:var(--text-dim)">ページ取得なし</span>';
+      const previewHtml = r.page_text_preview
+        ? `<details style="margin-top:0.3rem"><summary style="cursor:pointer;font-size:0.8rem;color:var(--text-dim)">ページテキストプレビュー</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:0.8rem;background:var(--bg);padding:0.5rem;border-radius:4px;margin-top:0.3rem;max-height:200px;overflow-y:auto">${escapeHtml(r.page_text_preview)}</pre></details>`
+        : '';
+      rb.innerHTML += `
+        <div style="background:var(--bg);padding:0.8rem;border-radius:6px;border:1px solid var(--border);margin-bottom:0.6rem">
+          <div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.3rem">
+            <span style="color:var(--accent);font-weight:bold">[${i+1}]</span>
+            <a href="${escapeHtml(r.url)}" target="_blank" style="color:#7eb3ff;word-break:break-all">${escapeHtml(r.title)}</a>
+            <span style="margin-left:auto;font-size:0.8rem">${fetched}</span>
+          </div>
+          <div style="font-size:0.82rem;color:var(--text-dim)">${escapeHtml(r.snippet || '(スニペットなし)')}</div>
+          ${previewHtml}
+        </div>`;
+    });
+
+    // LLMプロンプト
+    promptSection.style.display = 'block';
+    document.getElementById('rakuten-debug-prompt').textContent = d.llm_prompt || '(なし)';
+
+    // LLMレスポンス
+    responseSection.style.display = 'block';
+    document.getElementById('rakuten-debug-response').textContent = d.llm_response || '(なし)';
+
+    // 最終出力
+    outputSection.style.display = 'block';
+    document.getElementById('rakuten-debug-output').textContent = d.final_output || '(なし)';
+
+  } catch (err) {
+    meta.innerHTML = '<span style="color:var(--accent)">エラー: ' + escapeHtml(err.message) + '</span>';
+  }
+}
+
+// --- Memory ---
+let memoryOffset = 0;
+
+async function loadMemory() {
+  memoryOffset = 0;
+  await _fetchMemory(0);
+}
+
+async function loadMemoryPage(offset) {
+  if (offset < 0) return;
+  await _fetchMemory(offset);
+}
+
+async function _fetchMemory(offset) {
+  const collection = document.getElementById('memory-collection').value;
+  const tbody = document.getElementById('memory-body');
+  const countEl = document.getElementById('memory-count');
+  tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">Loading...</td></tr>';
+  try {
+    const res = await fetch(`/api/memory/${collection}?limit=200&offset=${offset}`);
+    const data = await res.json();
+    memoryOffset = offset;
+    countEl.textContent = `総件数: ${data.total}`;
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No entries</td></tr>';
+      return;
+    }
+    data.items.forEach(item => {
+      const metaStr = item.metadata && Object.keys(item.metadata).length
+        ? Object.entries(item.metadata).map(([k,v]) => `<span style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(k)}: </span>${escapeHtml(String(v))}`).join('<br>')
+        : '-';
+      const shortId = item.id.length > 12 ? item.id.slice(0, 12) + '…' : item.id;
+      tbody.innerHTML += `<tr>
+        <td title="${escapeHtml(item.id)}" style="font-size:0.8rem;font-family:monospace;color:var(--text-dim)">${shortId}</td>
+        <td style="white-space:pre-wrap;word-break:break-word">${escapeHtml(item.text)}</td>
+        <td style="font-size:0.85rem">${metaStr}</td>
+        <td class="actions"><button class="act-btn" title="削除" onclick="deleteMemoryEntry('${escapeHtml(collection)}','${escapeHtml(item.id)}')">🗑️</button></td>
+      </tr>`;
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">Error: ' + escapeHtml(err.message) + '</td></tr>';
+  }
+}
+
+async function deleteMemoryEntry(collection, docId) {
+  if (!confirm(`このエントリを削除しますか？\nID: ${docId}`)) return;
+  try {
+    await fetch(`/api/memory/${collection}/${encodeURIComponent(docId)}`, { method: 'DELETE' });
+    await _fetchMemory(memoryOffset);
+  } catch (err) {
+    alert('削除失敗: ' + err.message);
+  }
 }
 
 // --- 初期化 ---

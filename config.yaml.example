@@ -1,6 +1,7 @@
 # LLM設定（APIキーは.envで管理）
 llm:
   ollama_model: "qwen3"
+  ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
 
 # ハートビート
@@ -52,6 +53,8 @@ units:
     enabled: true
   web_search:
     enabled: true
+  rakuten_search:
+    enabled: true
 
 # Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
 gemini:
@@ -95,6 +98,12 @@ searxng:
   max_results: 5                # 取得する検索結果の最大数
   fetch_pages: 3                # ページ本文を実際にフェッチするURL数（上位N件）
   max_chars_per_page: 3000      # 1ページあたりの最大文字数
+
+# 楽天市場商品検索（SearXNG経由）
+rakuten_search:
+  max_results: 5    # SearXNG検索結果の最大件数
+  fetch_pages: 5    # ページ本文を実際にフェッチするURL数（全件フェッチ推奨）
+  max_chars_per_page: 5000  # 1ページあたりの最大文字数（商品詳細を収めるため多め）
 
 # デバッグ
 debug:

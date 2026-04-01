@@ -9,26 +9,24 @@ log = get_logger(__name__)
 
 
 class GeminiClient:
-    _DEFAULT_MODEL = "gemini-3-flash-preview"
+    DEFAULT_MODEL = "gemini-2.0-flash"
 
     def __init__(self):
-        self._models: dict[str, object] = {}
+        self._client = None
         self._total_tokens = 0
-        self._configured = False
+        self.model = self.DEFAULT_MODEL
 
-    def _get_model(self, model_name: str | None = None):
-        name = model_name or self._DEFAULT_MODEL
-        if name not in self._models:
-            if not self._configured:
-                import google.generativeai as genai
-                api_key = os.environ.get("GEMINI_API_KEY", "")
-                if not api_key:
-                    raise GeminiError("GEMINI_API_KEY not set")
-                genai.configure(api_key=api_key)
-                self._configured = True
-            import google.generativeai as genai
-            self._models[name] = genai.GenerativeModel(name)
-        return self._models[name]
+    def _get_client(self):
+        if self._client is None:
+            try:
+                from google import genai
+            except ImportError as e:
+                raise GeminiError("google-genai パッケージがインストールされていません") from e
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                raise GeminiError("GEMINI_API_KEY not set")
+            self._client = genai.Client(api_key=api_key)
+        return self._client
 
     @property
     def total_tokens_used(self) -> int:
@@ -38,20 +36,27 @@ class GeminiClient:
         self._total_tokens = 0
 
     async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> str:
-        m = self._get_model(model)
         try:
-            contents = []
-            if system:
-                contents.append({"role": "user", "parts": [system]})
-                contents.append({"role": "model", "parts": ["了解しました。"]})
-            contents.append({"role": "user", "parts": [prompt]})
+            from google.genai import types
+            client = self._get_client()
+            model_name = model or self.model
 
-            response = await m.generate_content_async(contents)
+            config = None
+            if system:
+                config = types.GenerateContentConfig(system_instruction=system)
+
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=config,
+            )
             text = response.text or ""
 
-            if hasattr(response, "usage_metadata"):
+            if hasattr(response, "usage_metadata") and response.usage_metadata:
                 self._total_tokens += getattr(response.usage_metadata, "total_token_count", 0)
 
             return text
+        except GeminiError:
+            raise
         except Exception as e:
             raise GeminiError(f"Gemini generation failed: {e}") from e

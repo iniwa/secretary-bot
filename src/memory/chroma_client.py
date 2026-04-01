@@ -51,3 +51,27 @@ class ChromaMemory:
 
     def count(self, collection_name: str) -> int:
         return self.get_collection(collection_name).count()
+
+    def get_all(self, collection_name: str, limit: int = 200, offset: int = 0) -> list[dict]:
+        """コレクションの全エントリを返す。"""
+        col = self.get_collection(collection_name)
+        try:
+            results = col.get(limit=limit, offset=offset, include=["documents", "metadatas"])
+        except Exception:
+            return []
+        items = []
+        ids = results.get("ids", [])
+        docs = results.get("documents", [])
+        metas = results.get("metadatas", [])
+        for i, doc_id in enumerate(ids):
+            items.append({
+                "id": doc_id,
+                "text": docs[i] if i < len(docs) else "",
+                "metadata": metas[i] if i < len(metas) else {},
+            })
+        return items
+
+    def delete(self, collection_name: str, doc_id: str) -> None:
+        """指定IDのエントリを削除する。"""
+        col = self.get_collection(collection_name)
+        col.delete(ids=[doc_id])

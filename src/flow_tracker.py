@@ -70,6 +70,8 @@ class FlowTracker:
 
     async def end_flow(self, flow_id: str | None = None) -> None:
         """処理フローを完了。"""
+        fid = flow_id
+        duration_ms = 0
         async with self._lock:
             if self._current_flow:
                 duration_ms = int((time.time() - self._current_flow["started_at"]) * 1000)
@@ -77,6 +79,8 @@ class FlowTracker:
                 self._last_flow = dict(self._current_flow)
                 self._last_flow["duration_ms"] = duration_ms
                 self._current_flow = None
+        if fid is None:
+            return
         await self._broadcast({
             "type": "flow_end",
             "flow_id": fid,

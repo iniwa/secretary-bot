@@ -15,9 +15,10 @@ DEFAULT_OLLAMA_URLS = [
 
 
 class OllamaClient:
-    def __init__(self, model: str = "qwen3", urls: list[str] | None = None):
+    def __init__(self, model: str = "qwen3", urls: list[str] | None = None, timeout: int = 300):
         self.model = model
         self.urls = urls or []
+        self.timeout = timeout
         self._available_url: str | None = None
 
     async def check_availability(self) -> bool:
@@ -53,7 +54,7 @@ class OllamaClient:
             payload["system"] = system
 
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(
                     f"{self._available_url}/api/generate",
                     json=payload,

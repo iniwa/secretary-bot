@@ -21,6 +21,16 @@ import yaml
 # プロジェクトルートをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# .env を手動読み込み（python-dotenv 不要）
+_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_ENV_FILE):
+    with open(_ENV_FILE, encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 from src.database import Database
 from src.logger import setup_logging, get_logger
 from src.llm.router import LLMRouter
@@ -53,10 +63,16 @@ _DEBUG_CONFIG = {
         "status": {"enabled": True},
         "chat": {"enabled": True},
         "web_search": {"enabled": True},
+        "rakuten_search": {"enabled": True},
     },
     "searxng": {
         "url": "http://localhost:8888",
         "max_results": 5,
+    },
+    "rakuten_search": {
+        "max_results": 5,
+        "fetch_pages": 3,
+        "max_chars_per_page": 3000,
     },
     "character": {"name": "ミミ", "persona": "テスト用ペルソナ"},
     "windows_agents": [],
@@ -139,6 +155,7 @@ def _load_unit_class(unit_name: str):
         "status": "src.units.status",
         "chat": "src.units.chat",
         "web_search": "src.units.web_search",
+        "rakuten_search": "src.units.rakuten_search",
     }
     module_path = module_map.get(unit_name)
     if not module_path:
@@ -189,6 +206,11 @@ SCENARIOS: dict[str, list[dict]] = {
     "web_search": [
         {"label": "search", "parsed": {"message": "Raspberry Pi 5の発売日を調べて"}},
         {"label": "search_en", "parsed": {"message": "What is SearXNG?"}},
+    ],
+    "rakuten_search": [
+        {"label": "search_basic", "parsed": {"message": "楽天市場でワイヤレスイヤホンを探して"}},
+        {"label": "search_cheap", "parsed": {"message": "楽天で安いコーヒーメーカーを探して"}},
+        {"label": "search_rating", "parsed": {"message": "楽天で評価の高いプロテインを探して"}},
     ],
 }
 

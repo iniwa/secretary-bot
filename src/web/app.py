@@ -89,12 +89,15 @@ def create_web_app(bot) -> FastAPI:
                 return {"response": response or "", "unit": unit_name}
             except Exception as e:
                 log.error("WebGUI chat error: %s", e, exc_info=True)
-                await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
-                await ft.end_flow(flow_id)
+                try:
+                    await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
+                    await ft.end_flow(flow_id)
+                except Exception:
+                    pass
                 return JSONResponse(
                     status_code=200,
-                    content={"response": f"Error: {e}", "unit": "system"},
-            )
+                    content={"response": f"エラーが発生しました: {e}", "unit": "system"},
+                )
 
     @app.get("/api/logs", )
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
@@ -455,6 +458,26 @@ def create_web_app(bot) -> FastAPI:
         return {"units": units}
 
     @app.get("/api/gemini-config", )
+    # --- ChromaDB 記憶閲覧 API ---
+
+    _MEMORY_COLLECTIONS = ("ai_memory", "people_memory", "conversation_log")
+
+    @app.get("/api/memory/{collection}", dependencies=[Depends(_verify)])
+    async def get_memory(collection: str, limit: int = 200, offset: int = 0):
+        if collection not in _MEMORY_COLLECTIONS:
+            raise HTTPException(400, f"unknown collection: {collection}")
+        items = bot.chroma.get_all(collection, limit=limit, offset=offset)
+        total = bot.chroma.count(collection)
+        return {"items": items, "total": total}
+
+    @app.delete("/api/memory/{collection}/{doc_id}", dependencies=[Depends(_verify)])
+    async def delete_memory(collection: str, doc_id: str):
+        if collection not in _MEMORY_COLLECTIONS:
+            raise HTTPException(400, f"unknown collection: {collection}")
+        bot.chroma.delete(collection, doc_id)
+        return {"ok": True}
+
+    @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
     async def get_gemini_config():
         return bot.config.get("gemini", {})
 
@@ -493,6 +516,16 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- デバッグ: 楽天検索 ---
+
+    @app.get("/api/debug/rakuten-search", dependencies=[Depends(_verify)])
+    async def debug_rakuten_search():
+        """最後のrakuten_search実行データを返す（検索結果・LLMプロンプト・出力）。"""
+        unit = bot.cogs.get("RakutenSearchUnit")
+        if unit is None:
+            return {"available": False, "data": {}}
+        return {"available": True, "data": getattr(unit, "last_debug", {})}
+
     # --- デバッグ: LLM状態確認 ---
 
     @app.get("/api/debug/llm-state", )
@@ -528,6 +561,8 @@ def create_web_app(bot) -> FastAPI:
                 unit_models[name] = unit_llm["ollama_model"]
         return {
             "ollama_model": llm_cfg.get("ollama_model", "qwen3"),
+            "ollama_timeout": int(llm_cfg.get("ollama_timeout", 300)),
+            "gemini_model": bot.llm_router.gemini.model,
             "unit_models": unit_models,
         }
 
@@ -546,6 +581,23 @@ def create_web_app(bot) -> FastAPI:
                 if hasattr(cog, "llm") and cog.llm._ollama_model is None:
                     pass  # model=None → OllamaClient.model を参照するので自動反映
 
+        # Geminiモデル変更
+        if "gemini_model" in body:
+            gmodel = body["gemini_model"].strip()
+            if gmodel:
+                bot.config.setdefault("llm", {})["gemini_model"] = gmodel
+                bot.llm_router.gemini.model = gmodel
+                await bot.database.set_setting("llm.gemini_model", gmodel)
+
+        # タイムアウト変更
+        if "ollama_timeout" in body:
+            t = int(body["ollama_timeout"])
+            if t < 10:
+                raise HTTPException(400, "ollama_timeout must be >= 10")
+            bot.config.setdefault("llm", {})["ollama_timeout"] = t
+            bot.llm_router.ollama.timeout = t
+            await bot.database.set_setting("llm.ollama_timeout", str(t))
+
         # ユニット別モデル変更
         if "unit_models" in body:
             for unit_name, model in body["unit_models"].items():
@@ -562,6 +614,32 @@ def create_web_app(bot) -> FastAPI:
                 if cog and hasattr(cog, "llm"):
                     cog.llm._ollama_model = model or None
 
+        return {"ok": True}
+
+    # --- ハートビート設定 ---
+
+    @app.get("/api/heartbeat-config", dependencies=[Depends(_verify)])
+    async def get_heartbeat_config():
+        hb_cfg = bot.config.get("heartbeat", {})
+        return {
+            "interval_with_ollama_minutes": hb_cfg.get("interval_with_ollama_minutes", 15),
+            "interval_without_ollama_minutes": hb_cfg.get("interval_without_ollama_minutes", 180),
+            "compact_threshold_messages": hb_cfg.get("compact_threshold_messages", 20),
+        }
+
+    @app.post("/api/heartbeat-config", dependencies=[Depends(_verify)])
+    async def set_heartbeat_config(request: Request):
+        body = await request.json()
+        hb_cfg = bot.config.setdefault("heartbeat", {})
+        for key in ("interval_with_ollama_minutes", "interval_without_ollama_minutes", "compact_threshold_messages"):
+            if key in body:
+                val = int(body[key])
+                if val < 1:
+                    raise HTTPException(400, f"{key} must be >= 1")
+                hb_cfg[key] = val
+                await bot.database.set_setting(f"heartbeat.{key}", str(val))
+        # 次回スケジュールに反映
+        bot.heartbeat._reschedule()
         return {"ok": True}
 
     # --- ペルソナ設定 ---

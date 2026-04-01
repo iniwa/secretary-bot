@@ -39,7 +39,8 @@ class LLMRouter:
                     ollama_urls.append(url)
 
         model = config.get("llm", {}).get("ollama_model", "qwen3")
-        self.ollama = OllamaClient(model=model, urls=ollama_urls)
+        timeout = int(config.get("llm", {}).get("ollama_timeout", 300))
+        self.ollama = OllamaClient(model=model, urls=ollama_urls, timeout=timeout)
         self.gemini = GeminiClient()
         self.ollama_available = False
 
