@@ -221,6 +221,10 @@ nav.bottom-nav { display: none; }
     <div class="nav-group-label">Memory</div>
     <button onclick="showPage('memory')">Memory</button>
   </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Debug</div>
+    <button onclick="showPage('rakuten-debug')">楽天Search</button>
+  </div>
 </nav>
 
 <main>
@@ -469,6 +473,37 @@ nav.bottom-nav { display: none; }
       <button onclick="loadMemoryPage(memoryOffset+200)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Next</button>
     </div>
   </div>
+
+  <!-- Rakuten Search Debug -->
+  <div id="page-rakuten-debug" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>楽天Search デバッグ</h2>
+      <button onclick="loadRakutenDebug()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+    <div id="rakuten-debug-meta" style="background:var(--surface);padding:1rem;border-radius:8px;border:1px solid var(--border);margin-bottom:1rem;font-size:0.9rem">
+      <span style="color:var(--text-dim)">まだ実行されていません。チャットで「楽天で◯◯を探して」と送信してください。</span>
+    </div>
+
+    <div class="maint-section" id="rakuten-debug-results" style="display:none">
+      <h3>SearXNG 検索結果</h3>
+      <div id="rakuten-results-body"></div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-prompt-section">
+      <h3>LLM プロンプト</h3>
+      <pre id="rakuten-debug-prompt" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);overflow-x:auto;max-height:400px;overflow-y:auto"></pre>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-response-section">
+      <h3>LLM レスポンス（生）</h3>
+      <pre id="rakuten-debug-response" style="white-space:pre-wrap;word-break:break-word;font-size:0.85rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);max-height:400px;overflow-y:auto"></pre>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem;display:none" id="rakuten-debug-output-section">
+      <h3>最終出力（ペルソナ注入前）</h3>
+      <pre id="rakuten-debug-output" style="white-space:pre-wrap;word-break:break-word;font-size:0.85rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);max-height:400px;overflow-y:auto"></pre>
+    </div>
+  </div>
 </main>
 
 <nav class="bottom-nav">
@@ -507,6 +542,7 @@ function showPage(name) {
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
   if (name === 'memory') loadMemory();
+  if (name === 'rakuten-debug') loadRakutenDebug();
 }
 
 let chatBusy = false;
@@ -1511,6 +1547,83 @@ async function loadChatHistory() {
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- Rakuten Search Debug ---
+
+async function loadRakutenDebug() {
+  const meta = document.getElementById('rakuten-debug-meta');
+  const resultsSection = document.getElementById('rakuten-debug-results');
+  const promptSection = document.getElementById('rakuten-debug-prompt-section');
+  const responseSection = document.getElementById('rakuten-debug-response-section');
+  const outputSection = document.getElementById('rakuten-debug-output-section');
+
+  meta.innerHTML = '<span style="color:var(--text-dim)">読み込み中...</span>';
+  try {
+    const res = await fetch('/api/debug/rakuten-search');
+    const json = await res.json();
+
+    if (!json.available) {
+      meta.innerHTML = '<span style="color:var(--accent)">rakuten_search ユニットがロードされていません。</span>';
+      return;
+    }
+    const d = json.data;
+    if (!d || !d.keyword) {
+      meta.innerHTML = '<span style="color:var(--text-dim)">まだ実行されていません。チャットで「楽天で◯◯を探して」と送信してください。</span>';
+      resultsSection.style.display = 'none';
+      promptSection.style.display = 'none';
+      responseSection.style.display = 'none';
+      outputSection.style.display = 'none';
+      return;
+    }
+
+    // メタ情報
+    const resultCount = (d.search_results || []).length;
+    meta.innerHTML = `
+      <div style="display:flex;gap:2rem;flex-wrap:wrap">
+        <div><span style="color:var(--text-dim)">キーワード: </span><strong>${escapeHtml(d.keyword)}</strong></div>
+        <div><span style="color:var(--text-dim)">SearXNGクエリ: </span><code style="font-size:0.9rem">${escapeHtml(d.query)}</code></div>
+        <div><span style="color:var(--text-dim)">検索結果件数: </span><strong>${resultCount}件</strong></div>
+      </div>`;
+
+    // 検索結果
+    resultsSection.style.display = 'block';
+    const rb = document.getElementById('rakuten-results-body');
+    rb.innerHTML = '';
+    (d.search_results || []).forEach((r, i) => {
+      const fetched = r.page_text_chars > 0
+        ? `<span style="color:#4caf50">✓ ${r.page_text_chars}文字取得</span>`
+        : '<span style="color:var(--text-dim)">ページ取得なし</span>';
+      const previewHtml = r.page_text_preview
+        ? `<details style="margin-top:0.3rem"><summary style="cursor:pointer;font-size:0.8rem;color:var(--text-dim)">ページテキストプレビュー</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:0.8rem;background:var(--bg);padding:0.5rem;border-radius:4px;margin-top:0.3rem;max-height:200px;overflow-y:auto">${escapeHtml(r.page_text_preview)}</pre></details>`
+        : '';
+      rb.innerHTML += `
+        <div style="background:var(--bg);padding:0.8rem;border-radius:6px;border:1px solid var(--border);margin-bottom:0.6rem">
+          <div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.3rem">
+            <span style="color:var(--accent);font-weight:bold">[${i+1}]</span>
+            <a href="${escapeHtml(r.url)}" target="_blank" style="color:#7eb3ff;word-break:break-all">${escapeHtml(r.title)}</a>
+            <span style="margin-left:auto;font-size:0.8rem">${fetched}</span>
+          </div>
+          <div style="font-size:0.82rem;color:var(--text-dim)">${escapeHtml(r.snippet || '(スニペットなし)')}</div>
+          ${previewHtml}
+        </div>`;
+    });
+
+    // LLMプロンプト
+    promptSection.style.display = 'block';
+    document.getElementById('rakuten-debug-prompt').textContent = d.llm_prompt || '(なし)';
+
+    // LLMレスポンス
+    responseSection.style.display = 'block';
+    document.getElementById('rakuten-debug-response').textContent = d.llm_response || '(なし)';
+
+    // 最終出力
+    outputSection.style.display = 'block';
+    document.getElementById('rakuten-debug-output').textContent = d.final_output || '(なし)';
+
+  } catch (err) {
+    meta.innerHTML = '<span style="color:var(--accent)">エラー: ' + escapeHtml(err.message) + '</span>';
+  }
 }
 
 // --- Memory ---

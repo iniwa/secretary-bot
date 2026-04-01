@@ -530,6 +530,16 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- デバッグ: 楽天検索 ---
+
+    @app.get("/api/debug/rakuten-search", dependencies=[Depends(_verify)])
+    async def debug_rakuten_search():
+        """最後のrakuten_search実行データを返す（検索結果・LLMプロンプト・出力）。"""
+        unit = bot.cogs.get("RakutenSearchUnit")
+        if unit is None:
+            return {"available": False, "data": {}}
+        return {"available": True, "data": getattr(unit, "last_debug", {})}
+
     # --- デバッグ: LLM状態確認 ---
 
     @app.get("/api/debug/llm-state", dependencies=[Depends(_verify)])
