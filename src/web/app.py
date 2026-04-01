@@ -620,6 +620,32 @@ def create_web_app(bot) -> FastAPI:
 
         return {"ok": True}
 
+    # --- ハートビート設定 ---
+
+    @app.get("/api/heartbeat-config", dependencies=[Depends(_verify)])
+    async def get_heartbeat_config():
+        hb_cfg = bot.config.get("heartbeat", {})
+        return {
+            "interval_with_ollama_minutes": hb_cfg.get("interval_with_ollama_minutes", 15),
+            "interval_without_ollama_minutes": hb_cfg.get("interval_without_ollama_minutes", 180),
+            "compact_threshold_messages": hb_cfg.get("compact_threshold_messages", 20),
+        }
+
+    @app.post("/api/heartbeat-config", dependencies=[Depends(_verify)])
+    async def set_heartbeat_config(request: Request):
+        body = await request.json()
+        hb_cfg = bot.config.setdefault("heartbeat", {})
+        for key in ("interval_with_ollama_minutes", "interval_without_ollama_minutes", "compact_threshold_messages"):
+            if key in body:
+                val = int(body[key])
+                if val < 1:
+                    raise HTTPException(400, f"{key} must be >= 1")
+                hb_cfg[key] = val
+                await bot.database.set_setting(f"heartbeat.{key}", str(val))
+        # 次回スケジュールに反映
+        bot.heartbeat._reschedule()
+        return {"ok": True}
+
     # --- ペルソナ設定 ---
 
     @app.get("/api/persona", dependencies=[Depends(_verify)])
