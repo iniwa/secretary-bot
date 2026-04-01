@@ -9,11 +9,12 @@ log = get_logger(__name__)
 
 
 class GeminiClient:
-    _DEFAULT_MODEL = "gemini-2.5-flash-preview-04-17"
+    DEFAULT_MODEL = "gemini-2.0-flash"
 
     def __init__(self):
         self._client = None
         self._total_tokens = 0
+        self.model = self.DEFAULT_MODEL
 
     def _get_client(self):
         if self._client is None:
@@ -38,7 +39,7 @@ class GeminiClient:
         try:
             from google.genai import types
             client = self._get_client()
-            model_name = model or self._DEFAULT_MODEL
+            model_name = model or self.model
 
             config = None
             if system:

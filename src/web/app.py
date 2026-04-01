@@ -566,6 +566,7 @@ def create_web_app(bot) -> FastAPI:
         return {
             "ollama_model": llm_cfg.get("ollama_model", "qwen3"),
             "ollama_timeout": int(llm_cfg.get("ollama_timeout", 300)),
+            "gemini_model": bot.llm_router.gemini.model,
             "unit_models": unit_models,
         }
 
@@ -583,6 +584,14 @@ def create_web_app(bot) -> FastAPI:
             for cog in bot.cogs.values():
                 if hasattr(cog, "llm") and cog.llm._ollama_model is None:
                     pass  # model=None → OllamaClient.model を参照するので自動反映
+
+        # Geminiモデル変更
+        if "gemini_model" in body:
+            gmodel = body["gemini_model"].strip()
+            if gmodel:
+                bot.config.setdefault("llm", {})["gemini_model"] = gmodel
+                bot.llm_router.gemini.model = gmodel
+                await bot.database.set_setting("llm.gemini_model", gmodel)
 
         # タイムアウト変更
         if "ollama_timeout" in body:

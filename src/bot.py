@@ -197,6 +197,12 @@ async def _restore_settings(bot: SecretaryBot) -> None:
         log.info("Restored gemini settings from DB")
 
     # LLMモデル設定
+    saved_gemini_model = await bot.database.get_setting("llm.gemini_model")
+    if saved_gemini_model:
+        bot.config.setdefault("llm", {})["gemini_model"] = saved_gemini_model
+        bot.llm_router.gemini.model = saved_gemini_model
+        log.info("Restored gemini model from DB: %s", saved_gemini_model)
+
     saved_model = await bot.database.get_setting("llm.ollama_model")
     if saved_model:
         bot.config.setdefault("llm", {})["ollama_model"] = saved_model

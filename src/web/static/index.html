@@ -326,6 +326,12 @@ nav.bottom-nav { display: none; }
         </div>
       </div>
       <div class="setting-row">
+        <span>Gemini Model</span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="text" id="gemini-model" style="width:220px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)" placeholder="gemini-2.0-flash">
+        </div>
+      </div>
+      <div class="setting-row">
         <span>Ollama Timeout (秒)<br><span style="font-size:0.8rem;color:var(--text-dim)">生成タイムアウト。ローカルLLMが重い場合は大きめに設定</span></span>
         <div style="display:flex;gap:0.5rem;align-items:center">
           <input type="number" id="ollama-timeout" min="10" max="3600" step="30" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
@@ -744,6 +750,7 @@ async function loadLLMConfig() {
     const res = await fetch('/api/llm-config');
     const data = await res.json();
     document.getElementById('ollama-model').value = data.ollama_model || '';
+    document.getElementById('gemini-model').value = data.gemini_model || '';
     document.getElementById('ollama-timeout').value = data.ollama_timeout ?? 300;
     const container = document.getElementById('unit-model-list');
     container.innerHTML = '';
@@ -762,6 +769,7 @@ async function saveLLMConfig() {
   const btn = document.querySelector('#page-settings .maint-section:nth-child(2) .btn-update');
   const status = document.getElementById('llm-status');
   const ollama_model = document.getElementById('ollama-model').value.trim();
+  const gemini_model = document.getElementById('gemini-model').value.trim();
   const ollama_timeout = parseInt(document.getElementById('ollama-timeout').value, 10);
   const unit_models = {};
   UNIT_NAMES.forEach(name => {
@@ -771,7 +779,7 @@ async function saveLLMConfig() {
   btn.disabled = true;
   status.textContent = '保存中...';
   try {
-    await fetch('/api/llm-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ollama_model, ollama_timeout, unit_models}) });
+    await fetch('/api/llm-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ollama_model, gemini_model, ollama_timeout, unit_models}) });
     status.textContent = '保存しました';
     status.style.color = '#4caf50';
   } catch (err) {
