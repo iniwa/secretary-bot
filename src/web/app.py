@@ -104,12 +104,15 @@ def create_web_app(bot) -> FastAPI:
                 return {"response": response or "", "unit": unit_name}
             except Exception as e:
                 log.error("WebGUI chat error: %s", e, exc_info=True)
-                await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
-                await ft.end_flow(flow_id)
+                try:
+                    await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
+                    await ft.end_flow(flow_id)
+                except Exception:
+                    pass
                 return JSONResponse(
                     status_code=200,
-                    content={"response": f"Error: {e}", "unit": "system"},
-            )
+                    content={"response": f"エラーが発生しました: {e}", "unit": "system"},
+                )
 
     @app.get("/api/logs", dependencies=[Depends(_verify)])
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
