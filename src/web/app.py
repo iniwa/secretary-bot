@@ -457,7 +457,6 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"units": units}
 
-    @app.get("/api/gemini-config", )
     # --- ChromaDB 記憶閲覧 API ---
 
     _MEMORY_COLLECTIONS = ("ai_memory", "people_memory", "conversation_log")
