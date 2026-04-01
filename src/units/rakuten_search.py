@@ -1,11 +1,11 @@
 """楽天市場商品検索ユニット。SearXNGで楽天市場を検索し、LLMでおすすめを提示する。"""
 
 import asyncio
-import re
 import httpx
 
 from src.flow_tracker import get_flow_tracker
 from src.units.base_unit import BaseUnit
+from src.units.web_search import _HtmlToMarkdown
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -28,34 +28,35 @@ _EXTRACT_PROMPT = """\
 """
 
 _RECOMMEND_PROMPT = """\
-以下は楽天市場の「{keyword}」の検索結果ページの内容です。
-ユーザーの要望に合わせて、おすすめ商品を紹介してください。
+以下は楽天市場の商品ページの内容です。
+各ページから商品情報を抽出し、ユーザーの要望に合わせておすすめ商品を紹介してください。
 
-## ルール
-- 商品名・価格・レビュー情報が含まれていれば積極的に紹介してください
-- 上位3〜5件を具体的に紹介してください
-- 価格は円表示にしてください
+## 抽出ルール
+- 各商品について以下の情報を抽出してください：
+  - 【商品名】: ページタイトルや見出しから
+  - 【価格】: 円表示（税込・税別が分かれば記載）
+  - 【レビュー】: 評価（★X.X）と件数（X件）
+  - 【特徴】: 商品説明から主要な特徴を2〜3点
+- 情報が見つからない項目は「情報なし」と記載
 - URLは含めなくてよいです（別途表示されます）
-- 情報が不十分な場合はその旨を伝えてください
 
 ## ユーザーの要望
 {question}
 
-## 検索結果ページの内容
+## 商品ページの内容（{count}件）
 {results}
 """
 
 _DEFAULT_MAX_RESULTS = 5
-_DEFAULT_FETCH_PAGES = 3
-_DEFAULT_MAX_CHARS_PER_PAGE = 3000
+_DEFAULT_FETCH_PAGES = 5
+_DEFAULT_MAX_CHARS_PER_PAGE = 5000
 
 
-def _extract_text(html: str) -> str:
-    """HTMLからプレーンテキストを抽出する。"""
-    html = re.sub(r'<(script|style)[^>]*>.*?</(script|style)>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', ' ', html)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+def _parse_html(html: str) -> str:
+    """HTMLをMarkdownに変換する（_HtmlToMarkdownを使用）。"""
+    parser = _HtmlToMarkdown()
+    parser.feed(html)
+    return parser.get_text()
 
 
 class RakutenSearchUnit(BaseUnit):
@@ -178,7 +179,7 @@ class RakutenSearchUnit(BaseUnit):
                 content_type = resp.headers.get("content-type", "")
                 if "html" not in content_type:
                     return ""
-                text = _extract_text(resp.text)
+                text = _parse_html(resp.text)
                 log.debug("Fetched %s: %d chars", url, len(text))
                 return text[:self._max_chars_per_page]
         except Exception as e:
@@ -197,8 +198,8 @@ class RakutenSearchUnit(BaseUnit):
             results_text += f"[{i}] {r['title']}\nURL: {r['url']}\n{body}\n\n"
 
         prompt = _RECOMMEND_PROMPT.format(
-            keyword=keyword,
             question=question,
+            count=len(results),
             results=results_text.strip(),
         )
         response = await self.llm.generate(prompt)
