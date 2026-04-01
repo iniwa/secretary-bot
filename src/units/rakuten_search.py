@@ -90,8 +90,8 @@ class RakutenSearchUnit(BaseUnit):
             keyword = extracted.get("keyword", message)
             log.info("rakuten_search keyword=%s", keyword)
 
-            # 2. SearXNGで rakuten.co.jp 内を検索
-            query = f"site:www.rakuten.co.jp {keyword}"
+            # 2. SearXNGで item.rakuten.co.jp（個別商品ページ）を検索
+            query = f"site:item.rakuten.co.jp {keyword}"
             results = await self._search(query)
             if not results:
                 result = f"「{keyword}」の楽天市場商品が見つかりませんでした。"
