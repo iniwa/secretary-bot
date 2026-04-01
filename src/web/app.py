@@ -472,6 +472,25 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"units": units}
 
+    # --- ChromaDB 記憶閲覧 API ---
+
+    _MEMORY_COLLECTIONS = ("ai_memory", "people_memory", "conversation_log")
+
+    @app.get("/api/memory/{collection}", dependencies=[Depends(_verify)])
+    async def get_memory(collection: str, limit: int = 200, offset: int = 0):
+        if collection not in _MEMORY_COLLECTIONS:
+            raise HTTPException(400, f"unknown collection: {collection}")
+        items = bot.chroma.get_all(collection, limit=limit, offset=offset)
+        total = bot.chroma.count(collection)
+        return {"items": items, "total": total}
+
+    @app.delete("/api/memory/{collection}/{doc_id}", dependencies=[Depends(_verify)])
+    async def delete_memory(collection: str, doc_id: str):
+        if collection not in _MEMORY_COLLECTIONS:
+            raise HTTPException(400, f"unknown collection: {collection}")
+        bot.chroma.delete(collection, doc_id)
+        return {"ok": True}
+
     @app.get("/api/gemini-config", dependencies=[Depends(_verify)])
     async def get_gemini_config():
         return bot.config.get("gemini", {})

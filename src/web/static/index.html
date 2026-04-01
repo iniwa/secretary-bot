@@ -217,6 +217,10 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('unit-memo')">Memo</button>
     <button onclick="showPage('unit-timer')">Timer</button>
   </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Memory</div>
+    <button onclick="showPage('memory')">Memory</button>
+  </div>
 </nav>
 
 <main>
@@ -399,6 +403,30 @@ nav.bottom-nav { display: none; }
     <h2 style="margin-bottom:1rem">Timer</h2>
     <div id="timer-list"></div>
   </div>
+
+  <!-- Memory -->
+  <div id="page-memory" class="page">
+    <h2 style="margin-bottom:1rem">Memory (ChromaDB)</h2>
+    <div class="unit-filter" style="margin-bottom:1rem">
+      <select id="memory-collection" onchange="loadMemory()">
+        <option value="ai_memory">ai_memory（ミミ自身）</option>
+        <option value="people_memory">people_memory（人物情報）</option>
+        <option value="conversation_log">conversation_log（会話サマリー）</option>
+      </select>
+      <button onclick="loadMemory()">更新</button>
+      <span id="memory-count" style="color:var(--text-dim);font-size:0.9rem;align-self:center"></span>
+    </div>
+    <div style="overflow:auto;flex:1">
+      <table>
+        <thead><tr><th style="width:12rem">ID</th><th>Text</th><th style="width:14rem">Metadata</th><th style="width:4rem"></th></tr></thead>
+        <tbody id="memory-body"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:0.5rem;padding-top:0.5rem">
+      <button onclick="loadMemoryPage(memoryOffset-200)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Prev</button>
+      <button onclick="loadMemoryPage(memoryOffset+200)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Next</button>
+    </div>
+  </div>
 </main>
 
 <nav class="bottom-nav">
@@ -436,6 +464,7 @@ function showPage(name) {
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
+  if (name === 'memory') loadMemory();
 }
 
 let chatBusy = false;
@@ -1407,6 +1436,61 @@ async function loadChatHistory() {
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- Memory ---
+let memoryOffset = 0;
+
+async function loadMemory() {
+  memoryOffset = 0;
+  await _fetchMemory(0);
+}
+
+async function loadMemoryPage(offset) {
+  if (offset < 0) return;
+  await _fetchMemory(offset);
+}
+
+async function _fetchMemory(offset) {
+  const collection = document.getElementById('memory-collection').value;
+  const tbody = document.getElementById('memory-body');
+  const countEl = document.getElementById('memory-count');
+  tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">Loading...</td></tr>';
+  try {
+    const res = await fetch(`/api/memory/${collection}?limit=200&offset=${offset}`);
+    const data = await res.json();
+    memoryOffset = offset;
+    countEl.textContent = `総件数: ${data.total}`;
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">No entries</td></tr>';
+      return;
+    }
+    data.items.forEach(item => {
+      const metaStr = item.metadata && Object.keys(item.metadata).length
+        ? Object.entries(item.metadata).map(([k,v]) => `<span style="color:var(--text-dim);font-size:0.8rem">${escapeHtml(k)}: </span>${escapeHtml(String(v))}`).join('<br>')
+        : '-';
+      const shortId = item.id.length > 12 ? item.id.slice(0, 12) + '…' : item.id;
+      tbody.innerHTML += `<tr>
+        <td title="${escapeHtml(item.id)}" style="font-size:0.8rem;font-family:monospace;color:var(--text-dim)">${shortId}</td>
+        <td style="white-space:pre-wrap;word-break:break-word">${escapeHtml(item.text)}</td>
+        <td style="font-size:0.85rem">${metaStr}</td>
+        <td class="actions"><button class="act-btn" title="削除" onclick="deleteMemoryEntry('${escapeHtml(collection)}','${escapeHtml(item.id)}')">🗑️</button></td>
+      </tr>`;
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="4" class="unit-empty">Error: ' + escapeHtml(err.message) + '</td></tr>';
+  }
+}
+
+async function deleteMemoryEntry(collection, docId) {
+  if (!confirm(`このエントリを削除しますか？\nID: ${docId}`)) return;
+  try {
+    await fetch(`/api/memory/${collection}/${encodeURIComponent(docId)}`, { method: 'DELETE' });
+    await _fetchMemory(memoryOffset);
+  } catch (err) {
+    alert('削除失敗: ' + err.message);
+  }
 }
 
 // --- 初期化 ---
