@@ -99,11 +99,9 @@ searxng:
   fetch_pages: 3                # ページ本文を実際にフェッチするURL数（上位N件）
   max_chars_per_page: 3000      # 1ページあたりの最大文字数
 
-# 楽天市場商品検索（SearXNG経由）
+# 楽天市場商品検索（検索結果ページ直接取得）
 rakuten_search:
-  max_results: 5    # SearXNG検索結果の最大件数
-  fetch_pages: 5    # ページ本文を実際にフェッチするURL数（全件フェッチ推奨）
-  max_chars_per_page: 5000  # 1ページあたりの最大文字数（商品詳細を収めるため多め）
+  max_results: 10   # 表示する商品の最大件数
 
 # デバッグ
 debug:

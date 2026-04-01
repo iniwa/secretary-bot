@@ -1578,34 +1578,34 @@ async function loadRakutenDebug() {
     }
 
     // メタ情報
-    const resultCount = (d.search_results || []).length;
+    const itemCount = d.item_count || (d.items || []).length;
     meta.innerHTML = `
       <div style="display:flex;gap:2rem;flex-wrap:wrap">
         <div><span style="color:var(--text-dim)">キーワード: </span><strong>${escapeHtml(d.keyword)}</strong></div>
-        <div><span style="color:var(--text-dim)">SearXNGクエリ: </span><code style="font-size:0.9rem">${escapeHtml(d.query)}</code></div>
-        <div><span style="color:var(--text-dim)">検索結果件数: </span><strong>${resultCount}件</strong></div>
+        <div><span style="color:var(--text-dim)">取得件数: </span><strong>${itemCount}件</strong></div>
       </div>`;
 
     // 検索結果
     resultsSection.style.display = 'block';
     const rb = document.getElementById('rakuten-results-body');
     rb.innerHTML = '';
-    (d.search_results || []).forEach((r, i) => {
-      const fetched = r.page_text_chars > 0
-        ? `<span style="color:#4caf50">✓ ${r.page_text_chars}文字取得</span>`
-        : '<span style="color:var(--text-dim)">ページ取得なし</span>';
-      const previewHtml = r.page_text_preview
-        ? `<details style="margin-top:0.3rem"><summary style="cursor:pointer;font-size:0.8rem;color:var(--text-dim)">ページテキストプレビュー</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:0.8rem;background:var(--bg);padding:0.5rem;border-radius:4px;margin-top:0.3rem;max-height:200px;overflow-y:auto">${escapeHtml(r.page_text_preview)}</pre></details>`
-        : '';
+    (d.items || []).forEach((r, i) => {
+      const prTag = r.is_pr ? '<span style="color:#ff9800;font-size:0.75rem;margin-left:0.3rem">[PR]</span>' : '';
+      const rating = r.rating
+        ? `<span style="color:#ffc107">★${escapeHtml(r.rating)}</span> <span style="color:var(--text-dim)">${escapeHtml(r.review_count || '')}</span>`
+        : '<span style="color:var(--text-dim)">レビューなし</span>';
       rb.innerHTML += `
         <div style="background:var(--bg);padding:0.8rem;border-radius:6px;border:1px solid var(--border);margin-bottom:0.6rem">
           <div style="display:flex;align-items:baseline;gap:0.5rem;margin-bottom:0.3rem">
             <span style="color:var(--accent);font-weight:bold">[${i+1}]</span>
             <a href="${escapeHtml(r.url)}" target="_blank" style="color:#7eb3ff;word-break:break-all">${escapeHtml(r.title)}</a>
-            <span style="margin-left:auto;font-size:0.8rem">${fetched}</span>
+            ${prTag}
           </div>
-          <div style="font-size:0.82rem;color:var(--text-dim)">${escapeHtml(r.snippet || '(スニペットなし)')}</div>
-          ${previewHtml}
+          <div style="display:flex;gap:1.5rem;font-size:0.85rem;margin-bottom:0.3rem">
+            <span><strong>${escapeHtml(r.price || '価格不明')}</strong>${r.shipping ? ' / ' + escapeHtml(r.shipping) : ''}</span>
+            <span>${rating}</span>
+          </div>
+          <div style="font-size:0.82rem;color:var(--text-dim)">${escapeHtml(r.shop || '')}</div>
         </div>`;
     });
 

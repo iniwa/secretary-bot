@@ -1,11 +1,13 @@
-"""楽天市場商品検索ユニット。SearXNGで楽天市場を検索し、LLMでおすすめを提示する。"""
+"""楽天市場商品検索ユニット。楽天検索結果ページを直接取得し、商品情報を抽出してLLMでおすすめを提示する。"""
 
 import asyncio
+import re
+import urllib.parse
+
 import httpx
 
 from src.flow_tracker import get_flow_tracker
 from src.units.base_unit import BaseUnit
-from src.units.web_search import _HtmlToMarkdown
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -28,35 +30,149 @@ _EXTRACT_PROMPT = """\
 """
 
 _RECOMMEND_PROMPT = """\
-以下は楽天市場の商品ページの内容です。
-各ページから商品情報を抽出し、ユーザーの要望に合わせておすすめ商品を紹介してください。
+以下は楽天市場の検索結果から抽出した商品データです。
+ユーザーの要望に合わせて、おすすめ商品を紹介してください。
 
-## 抽出ルール
-- 各商品について以下の情報を抽出してください：
-  - 【商品名】: ページタイトルや見出しから
-  - 【価格】: 円表示（税込・税別が分かれば記載）
-  - 【レビュー】: 評価（★X.X）と件数（X件）
-  - 【特徴】: 商品説明から主要な特徴を2〜3点
-- 情報が見つからない項目は「情報なし」と記載
+## ルール
+- 各商品について【商品名】【価格】【レビュー】【特徴】を整理して紹介
+- レビューがない商品はその旨記載
+- 広告（[PR]）商品はその旨を軽く触れてよい
 - URLは含めなくてよいです（別途表示されます）
+- 商品の特徴は商品名から読み取れる情報を要約する
 
 ## ユーザーの要望
 {question}
 
-## 商品ページの内容（{count}件）
+## 商品データ（{count}件）
 {results}
 """
 
-_DEFAULT_MAX_RESULTS = 5
-_DEFAULT_FETCH_PAGES = 5
-_DEFAULT_MAX_CHARS_PER_PAGE = 5000
+_DEFAULT_MAX_RESULTS = 10
+
+# ブラウザに偽装したヘッダーセット
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 
-def _parse_html(html: str) -> str:
-    """HTMLをMarkdownに変換する（_HtmlToMarkdownを使用）。"""
-    parser = _HtmlToMarkdown()
-    parser.feed(html)
-    return parser.get_text()
+def _parse_search_results(html: str) -> list[dict]:
+    """楽天検索結果ページのHTMLから商品情報を抽出する。
+
+    data属性とHTML内容の両方から情報を取得し、構造化データとして返す。
+    """
+    items = []
+
+    # searchresultitem の各カードを分割して処理
+    card_pattern = re.compile(
+        r'<div\s+class="[^"]*searchresultitem[^"]*"'
+        r'[^>]*?data-id="([^"]*)"'
+        r'[^>]*?data-shop-id="([^"]*)"'
+        r'[^>]*?data-track-price="([^"]*)"'
+        r'[^>]*?data-card-type="([^"]*)"'
+        r'[^>]*?>'
+        r'(.*?)(?=<div\s+class="[^"]*searchresultitem|$)',
+        re.DOTALL,
+    )
+    # data属性の順序が異なる場合に対応するため、個別にも抽出
+    card_split = re.compile(
+        r'(<div\s+class="[^"]*searchresultitem[^"]*"[^>]*>.*?)(?=<div\s+class="[^"]*searchresultitem|$)',
+        re.DOTALL,
+    )
+
+    for card_match in card_split.finditer(html):
+        card_html = card_match.group(1)
+        item = _extract_item_from_card(card_html)
+        if item and item.get("title"):
+            items.append(item)
+
+    return items
+
+
+def _extract_item_from_card(card_html: str) -> dict | None:
+    """1つの商品カードHTMLから情報を抽出する。"""
+
+    def _attr(name: str) -> str:
+        m = re.search(rf'{name}="([^"]*)"', card_html)
+        return m.group(1) if m else ""
+
+    item_id = _attr("data-id")
+    shop_id = _attr("data-shop-id")
+    raw_price = _attr("data-track-price")
+    card_type = _attr("data-card-type")
+
+    # 商品タイトル: <a ... title="..." data-link="item"> または title-link クラス
+    title = ""
+    title_match = re.search(r'<a[^>]*?title="([^"]*)"[^>]*?data-link="item"', card_html)
+    if not title_match:
+        title_match = re.search(r'<a[^>]*?class="[^"]*title-link[^"]*"[^>]*?title="([^"]*)"', card_html)
+    if title_match:
+        title = title_match.group(1)
+        title = title.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+
+    # レビュー評価
+    rating = ""
+    rating_match = re.search(r'class="score"[^>]*>([^<]+)', card_html)
+    if rating_match:
+        rating = rating_match.group(1).strip()
+
+    # レビュー件数
+    review_count = ""
+    review_match = re.search(r'class="legend"[^>]*>([^<]+)', card_html)
+    if review_match:
+        review_count = review_match.group(1).strip().strip("()")
+
+    # ショップ名: content merchant 内の <a> テキスト
+    shop = ""
+    shop_match = re.search(
+        r'class="content merchant[^"]*"[^>]*>.*?<a[^>]*>([^<]+)',
+        card_html,
+        re.DOTALL,
+    )
+    if shop_match:
+        shop = shop_match.group(1).strip()
+
+    # 価格表示テキスト（「円〜」等を含む表示用）
+    price_display = ""
+    price_match = re.search(r'class="[^"]*price--[^"]*"[^>]*>(.*?)</div>', card_html, re.DOTALL)
+    if price_match:
+        price_text = re.sub(r"<[^>]+>", "", price_match.group(1))
+        price_display = price_text.strip()
+    elif raw_price:
+        price_display = f"{int(raw_price):,}円"
+
+    # 送料情報
+    shipping = ""
+    ship_match = re.search(r'free-shipping-label[^"]*"[^>]*>([^<]+)', card_html)
+    if ship_match:
+        shipping = ship_match.group(1).strip()
+
+    # 商品URL構築
+    url = ""
+    if shop_id and item_id:
+        url = f"https://item.rakuten.co.jp/{shop_id}/{item_id}/"
+
+    is_pr = card_type == "cpc"
+
+    return {
+        "title": title,
+        "price": price_display,
+        "rating": rating,
+        "review_count": review_count,
+        "shop": shop,
+        "shipping": shipping,
+        "url": url,
+        "is_pr": is_pr,
+    }
 
 
 class RakutenSearchUnit(BaseUnit):
@@ -66,11 +182,7 @@ class RakutenSearchUnit(BaseUnit):
     def __init__(self, bot):
         super().__init__(bot)
         cfg = bot.config.get("rakuten_search", {})
-        searxng_cfg = bot.config.get("searxng", {})
-        self._base_url = searxng_cfg.get("url", "http://localhost:8888")
         self._max_results = cfg.get("max_results", _DEFAULT_MAX_RESULTS)
-        self._fetch_pages = cfg.get("fetch_pages", _DEFAULT_FETCH_PAGES)
-        self._max_chars_per_page = cfg.get("max_chars_per_page", _DEFAULT_MAX_CHARS_PER_PAGE)
         # デバッグ用: 最後の実行データを保持
         self.last_debug: dict = {}
 
@@ -91,46 +203,29 @@ class RakutenSearchUnit(BaseUnit):
             keyword = extracted.get("keyword", message)
             log.info("rakuten_search keyword=%s", keyword)
 
-            # 2. SearXNGで item.rakuten.co.jp（個別商品ページ）を検索
-            query = f"site:item.rakuten.co.jp {keyword}"
-            results = await self._search(query)
-            if not results:
+            # 2. 楽天検索結果ページを直接取得・解析
+            items = await self._search_rakuten(keyword)
+            if not items:
                 result = f"「{keyword}」の楽天市場商品が見つかりませんでした。"
-                self.last_debug = {"keyword": keyword, "query": query, "search_results": [], "error": "no_results"}
+                self.last_debug = {"keyword": keyword, "items": [], "error": "no_results"}
                 self.breaker.record_success()
                 self.session_done = True
                 result = await self.personalize(result, message, flow_id)
                 await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "count": 0}, flow_id)
                 return result
 
-            # 3. 上位N件のページ本文を並列フェッチ
-            fetch_targets = results[:self._fetch_pages]
-            page_texts = await self._fetch_pages_parallel(fetch_targets)
-            for i, text in enumerate(page_texts):
-                if text:
-                    results[i]["page_text"] = text
+            # 3. LLMでおすすめをまとめる
+            recommendation, llm_prompt = await self._recommend(message, items)
 
-            # 4. LLMでおすすめをまとめる（プロンプトも返してデバッグ保存）
-            recommendation, llm_prompt = await self._recommend(message, keyword, results)
-
-            # 5. 出典リストを付与
-            sources = self._format_sources(results)
+            # 4. 出典リストを付与
+            sources = self._format_sources(items)
             result = f"{recommendation}\n\n{sources}"
 
             # デバッグデータ保存（WebGUIで閲覧可能）
             self.last_debug = {
                 "keyword": keyword,
-                "query": query,
-                "search_results": [
-                    {
-                        "title": r["title"],
-                        "url": r["url"],
-                        "snippet": r["content"],
-                        "page_text_chars": len(r.get("page_text", "")),
-                        "page_text_preview": r.get("page_text", "")[:500],
-                    }
-                    for r in results
-                ],
+                "item_count": len(items),
+                "items": items,
                 "llm_prompt": llm_prompt,
                 "llm_response": recommendation,
                 "final_output": result,
@@ -139,7 +234,7 @@ class RakutenSearchUnit(BaseUnit):
             result = await self.personalize(result, message, flow_id)
             self.breaker.record_success()
             self.session_done = True
-            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "keyword": keyword, "count": len(results)}, flow_id)
+            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "keyword": keyword, "count": len(items)}, flow_id)
             return result
         except Exception:
             self.breaker.record_failure()
@@ -150,67 +245,74 @@ class RakutenSearchUnit(BaseUnit):
         prompt = _EXTRACT_PROMPT.format(user_input=user_input)
         return await self.llm.extract_json(prompt)
 
-    async def _search(self, query: str) -> list[dict]:
-        """SearXNG API で検索を実行する。"""
-        url = f"{self._base_url}/search"
-        params = {"q": query, "format": "json", "language": "ja"}
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+    async def _search_rakuten(self, keyword: str) -> list[dict]:
+        """楽天検索結果ページを直接取得して商品情報を抽出する。"""
+        encoded = urllib.parse.quote(keyword)
+        url = f"https://search.rakuten.co.jp/search/mall/{encoded}/"
 
-        results = []
-        for r in data.get("results", [])[:self._max_results]:
-            results.append({
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "content": r.get("content", ""),
-                "page_text": "",
-            })
-        return results
-
-    async def _fetch_page_text(self, url: str) -> str:
-        """URLのページ本文を取得してテキスト化する。失敗時は空文字を返す。"""
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; SecretaryBot/1.0)"}
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                resp = await client.get(url, headers=headers)
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(url, headers=_BROWSER_HEADERS)
                 resp.raise_for_status()
                 content_type = resp.headers.get("content-type", "")
                 if "html" not in content_type:
-                    return ""
-                text = _parse_html(resp.text)
-                log.debug("Fetched %s: %d chars", url, len(text))
-                return text[:self._max_chars_per_page]
+                    log.warning("rakuten search: unexpected content-type=%s", content_type)
+                    return []
+                html = resp.text
         except Exception as e:
-            log.debug("Failed to fetch %s: %s", url, e)
-            return ""
+            log.error("rakuten search fetch failed: %s", e)
+            return []
 
-    async def _fetch_pages_parallel(self, results: list[dict]) -> list[str]:
-        tasks = [self._fetch_page_text(r["url"]) for r in results]
-        return await asyncio.gather(*tasks)
+        items = _parse_search_results(html)
+        log.info("rakuten search: parsed %d items for keyword=%s", len(items), keyword)
 
-    async def _recommend(self, question: str, keyword: str, results: list[dict]) -> tuple[str, str]:
+        # 重複除去（同一URLの商品はPR版を除外して通常版を優先）
+        seen_urls: dict[str, int] = {}
+        unique_items: list[dict] = []
+        for item in items:
+            item_url = item.get("url", "")
+            if item_url in seen_urls:
+                # 既に通常版があればPR版はスキップ
+                existing_idx = seen_urls[item_url]
+                if item["is_pr"] and not unique_items[existing_idx]["is_pr"]:
+                    continue
+                # 既にPR版があり通常版が来た場合は置き換え
+                if not item["is_pr"] and unique_items[existing_idx]["is_pr"]:
+                    unique_items[existing_idx] = item
+                    continue
+            seen_urls[item_url] = len(unique_items)
+            unique_items.append(item)
+
+        return unique_items[:self._max_results]
+
+    async def _recommend(self, question: str, items: list[dict]) -> tuple[str, str]:
         """LLMで商品を要約・推薦する。(レスポンス, プロンプト) を返す。"""
         results_text = ""
-        for i, r in enumerate(results, 1):
-            body = r.get("page_text") or r.get("content", "")
-            results_text += f"[{i}] {r['title']}\nURL: {r['url']}\n{body}\n\n"
+        for i, item in enumerate(items, 1):
+            pr_tag = " [PR]" if item["is_pr"] else ""
+            rating_str = f"★{item['rating']}（{item['review_count']}）" if item["rating"] else "レビューなし"
+            results_text += (
+                f"[{i}]{pr_tag} {item['title']}\n"
+                f"  価格: {item['price']}"
+                f"{' / ' + item['shipping'] if item['shipping'] else ''}\n"
+                f"  レビュー: {rating_str}\n"
+                f"  ショップ: {item['shop']}\n\n"
+            )
 
         prompt = _RECOMMEND_PROMPT.format(
             question=question,
-            count=len(results),
+            count=len(items),
             results=results_text.strip(),
         )
         response = await self.llm.generate(prompt)
         return response, prompt
 
-    def _format_sources(self, results: list[dict]) -> str:
+    def _format_sources(self, items: list[dict]) -> str:
         lines = ["🛒 楽天市場 検索結果リンク"]
-        for i, r in enumerate(results, 1):
-            fetched = " ✓" if r.get("page_text") else ""
-            name = r["title"][:50] + ("…" if len(r["title"]) > 50 else "")
-            lines.append(f"  [{i}] {name}{fetched}: {r['url']}")
+        for i, item in enumerate(items, 1):
+            pr_tag = " [PR]" if item["is_pr"] else ""
+            name = item["title"][:50] + ("…" if len(item["title"]) > 50 else "")
+            lines.append(f"  [{i}]{pr_tag} {name}: {item['url']}")
         return "\n".join(lines)
 
 
