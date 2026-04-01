@@ -53,6 +53,7 @@ _DEBUG_CONFIG = {
         "status": {"enabled": True},
         "chat": {"enabled": True},
         "web_search": {"enabled": True},
+        "rakuten_search": {"enabled": True},
     },
     "searxng": {
         "url": "http://localhost:8888",
@@ -139,6 +140,7 @@ def _load_unit_class(unit_name: str):
         "status": "src.units.status",
         "chat": "src.units.chat",
         "web_search": "src.units.web_search",
+        "rakuten_search": "src.units.rakuten_search",
     }
     module_path = module_map.get(unit_name)
     if not module_path:
@@ -189,6 +191,11 @@ SCENARIOS: dict[str, list[dict]] = {
     "web_search": [
         {"label": "search", "parsed": {"message": "Raspberry Pi 5の発売日を調べて"}},
         {"label": "search_en", "parsed": {"message": "What is SearXNG?"}},
+    ],
+    "rakuten_search": [
+        {"label": "search_basic", "parsed": {"message": "楽天市場でワイヤレスイヤホンを探して"}},
+        {"label": "search_cheap", "parsed": {"message": "楽天で安いコーヒーメーカーを探して"}},
+        {"label": "search_rating", "parsed": {"message": "楽天で評価の高いプロテインを探して"}},
     ],
 }
 
