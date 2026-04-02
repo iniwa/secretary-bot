@@ -44,6 +44,29 @@ _EXTRACT_PROMPT = """\
 {user_input}
 """
 
+_EXTRACT_WITH_PENDING_PROMPT = """\
+現在日時: {now} ({weekday}曜日)
+
+ユーザーは以前に予定登録をリクエストしましたが、一部の情報が不足していました。
+以下の「保留中の予定」と「新しいユーザー入力」を統合して、完成した予定をJSON形式で返してください。
+
+## 保留中の予定
+{pending_json}
+
+## 不足していた情報
+{missing_fields}
+
+## 出力形式（厳守）
+{{"action": "create", "events": [{{"summary": "予定名", "location": "場所(任意)", "description": "詳細(任意)", "start_date": "YYYY-MM-DD", "start_time": "HH:MM(終日ならnull)", "end_date": "YYYY-MM-DD(省略可)", "end_time": "HH:MM(省略可)"}}]}}
+
+- 保留中の予定の情報とユーザーの新しい入力を統合してください。
+- 「今日」「明日」等の相対日付は必ずYYYY-MM-DD形式に変換してください。
+- JSON1つだけを返してください。
+
+## ユーザー入力
+{user_input}
+"""
+
 
 class CalendarUnit(BaseUnit):
     UNIT_NAME = "calendar"
@@ -57,6 +80,8 @@ class CalendarUnit(BaseUnit):
             "GOOGLE_SERVICE_ACCOUNT_FILE", "/app/data/service_account.json"
         )
         self._service = None
+        # チャネルごとの保留予定（カレンダーID未登録時やデータ不足時に一時保存）
+        self._pending: dict[str, dict] = {}
 
     # ---- Google Calendar API ----
 
@@ -99,18 +124,103 @@ class CalendarUnit(BaseUnit):
         user_id = parsed.get("user_id", "")
 
         try:
+            # 保留中の予定があり、カレンダーID登録の応答かチェック
+            pending = self._pending.get(channel)
+
+            if pending and pending.get("waiting_for") == "calendar_id":
+                # カレンダーID登録を試みる
+                extracted = await self._extract_params(message, channel)
+                action = extracted.get("action", "")
+                if action == "register_calendar" and extracted.get("calendar_id"):
+                    reg_result = await self._register_calendar(extracted, user_id)
+                    # 登録成功後、保留予定を実行
+                    pending_extracted = pending["extracted"]
+                    create_result = await self._create_events(pending_extracted, user_id)
+                    self._pending.pop(channel, None)
+                    result = f"{reg_result}\n\n{create_result}"
+                    result = await self.personalize(result, message, flow_id)
+                    self.session_done = True
+                    self.breaker.record_success()
+                    await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "pending_create"}, flow_id)
+                    return result
+
+            if pending and pending.get("waiting_for") == "missing_fields":
+                # 不足情報の補完
+                extracted = await self._extract_with_pending(
+                    message, pending["extracted"], pending["missing"], channel,
+                )
+                extracted["action"] = "create"
+                missing = self._find_missing_fields(extracted)
+                if missing:
+                    # まだ不足がある
+                    self._pending[channel] = {
+                        "extracted": extracted,
+                        "missing": missing,
+                        "waiting_for": "missing_fields",
+                    }
+                    result = self._ask_missing(missing)
+                    self.session_done = False
+                    self.breaker.record_success()
+                    await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "ask_missing"}, flow_id)
+                    return result
+                # 情報が揃った
+                result = await self._create_events(extracted, user_id)
+                self._pending.pop(channel, None)
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
+                self.breaker.record_success()
+                await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "create"}, flow_id)
+                return result
+
+            # 通常の新規リクエスト
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "create")
 
             if action == "help":
                 result = self._help_message()
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
             elif action == "register_calendar":
                 result = await self._register_calendar(extracted, user_id)
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
             else:
-                result = await self._create_events(extracted, user_id)
+                # create: 不足データチェック
+                missing = self._find_missing_fields(extracted)
+                if missing:
+                    self._pending[channel] = {
+                        "extracted": extracted,
+                        "missing": missing,
+                        "waiting_for": "missing_fields",
+                    }
+                    result = self._ask_missing(missing)
+                    self.session_done = False
+                    self.breaker.record_success()
+                    await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "ask_missing"}, flow_id)
+                    return result
 
-            result = await self.personalize(result, message, flow_id)
-            self.session_done = True
+                # カレンダーID未登録チェック
+                calendar_id = await self._get_calendar_id(user_id)
+                if not calendar_id:
+                    self._pending[channel] = {
+                        "extracted": extracted,
+                        "waiting_for": "calendar_id",
+                    }
+                    sa_email = self._get_service_account_email()
+                    guide = "カレンダーIDがまだ登録されていません。\n"
+                    guide += "カレンダーIDを教えてください。例: 「カレンダーIDは xxx@group.calendar.google.com」\n"
+                    if sa_email:
+                        guide += f"\nまた、Googleカレンダーの共有設定で `{sa_email}` に「予定の変更」権限を付与してください。"
+                    guide += "\n\n予定の内容は覚えていますので、カレンダーIDだけ教えてもらえれば登録します。"
+                    self.session_done = False
+                    self.breaker.record_success()
+                    await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": "ask_calendar_id"}, flow_id)
+                    return guide
+
+                result = await self._create_events(extracted, user_id)
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
+
             self.breaker.record_success()
             await ft.emit(
                 "UNIT_EXEC", "done",
@@ -137,6 +247,43 @@ class CalendarUnit(BaseUnit):
         if context:
             prompt = prompt + context
         return await self.llm.extract_json(prompt)
+
+    async def _extract_with_pending(self, user_input: str, pending: dict, missing: list[str], channel: str = "") -> dict:
+        """保留中の予定と新しい入力を統合してLLMに抽出させる。"""
+        now = datetime.now(JST)
+        weekday = _WEEKDAYS[now.weekday()]
+        prompt = _EXTRACT_WITH_PENDING_PROMPT.format(
+            now=now.strftime("%Y-%m-%d %H:%M"),
+            weekday=weekday,
+            pending_json=json.dumps(pending, ensure_ascii=False),
+            missing_fields=", ".join(missing),
+            user_input=user_input,
+        )
+        context = self.get_context(channel) if channel else ""
+        if context:
+            prompt = prompt + context
+        return await self.llm.extract_json(prompt)
+
+    # ---- 不足フィールド検出 ----
+
+    def _find_missing_fields(self, extracted: dict) -> list[str]:
+        """events内の不足フィールドを検出する。"""
+        events = extracted.get("events", [])
+        if not events:
+            return ["予定名", "日付"]
+        missing = []
+        for ev in events:
+            if not ev.get("summary"):
+                missing.append("予定名")
+            if not ev.get("start_date"):
+                missing.append("日付")
+        # 重複排除
+        return list(dict.fromkeys(missing))
+
+    def _ask_missing(self, missing: list[str]) -> str:
+        """不足情報をユーザーに問い合わせるメッセージを生成する。"""
+        fields = "・".join(missing)
+        return f"予定を登録するために、あと {fields} が必要です。教えてもらえますか？"
 
     # ---- ヘルプ ----
 
