@@ -315,10 +315,10 @@ class RakutenSearchUnit(BaseUnit):
                 # 詳細取得無効でもPR商品のURL解決だけは行う
                 items = await self._resolve_redirect_urls(items)
 
-            # 4. LLMでおすすめをまとめる（会話履歴からユーザーの要望全体を反映）
-            recommendation, llm_prompt = await self._recommend(message, items, conversation_context)
+            # 4. LLMでおすすめをまとめる（ペルソナ込み・会話履歴からユーザーの要望全体を反映）
+            recommendation, llm_prompt = await self._recommend(message, items, conversation_context, flow_id)
 
-            # 5. カード型リストを付与
+            # 5. カード型リストを付与（LLMに書き換えさせず、そのまま結合）
             cards = self._format_item_cards(items, keyword)
             result = f"{recommendation}\n\n{cards}"
 
@@ -331,8 +331,6 @@ class RakutenSearchUnit(BaseUnit):
                 "llm_response": recommendation,
                 "final_output": result,
             }
-
-            result = await self.personalize(result, message, flow_id)
             self.breaker.record_success()
             self.session_done = True
             await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "keyword": keyword, "count": len(items)}, flow_id)
@@ -390,8 +388,9 @@ class RakutenSearchUnit(BaseUnit):
 
         return unique_items[:self._max_results]
 
-    async def _recommend(self, question: str, items: list[dict], conversation_context: list[dict] | None = None) -> tuple[str, str]:
-        """LLMで商品を要約・推薦する。(レスポンス, プロンプト) を返す。"""
+    async def _recommend(self, question: str, items: list[dict], conversation_context: list[dict] | None = None, flow_id: str | None = None) -> tuple[str, str]:
+        """LLMで商品を要約・推薦する。ペルソナ込み。(レスポンス, プロンプト) を返す。"""
+        ft = get_flow_tracker()
         results_text = ""
         for i, item in enumerate(items, 1):
             pr_tag = " [PR]" if item["is_pr"] else ""
@@ -436,7 +435,21 @@ class RakutenSearchUnit(BaseUnit):
             count=len(items),
             results=results_text.strip(),
         )
-        response = await self.llm.generate(prompt)
+
+        # ペルソナをsystemプロンプトとして注入（Ollama稼働時のみ）
+        system = None
+        if self.bot.llm_router.ollama_available:
+            persona = self.bot.config.get("character", {}).get("persona", "")
+            if persona:
+                await ft.emit("PERSONA", "active", {}, flow_id)
+                system = persona
+                await ft.emit("PERSONA_GEN", "active", {}, flow_id)
+
+        response = await self.llm.generate(prompt, system=system)
+
+        if system:
+            await ft.emit("PERSONA_GEN", "done", {}, flow_id)
+
         return response, prompt
 
     def _format_item_cards(self, items: list[dict], keyword: str) -> str:
