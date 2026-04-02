@@ -318,6 +318,7 @@ async def main() -> None:
 
     # DB/LLM/Unit の初期化（Discord接続前に実行）
     await bot.database.connect()
+    bot.llm_router.set_database(bot.database)
     await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()

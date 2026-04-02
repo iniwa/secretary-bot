@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -68,6 +68,19 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS llm_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME NOT NULL,
+    provider  TEXT NOT NULL,
+    model     TEXT NOT NULL,
+    purpose   TEXT NOT NULL,
+    prompt_len INTEGER NOT NULL DEFAULT 0,
+    response_len INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    success   BOOLEAN NOT NULL DEFAULT 1,
+    error     TEXT
+);
 """
 
 
@@ -99,6 +112,20 @@ class Database:
             ],
             4: [
                 "ALTER TABLE todos ADD COLUMN due_date DATETIME",
+            ],
+            5: [
+                """CREATE TABLE IF NOT EXISTS llm_log (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME NOT NULL,
+                    provider  TEXT NOT NULL,
+                    model     TEXT NOT NULL,
+                    purpose   TEXT NOT NULL,
+                    prompt_len INTEGER NOT NULL DEFAULT 0,
+                    response_len INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    success   BOOLEAN NOT NULL DEFAULT 1,
+                    error     TEXT
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -222,6 +249,35 @@ class Database:
 
     async def delete_setting(self, key: str) -> None:
         await self.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+    # --- LLMログ ---
+
+    async def log_llm_call(
+        self, provider: str, model: str, purpose: str,
+        prompt_len: int, response_len: int, duration_ms: int,
+        success: bool = True, error: str | None = None,
+    ) -> None:
+        await self.execute(
+            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_len, response_len, duration_ms, success, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), provider, model, purpose, prompt_len, response_len, duration_ms, success, error),
+        )
+
+    async def get_llm_logs(
+        self, limit: int = 50, offset: int = 0,
+        provider: str | None = None,
+    ) -> list[dict]:
+        conditions = []
+        params: list = []
+        if provider:
+            conditions.append("provider = ?")
+            params.append(provider)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
+        return await self.fetchall(
+            f"SELECT * FROM llm_log{where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        )
 
     async def get_all_settings(self, prefix: str = "") -> dict[str, str]:
         if prefix:

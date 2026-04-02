@@ -520,6 +520,13 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- LLMログ（Ollama/Gemini） ---
+
+    @app.get("/api/logs/llm", dependencies=[Depends(_verify)])
+    async def get_llm_logs(limit: int = 50, offset: int = 0, provider: str | None = None):
+        logs = await bot.database.get_llm_logs(limit=limit, offset=offset, provider=provider)
+        return {"logs": logs}
+
     # --- デバッグ: ハートビートログ ---
 
     @app.get("/api/debug/heartbeat-logs", dependencies=[Depends(_verify)])

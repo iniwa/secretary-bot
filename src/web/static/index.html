@@ -208,7 +208,6 @@ nav.bottom-nav { display: none; }
   <button class="active" onclick="showPage('chat')">Chat</button>
   <button onclick="showPage('flow')">Flow</button>
   <button onclick="showPage('status')">Status</button>
-  <button onclick="showPage('logs')">Logs</button>
   <button onclick="showPage('maint')">Maintenance</button>
   <button onclick="showPage('settings')">Settings</button>
   <div class="nav-group">
@@ -222,7 +221,9 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('memory')">Memory</button>
   </div>
   <div class="nav-group">
-    <div class="nav-group-label">Debug</div>
+    <div class="nav-group-label">Logs</div>
+    <button onclick="showPage('logs')">会話ログ</button>
+    <button onclick="showPage('ollama-logs')">Ollama</button>
     <button onclick="showPage('heartbeat-debug')">Heartbeat</button>
     <button onclick="showPage('rakuten-debug')">楽天Search</button>
   </div>
@@ -512,6 +513,24 @@ nav.bottom-nav { display: none; }
     </div>
   </div>
 
+  <!-- Ollama Logs -->
+  <div id="page-ollama-logs" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>Ollama 動作履歴</h2>
+      <button onclick="loadOllamaLogs(0)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+    <div style="flex:1;overflow:auto">
+      <table>
+        <thead><tr><th>Time</th><th>Model</th><th>Purpose</th><th>Prompt</th><th>Response</th><th>Duration</th><th>Status</th></tr></thead>
+        <tbody id="ollama-log-body"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:0.5rem;padding-top:0.5rem">
+      <button onclick="loadOllamaLogs(ollamaLogOffset-50)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Prev</button>
+      <button onclick="loadOllamaLogs(ollamaLogOffset+50)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer">Next</button>
+    </div>
+  </div>
+
   <!-- Heartbeat Debug -->
   <div id="page-heartbeat-debug" class="page">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
@@ -558,7 +577,7 @@ nav.bottom-nav { display: none; }
 <nav class="bottom-nav">
   <button class="active" onclick="showPage('chat')">Chat</button>
   <button onclick="showPage('status')">Status</button>
-  <button onclick="showPage('logs')">Logs</button>
+  <button onclick="showPage('logs')">会話ログ</button>
   <button onclick="showPage('unit-reminder')">Remind</button>
   <button onclick="showPage('unit-memo')">Memo</button>
 </nav>
@@ -579,9 +598,9 @@ function showPage(name) {
   document.getElementById('page-' + name).classList.add('active');
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => {
-    const btn = b.textContent.toLowerCase().trim();
-    const target = name.replace('unit-', '');
-    if (btn.startsWith(target.substring(0, 4))) b.classList.add('active');
+    const oc = b.getAttribute('onclick') || '';
+    const m = oc.match(/showPage\('([^']+)'\)/);
+    if (m && m[1] === name) b.classList.add('active');
   });
   saveState('page', name);
   if (name === 'flow') initFlow();
@@ -593,6 +612,7 @@ function showPage(name) {
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
   if (name === 'memory') loadMemory();
+  if (name === 'ollama-logs') loadOllamaLogs(0);
   if (name === 'heartbeat-debug') loadHeartbeatDebug();
   if (name === 'rakuten-debug') loadRakutenDebug();
 }
@@ -1700,6 +1720,40 @@ async function loadChatHistory() {
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- Ollama Logs ---
+let ollamaLogOffset = 0;
+async function loadOllamaLogs(offset) {
+  if (offset < 0) offset = 0;
+  ollamaLogOffset = offset;
+  const body = document.getElementById('ollama-log-body');
+  body.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">読み込み中...</td></tr>';
+  try {
+    const res = await fetch('/api/logs/llm?limit=50&offset=' + offset + '&provider=ollama');
+    const data = await res.json();
+    const logs = data.logs || [];
+    if (!logs.length) {
+      body.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">データがありません</td></tr>';
+      return;
+    }
+    body.innerHTML = '';
+    logs.forEach(l => {
+      const tr = document.createElement('tr');
+      const durSec = (l.duration_ms / 1000).toFixed(1) + 's';
+      const status = l.success ? '<span style="color:#4caf50">OK</span>' : '<span style="color:#f44336" title="' + esc(l.error || '') + '">ERROR</span>';
+      tr.innerHTML = '<td>' + esc(l.timestamp) + '</td>'
+        + '<td>' + esc(l.model) + '</td>'
+        + '<td>' + esc(l.purpose) + '</td>'
+        + '<td style="text-align:right">' + l.prompt_len.toLocaleString() + '</td>'
+        + '<td style="text-align:right">' + l.response_len.toLocaleString() + '</td>'
+        + '<td style="text-align:right">' + durSec + '</td>'
+        + '<td>' + status + '</td>';
+      body.appendChild(tr);
+    });
+  } catch(e) {
+    body.innerHTML = '<tr><td colspan="7" style="color:#f44336">読み込みエラー: ' + esc(e.message) + '</td></tr>';
+  }
 }
 
 // --- Heartbeat Debug ---
