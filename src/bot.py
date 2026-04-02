@@ -274,6 +274,18 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             bot.unit_manager.agent_pool.set_mode(agent_id, value)
         log.info("Restored delegation modes from DB")
 
+    # 会話履歴設定
+    chat_settings = await bot.database.get_all_settings("units.chat.")
+    if chat_settings:
+        chat_cfg = bot.config.setdefault("units", {}).setdefault("chat", {})
+        for key, value in chat_settings.items():
+            short_key = key.removeprefix("units.chat.")
+            try:
+                chat_cfg[short_key] = _json.loads(value)
+            except (ValueError, _json.JSONDecodeError):
+                chat_cfg[short_key] = value
+        log.info("Restored chat settings from DB")
+
     # ペルソナ
     saved_persona = await bot.database.get_setting("character.persona")
     if saved_persona is not None:

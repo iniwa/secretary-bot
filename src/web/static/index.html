@@ -402,6 +402,21 @@ nav.bottom-nav { display: none; }
     </div>
 
     <div class="maint-section" style="margin-top:1rem">
+      <h3>Chat Settings</h3>
+      <div class="setting-row">
+        <span>会話履歴の参照範囲<br><span style="font-size:0.8rem;color:var(--text-dim)">直近何分間の会話をコンテキストに含めるか（0=制限なし）</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="chat-history-minutes" min="0" max="1440" step="10" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">分</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.8rem;align-items:center">
+        <button class="btn-update" onclick="saveChatConfig()">保存</button>
+        <span id="chat-config-status" style="font-size:0.85rem;color:var(--text-dim)"></span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
       <h3>Gemini Settings</h3>
       <div id="gemini-settings"></div>
     </div>
@@ -573,7 +588,7 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadRakutenConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadRakutenConfig(); loadChatConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
@@ -975,6 +990,31 @@ async function saveRakutenConfig() {
   };
   try {
     const res = await fetch('/api/rakuten-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    status.textContent = data.ok ? '保存しました' : 'エラー';
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  } catch(e) {
+    status.textContent = 'エラー: ' + e;
+  }
+}
+
+async function loadChatConfig() {
+  try {
+    const res = await fetch('/api/chat-config');
+    const data = await res.json();
+    document.getElementById('chat-history-minutes').value = data.history_minutes ?? 60;
+  } catch(e) {
+    console.error('loadChatConfig failed:', e);
+  }
+}
+
+async function saveChatConfig() {
+  const status = document.getElementById('chat-config-status');
+  const payload = {
+    history_minutes: parseInt(document.getElementById('chat-history-minutes').value),
+  };
+  try {
+    const res = await fetch('/api/chat-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     status.textContent = data.ok ? '保存しました' : 'エラー';
     setTimeout(() => { status.textContent = ''; }, 3000);

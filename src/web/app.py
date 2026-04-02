@@ -561,6 +561,25 @@ def create_web_app(bot) -> FastAPI:
             unit._fetch_details_enabled = cfg.get("fetch_details", True)
         return {"ok": True}
 
+    # --- 会話履歴設定 ---
+
+    @app.get("/api/chat-config", dependencies=[Depends(_verify)])
+    async def get_chat_config():
+        cfg = bot.config.get("units", {}).get("chat", {})
+        return {
+            "history_minutes": cfg.get("history_minutes", 60),
+        }
+
+    @app.post("/api/chat-config", dependencies=[Depends(_verify)])
+    async def set_chat_config(request: Request):
+        body = await request.json()
+        cfg = bot.config.setdefault("units", {}).setdefault("chat", {})
+        if "history_minutes" in body:
+            val = int(body["history_minutes"])
+            cfg["history_minutes"] = val
+            await bot.database.set_setting("units.chat.history_minutes", json.dumps(val))
+        return {"ok": True}
+
     # --- デバッグ: LLM状態確認 ---
 
     @app.get("/api/debug/llm-state", )
