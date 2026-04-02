@@ -215,6 +215,7 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('unit-reminder')">Reminder</button>
     <button onclick="showPage('unit-memo')">Memo</button>
     <button onclick="showPage('unit-timer')">Timer</button>
+    <button onclick="showPage('unit-weather')">Weather</button>
   </div>
   <div class="nav-group">
     <div class="nav-group-label">Memory</div>
@@ -489,6 +490,27 @@ nav.bottom-nav { display: none; }
     <div id="timer-list"></div>
   </div>
 
+  <!-- Unit: Weather -->
+  <div id="page-unit-weather" class="page">
+    <h2 style="margin-bottom:1rem">Weather</h2>
+    <div class="unit-section">
+      <h3>天気通知の登録一覧</h3>
+      <div class="unit-filter">
+        <select id="weather-filter" onchange="loadWeather()">
+          <option value="">All</option>
+          <option value="1" selected>Active</option>
+          <option value="0">Inactive</option>
+        </select>
+      </div>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr><th>#</th><th>Location</th><th>Time</th><th>Active</th><th>Created</th><th></th></tr></thead>
+          <tbody id="weather-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- Memory -->
   <div id="page-memory" class="page">
     <h2 style="margin-bottom:1rem">Memory (ChromaDB)</h2>
@@ -611,6 +633,7 @@ function showPage(name) {
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
+  if (name === 'unit-weather') loadWeather();
   if (name === 'memory') loadMemory();
   if (name === 'ollama-logs') loadOllamaLogs(0);
   if (name === 'heartbeat-debug') loadHeartbeatDebug();
@@ -1203,6 +1226,63 @@ async function loadTimers() {
     html += '</tbody></table>';
     container.innerHTML = html;
   } catch (err) { console.error(err); }
+}
+
+async function loadWeather() {
+  const filter = document.getElementById('weather-filter').value;
+  saveState('weather_filter', filter);
+  const params = new URLSearchParams();
+  if (filter !== '') params.set('active', filter);
+  try {
+    const res = await fetch('/api/units/weather?' + params);
+    const data = await res.json();
+    const tbody = document.getElementById('weather-body');
+    tbody.innerHTML = '';
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="unit-empty">登録されている天気通知はありません</td></tr>';
+      return;
+    }
+    data.items.forEach(w => {
+      const active = w.active ? 'Active' : 'Inactive';
+      const cls = w.active ? 'ok' : 'ng';
+      const time = `${w.notify_hour}:${String(w.notify_minute).padStart(2, '0')}`;
+      const actions = `<td class="actions"><button class="act-btn" title="時刻変更" onclick="editWeather(${w.id}, ${w.notify_hour}, ${w.notify_minute})">✏️</button><button class="act-btn" title="${w.active ? '停止' : '再開'}" onclick="toggleWeather(${w.id})">${w.active ? '⏸️' : '▶️'}</button><button class="act-btn" title="削除" onclick="deleteWeather(${w.id})">🗑️</button></td>`;
+      tbody.innerHTML += `<tr><td>${w.id}</td><td>${w.location}</td><td>${time}</td><td><span class="val ${cls}">${active}</span></td><td>${fmtTime(w.created_at)}</td>${actions}</tr>`;
+    });
+  } catch (err) { console.error(err); }
+}
+
+async function editWeather(id, hour, minute) {
+  const modal = showModal(`
+    <h3>通知時刻の変更</h3>
+    <label>時</label>
+    <input type="number" id="edit-weather-hour" min="0" max="23" value="${hour}">
+    <label>分</label>
+    <input type="number" id="edit-weather-minute" min="0" max="59" value="${minute}">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="this.closest('.edit-modal').remove()">キャンセル</button>
+      <button class="btn-save" onclick="saveWeatherEdit(${id})">保存</button>
+    </div>
+  `);
+}
+
+async function saveWeatherEdit(id) {
+  const hour = parseInt(document.getElementById('edit-weather-hour').value);
+  const minute = parseInt(document.getElementById('edit-weather-minute').value);
+  document.querySelector('.edit-modal').remove();
+  await apiCall('PUT', `/api/units/weather/${id}`, { notify_hour: hour, notify_minute: minute });
+  loadWeather();
+}
+
+async function toggleWeather(id) {
+  await apiCall('POST', `/api/units/weather/${id}/toggle`);
+  loadWeather();
+}
+
+async function deleteWeather(id) {
+  if (!confirm('この天気通知を削除しますか？')) return;
+  await apiCall('DELETE', `/api/units/weather/${id}`);
+  loadWeather();
 }
 
 // --- CRUD helpers ---

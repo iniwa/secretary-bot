@@ -164,23 +164,30 @@ class WeatherUnit(BaseUnit):
     # --- API呼び出し ---
 
     async def _geocode(self, location: str) -> dict | None:
-        """地名から緯度経度を取得する。"""
+        """地名から緯度経度を取得する。見つからない場合は「市」「県」付きでリトライ。"""
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-            resp = await client.get(
-                self._geocoding_url,
-                params={"name": location, "count": 1, "language": "ja", "format": "json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("results")
-            if not results:
-                return None
-            r = results[0]
-            return {
-                "name": r.get("name", location),
-                "latitude": r["latitude"],
-                "longitude": r["longitude"],
-            }
+            # 候補リスト: そのまま → 「市」付き → 「県」付き
+            candidates = [location]
+            if not location.endswith(("市", "区", "町", "村", "県", "都", "府", "道")):
+                candidates.append(f"{location}市")
+                candidates.append(f"{location}県")
+
+            for name in candidates:
+                resp = await client.get(
+                    self._geocoding_url,
+                    params={"name": name, "count": 1, "language": "ja", "format": "json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                results = data.get("results")
+                if results:
+                    r = results[0]
+                    return {
+                        "name": r.get("name", location),
+                        "latitude": r["latitude"],
+                        "longitude": r["longitude"],
+                    }
+            return None
 
     async def _fetch_forecast(self, lat: float, lon: float, days: int = 3) -> dict | None:
         """天気予報データを取得する。"""

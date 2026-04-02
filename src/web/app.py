@@ -428,6 +428,68 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.execute("DELETE FROM memos WHERE id = ?", (mid,))
         return {"ok": True}
 
+    # --- 天気通知 CRUD ---
+
+    @app.get("/api/units/weather", )
+    async def get_weather_subscriptions(active: int | None = None):
+        if active is not None:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM weather_subscriptions WHERE active = ? ORDER BY id DESC LIMIT 100",
+                (active,),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM weather_subscriptions ORDER BY id DESC LIMIT 100"
+            )
+        return {"items": rows}
+
+    @app.put("/api/units/weather/{wid}", )
+    async def update_weather_sub(wid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        notify_hour = body.get("notify_hour", row["notify_hour"])
+        notify_minute = body.get("notify_minute", row["notify_minute"])
+        await bot.database.execute(
+            "UPDATE weather_subscriptions SET notify_hour = ?, notify_minute = ? WHERE id = ?",
+            (notify_hour, notify_minute, wid),
+        )
+        # スケジューラ更新
+        if row["active"]:
+            bot.heartbeat.schedule_weather_daily(
+                wid, notify_hour, notify_minute,
+                row["user_id"], row["latitude"], row["longitude"], row["location"],
+            )
+        return {"ok": True}
+
+    @app.delete("/api/units/weather/{wid}", )
+    async def delete_weather_sub(wid: int):
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute("DELETE FROM weather_subscriptions WHERE id = ?", (wid,))
+        bot.heartbeat.cancel_weather_daily(wid)
+        return {"ok": True}
+
+    @app.post("/api/units/weather/{wid}/toggle", )
+    async def toggle_weather_sub(wid: int):
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        new_active = 0 if row["active"] else 1
+        await bot.database.execute(
+            "UPDATE weather_subscriptions SET active = ? WHERE id = ?", (new_active, wid)
+        )
+        if new_active:
+            bot.heartbeat.schedule_weather_daily(
+                wid, row["notify_hour"], row["notify_minute"],
+                row["user_id"], row["latitude"], row["longitude"], row["location"],
+            )
+        else:
+            bot.heartbeat.cancel_weather_daily(wid)
+        return {"ok": True, "active": new_active}
+
     @app.get("/api/units/timers", )
     async def get_timers():
         import time as _time
