@@ -18,6 +18,7 @@ _UNIT_MODULES = {
     "rakuten_search": "src.units.rakuten_search",
     "weather": "src.units.weather",
     "calendar": "src.units.calendar",
+    "power": "src.units.power",
 }
 
 

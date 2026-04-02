@@ -67,6 +67,37 @@ async def execute_unit(unit_name: str, request: Request):
     return {"result": f"Unit '{unit_name}' executed (stub)", "parsed": body}
 
 
+@app.post("/shutdown")
+async def shutdown_pc(request: Request):
+    _verify_token(request)
+    body = await request.json()
+    delay = max(body.get("delay", 60), 10)
+    subprocess.Popen(
+        ["shutdown", "/s", "/t", str(delay)],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return {"status": "scheduled", "delay": delay}
+
+
+@app.post("/restart")
+async def restart_pc(request: Request):
+    _verify_token(request)
+    body = await request.json()
+    delay = max(body.get("delay", 60), 10)
+    subprocess.Popen(
+        ["shutdown", "/r", "/t", str(delay)],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return {"status": "scheduled", "delay": delay}
+
+
+@app.post("/cancel-shutdown")
+async def cancel_shutdown(request: Request):
+    _verify_token(request)
+    result = subprocess.run(["shutdown", "/a"], capture_output=True, text=True)
+    return {"status": "cancelled" if result.returncode == 0 else "no_pending"}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("AGENT_PORT", "7777"))

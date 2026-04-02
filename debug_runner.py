@@ -237,6 +237,12 @@ SCENARIOS: dict[str, list[dict]] = {
         {"label": "create_multi", "parsed": {"message": "明日10時に打ち合わせ、15時に歯医者を登録して"}},
         {"label": "register", "parsed": {"message": "カレンダーIDはxxx@group.calendar.google.comです"}},
     ],
+    "power": [
+        {"label": "wake", "parsed": {"message": "メインPCを起動して"}},
+        {"label": "shutdown", "parsed": {"message": "PCをシャットダウンして"}},
+        {"label": "status", "parsed": {"message": "PCの状態を確認して"}},
+        {"label": "cancel", "parsed": {"message": "シャットダウンをキャンセルして"}},
+    ],
 }
 
 

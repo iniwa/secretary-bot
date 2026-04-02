@@ -22,12 +22,14 @@ windows_agents:
     port: 7777
     priority: 1
     metrics_instance: "192.168.1.101:9182"
+    wol_device_id: ""    # WoLツールのデバイスID（curl http://<host>:8090/api/devices で確認）
   - id: "pc-sub"
     name: "サブPC"
     host: "192.168.1.102"
     port: 7777
     priority: 2
     metrics_instance: "192.168.1.102:9182"
+    wol_device_id: ""
 
 # 委託可否の閾値
 delegation:
@@ -61,6 +63,13 @@ units:
   calendar:
     enabled: true
     timezone: "Asia/Tokyo"
+  power:
+    enabled: true
+    shutdown_delay: 60  # デフォルト遅延秒数
+
+# WoLツールAPI（DockerブリッジからはlocalhostではなくホストのLAN IPを指定）
+wol:
+  url: "http://192.168.1.1:8090"
 
 # Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
 gemini:
