@@ -86,26 +86,28 @@ class Heartbeat:
             log.warning("Context compaction failed: %s", e)
 
     async def sync_summaries_to_chroma(self) -> None:
-        """SQLiteのconversation_summaryをChromaDBに同期（起動時用）。"""
-        chroma_count = self.bot.chroma.count("conversation_log")
+        """SQLiteのconversation_summaryをChromaDBに同期（起動時・差分のみ）。"""
         rows = await self.bot.database.fetchall(
             "SELECT id, summary, created_at FROM conversation_summary ORDER BY id"
         )
-        if chroma_count >= len(rows):
-            return  # 既に同期済み
+        if not rows:
+            return
 
-        # ChromaDBをクリアして全件再投入
+        # 既存IDを取得して差分だけ追加
         existing = self.bot.chroma.get_all("conversation_log", limit=10000)
-        for item in existing:
-            self.bot.chroma.delete("conversation_log", item["id"])
+        existing_ids = {item["id"] for item in existing}
 
+        added = 0
         for row in rows:
             doc_id = f"summary_{row['id']}"
-            self.bot.chroma.add(
-                "conversation_log", doc_id, row["summary"],
-                {"created_at": str(row["created_at"]), "source": "sqlite_sync"},
-            )
-        log.info("Synced %d summaries from SQLite to ChromaDB conversation_log", len(rows))
+            if doc_id not in existing_ids:
+                self.bot.chroma.add(
+                    "conversation_log", doc_id, row["summary"],
+                    {"created_at": str(row["created_at"]), "source": "sqlite_sync"},
+                )
+                added += 1
+        if added:
+            log.info("Synced %d new summaries to ChromaDB conversation_log", added)
 
     def _reschedule(self) -> None:
         minutes = self._get_interval_minutes()
