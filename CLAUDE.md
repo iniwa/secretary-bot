@@ -10,6 +10,7 @@
 - Host: Raspberry Pi 4 (8GB RAM), `linux/arm64`
 - Docker management: Portainer — Stack Web Editor only
 - Windows PCs (× 2): Ollama + Windows Agent（Dockerなし・Pythonネイティブ）
+- **SSH接続**: `ssh iniwapi` でラズパイに接続可能（開発PCからログ取得・状態確認等に使用）
 
 ## Build & Deploy
 - Build target: `linux/arm64`

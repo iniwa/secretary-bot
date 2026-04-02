@@ -40,6 +40,26 @@ class OllamaClient:
     def is_available(self) -> bool:
         return self._available_url is not None
 
+    @staticmethod
+    def _clean_response(text: str) -> str:
+        """特殊トークン除去・連続重複除去。"""
+        # ChatML特殊トークンを除去
+        text = re.sub(r"<\|[a-z_]+\|>", "", text).strip()
+        # 連続する同一段落の重複除去
+        paragraphs = text.split("\n\n")
+        deduped = []
+        for p in paragraphs:
+            if not deduped or p.strip() != deduped[-1].strip():
+                deduped.append(p)
+        text = "\n\n".join(deduped)
+        # 連続する同一行の重複除去
+        lines = text.split("\n")
+        result = []
+        for line in lines:
+            if not result or line.strip() != result[-1].strip():
+                result.append(line)
+        return "\n".join(result).strip()
+
     async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> str:
         if not self._available_url:
             raise OllamaUnavailableError("No Ollama instance available")
@@ -48,7 +68,10 @@ class OllamaClient:
             "model": model or self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {"think": False},  # qwen3思考モード無効化
+            "options": {
+                "think": False,  # qwen3思考モード無効化
+                "stop": ["<|endoftext|>", "<|im_start|>", "<|im_end|>"],
+            },
         }
         if system:
             payload["system"] = system
@@ -64,7 +87,7 @@ class OllamaClient:
                 text = data.get("response", "")
                 # <think>...</think> タグが残っている場合は除去
                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-                return text
+                return self._clean_response(text)
         except Exception as e:
             self._available_url = None
             raise OllamaUnavailableError(f"Ollama generation failed: {e}") from e

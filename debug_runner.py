@@ -64,6 +64,15 @@ _DEBUG_CONFIG = {
         "chat": {"enabled": True},
         "web_search": {"enabled": True},
         "rakuten_search": {"enabled": True},
+        "weather": {"enabled": True},
+        "calendar": {"enabled": True, "timezone": "Asia/Tokyo"},
+    },
+    "weather": {
+        "geocoding_url": "https://geocoding-api.open-meteo.com/v1/search",
+        "forecast_url": "https://api.open-meteo.com/v1/forecast",
+        "default_location": "東京",
+        "http_timeout": 10,
+        "umbrella_threshold": 50,
     },
     "searxng": {
         "url": "http://localhost:8888",
@@ -156,6 +165,8 @@ def _load_unit_class(unit_name: str):
         "chat": "src.units.chat",
         "web_search": "src.units.web_search",
         "rakuten_search": "src.units.rakuten_search",
+        "weather": "src.units.weather",
+        "calendar": "src.units.calendar",
     }
     module_path = module_map.get(unit_name)
     if not module_path:
@@ -211,6 +222,20 @@ SCENARIOS: dict[str, list[dict]] = {
         {"label": "search_basic", "parsed": {"message": "楽天市場でワイヤレスイヤホンを探して"}},
         {"label": "search_cheap", "parsed": {"message": "楽天で安いコーヒーメーカーを探して"}},
         {"label": "search_rating", "parsed": {"message": "楽天で評価の高いプロテインを探して"}},
+    ],
+    "weather": [
+        {"label": "get_today", "parsed": {"message": "今日の東京の天気教えて"}},
+        {"label": "get_tomorrow", "parsed": {"message": "明日の大阪の天気は？"}},
+        {"label": "weekly", "parsed": {"message": "来週の天気を教えて"}},
+        {"label": "subscribe", "parsed": {"message": "毎朝天気を教えて"}},
+        {"label": "list", "parsed": {"message": "天気通知の一覧"}},
+        {"label": "unsubscribe", "parsed": {"message": "天気の通知をやめて"}},
+    ],
+    "calendar": [
+        {"label": "create", "parsed": {"message": "明日の14時から会議を登録して"}},
+        {"label": "create_allday", "parsed": {"message": "来週の月曜日は終日休みを登録して"}},
+        {"label": "create_multi", "parsed": {"message": "明日10時に打ち合わせ、15時に歯医者を登録して"}},
+        {"label": "register", "parsed": {"message": "カレンダーIDはxxx@group.calendar.google.comです"}},
     ],
 }
 

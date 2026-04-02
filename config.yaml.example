@@ -1,6 +1,6 @@
 # LLM設定（APIキーは.envで管理）
 llm:
-  ollama_model: "qwen3"
+  ollama_model: "qwen3.5:4b"
   ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
 
@@ -51,10 +51,16 @@ units:
     enabled: true
   chat:
     enabled: true
+    history_minutes: 60           # 会話履歴の参照範囲（分）。0=時間制限なし
   web_search:
     enabled: true
   rakuten_search:
     enabled: true
+  weather:
+    enabled: true
+  calendar:
+    enabled: true
+    timezone: "Asia/Tokyo"
 
 # Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
 gemini:
@@ -101,7 +107,18 @@ searxng:
 
 # 楽天市場商品検索（検索結果ページ直接取得）
 rakuten_search:
-  max_results: 10   # 表示する商品の最大件数
+  max_results: 5                  # 表示する商品の最大件数（WebGUIで変更可）
+  fetch_details: true             # 個別商品ページから詳細取得（WebGUIで変更可）
+  detail_concurrency: 5           # 個別ページ取得の並列数
+  detail_max_desc_chars: 300      # 商品説明の最大文字数
+
+# 天気予報（Open-Meteo API・無料・APIキー不要）
+weather:
+  geocoding_url: "https://geocoding-api.open-meteo.com/v1/search"
+  forecast_url: "https://api.open-meteo.com/v1/forecast"
+  default_location: "東京"
+  http_timeout: 10
+  umbrella_threshold: 50    # この降水確率(%)以上で傘リマインド
 
 # デバッグ
 debug:

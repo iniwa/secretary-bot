@@ -99,34 +99,38 @@ class SecretaryBot(commands.Bot):
             return
 
         user_id = str(message.author.id)
+        is_dm = isinstance(message.channel, discord.DMChannel)
+        channel_tag = "discord_dm" if is_dm else "discord"
 
-        # メンションなしのメッセージは会話ログのみ保存して終了
-        if self.user not in message.mentions:
-            await self.database.log_conversation("discord", "user", content, user_id=user_id)
+        # DMでなく、メンションなしのメッセージは会話ログのみ保存して終了
+        if not is_dm and self.user not in message.mentions:
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
             return
 
-        # メンション部分をテキストから除去
+        # メンション部分をテキストから除去（DMではメンション不要だが念のため）
         content = content.replace(f"<@{self.user.id}>", "").replace(f"<@!{self.user.id}>", "").strip()
         if not content:
             return
 
         # ユーザーごとにロックを取得（同一ユーザーのメッセージを直列化）
-        lock_key = f"discord:{user_id}"
+        lock_key = f"{channel_tag}:{user_id}"
         if lock_key not in self._user_locks:
             self._user_locks[lock_key] = asyncio.Lock()
 
         async with self._user_locks[lock_key]:
             ft = get_flow_tracker()
             flow_id = await ft.start_flow()
-            await ft.emit("MSG", "done", {"content": content[:80], "channel": "discord"}, flow_id)
+            await ft.emit("MSG", "done", {"content": content[:80], "channel": channel_tag}, flow_id)
             await ft.emit("LOCK", "done", {"user_id": user_id}, flow_id)
 
             # 会話ログ保存
-            await self.database.log_conversation("discord", "user", content, user_id=user_id)
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
 
             # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
+            history_minutes = self.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
             recent_rows = await self.database.get_recent_channel_messages(
-                "discord", limit=6, user_id=user_id,
+                channel_tag, limit=6, user_id=user_id,
+                minutes=history_minutes,
             )
             # 現在のメッセージは既にログ保存済みなので除外
             conversation_context = [
@@ -135,7 +139,7 @@ class SecretaryBot(commands.Bot):
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                result = await self.unit_router.route(content, channel="discord", user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
+                result = await self.unit_router.route(content, channel=channel_tag, user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", content)
 
@@ -143,12 +147,18 @@ class SecretaryBot(commands.Bot):
                 if unit is None:
                     unit = self.unit_manager.get("chat")
 
+                # chatユニットは会話キャッチボールのため全履歴、それ以外はユーザー発言のみ
+                if unit_name == "chat":
+                    exec_context = conversation_context
+                else:
+                    exec_context = [r for r in conversation_context if r["role"] == "user"]
+
                 try:
                     actual_unit = getattr(unit, "unit", unit)
                     actual_unit.session_done = False
-                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": conversation_context})
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": exec_context})
                     if actual_unit.session_done:
-                        self.unit_router.clear_session("discord", user_id)
+                        self.unit_router.clear_session(channel_tag, user_id)
                         actual_unit.clear_exchange(lock_key)
                         await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                     elif response:
@@ -162,9 +172,9 @@ class SecretaryBot(commands.Bot):
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
+                await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
-                await ft.emit("REPLY", "done", {"channel": "discord"}, flow_id)
+                await ft.emit("REPLY", "done", {"channel": channel_tag}, flow_id)
             await ft.end_flow(flow_id)
 
     async def notify_admin(self, message: str) -> None:
@@ -234,6 +244,56 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             ucfg.setdefault("llm", {})["gemini_allowed"] = allowed
         log.info("Restored unit gemini settings from DB")
 
+    # ハートビート設定
+    hb_settings = await bot.database.get_all_settings("heartbeat.")
+    if hb_settings:
+        hb_cfg = bot.config.setdefault("heartbeat", {})
+        for key, value in hb_settings.items():
+            short_key = key.removeprefix("heartbeat.")
+            try:
+                hb_cfg[short_key] = int(value)
+            except ValueError:
+                hb_cfg[short_key] = value
+        log.info("Restored heartbeat settings from DB")
+
+    # 楽天検索設定
+    rakuten_settings = await bot.database.get_all_settings("rakuten_search.")
+    if rakuten_settings:
+        r_cfg = bot.config.setdefault("rakuten_search", {})
+        for key, value in rakuten_settings.items():
+            short_key = key.removeprefix("rakuten_search.")
+            try:
+                r_cfg[short_key] = _json.loads(value)
+            except (ValueError, _json.JSONDecodeError):
+                r_cfg[short_key] = value
+        log.info("Restored rakuten_search settings from DB")
+
+    # 委託モード
+    delegation_modes = await bot.database.get_all_settings("delegation_mode.")
+    if delegation_modes:
+        for key, value in delegation_modes.items():
+            agent_id = key.removeprefix("delegation_mode.")
+            bot.unit_manager.agent_pool.set_mode(agent_id, value)
+        log.info("Restored delegation modes from DB")
+
+    # 会話履歴設定
+    chat_settings = await bot.database.get_all_settings("units.chat.")
+    if chat_settings:
+        chat_cfg = bot.config.setdefault("units", {}).setdefault("chat", {})
+        for key, value in chat_settings.items():
+            short_key = key.removeprefix("units.chat.")
+            try:
+                chat_cfg[short_key] = _json.loads(value)
+            except (ValueError, _json.JSONDecodeError):
+                chat_cfg[short_key] = value
+        log.info("Restored chat settings from DB")
+
+    # ペルソナ
+    saved_persona = await bot.database.get_setting("character.persona")
+    if saved_persona is not None:
+        bot.config.setdefault("character", {})["persona"] = saved_persona
+        log.info("Restored persona from DB")
+
 
 async def _run_web(bot: SecretaryBot) -> None:
     import uvicorn
@@ -260,11 +320,14 @@ async def main() -> None:
 
     # DB/LLM/Unit の初期化（Discord接続前に実行）
     await bot.database.connect()
+    bot.llm_router.set_database(bot.database)
     await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
+    await bot.heartbeat.sync_summaries_to_chroma()
     bot.heartbeat.start()
     await bot.heartbeat.restore_reminders()
+    await bot.heartbeat.restore_weather_subscriptions()
     log.info("Bot setup complete")
 
     if token:

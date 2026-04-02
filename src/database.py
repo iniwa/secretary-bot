@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 8
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -68,6 +68,40 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS llm_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME NOT NULL,
+    provider  TEXT NOT NULL,
+    model     TEXT NOT NULL,
+    purpose   TEXT NOT NULL,
+    prompt_text TEXT,
+    system_text TEXT,
+    response_text TEXT,
+    prompt_len INTEGER NOT NULL DEFAULT 0,
+    response_len INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    success   BOOLEAN NOT NULL DEFAULT 1,
+    error     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS weather_subscriptions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    location      TEXT NOT NULL,
+    latitude      REAL NOT NULL,
+    longitude     REAL NOT NULL,
+    notify_hour   INTEGER NOT NULL DEFAULT 7,
+    notify_minute INTEGER NOT NULL DEFAULT 0,
+    active        BOOLEAN NOT NULL DEFAULT 1,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS calendar_settings (
+    user_id     TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -99,6 +133,45 @@ class Database:
             ],
             4: [
                 "ALTER TABLE todos ADD COLUMN due_date DATETIME",
+            ],
+            5: [
+                """CREATE TABLE IF NOT EXISTS llm_log (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME NOT NULL,
+                    provider  TEXT NOT NULL,
+                    model     TEXT NOT NULL,
+                    purpose   TEXT NOT NULL,
+                    prompt_len INTEGER NOT NULL DEFAULT 0,
+                    response_len INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    success   BOOLEAN NOT NULL DEFAULT 1,
+                    error     TEXT
+                )""",
+            ],
+            6: [
+                "ALTER TABLE llm_log ADD COLUMN prompt_text TEXT",
+                "ALTER TABLE llm_log ADD COLUMN system_text TEXT",
+                "ALTER TABLE llm_log ADD COLUMN response_text TEXT",
+            ],
+            7: [
+                """CREATE TABLE IF NOT EXISTS weather_subscriptions (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id       TEXT NOT NULL,
+                    location      TEXT NOT NULL,
+                    latitude      REAL NOT NULL,
+                    longitude     REAL NOT NULL,
+                    notify_hour   INTEGER NOT NULL DEFAULT 7,
+                    notify_minute INTEGER NOT NULL DEFAULT 0,
+                    active        BOOLEAN NOT NULL DEFAULT 1,
+                    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+            ],
+            8: [
+                """CREATE TABLE IF NOT EXISTS calendar_settings (
+                    user_id     TEXT PRIMARY KEY,
+                    calendar_id TEXT NOT NULL,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -183,22 +256,29 @@ class Database:
         )
 
     async def get_recent_channel_messages(
-        self, channel: str, limit: int = 20, user_id: str = ""
+        self, channel: str, limit: int = 20, user_id: str = "",
+        minutes: int = 0,
     ) -> list[dict]:
-        """チャネル・ユーザー単位の直近会話履歴を古い順で返す。"""
+        """チャネル・ユーザー単位の直近会話履歴を古い順で返す。
+
+        minutes: 0以外を指定すると、現在時刻から指定分以内のメッセージのみ返す。
+        """
+        conditions = ["channel = ?"]
+        params: list = [channel]
         if user_id:
-            rows = await self.fetchall(
-                "SELECT role, content FROM conversation_log "
-                "WHERE channel = ? AND user_id = ? "
-                "ORDER BY timestamp DESC LIMIT ?",
-                (channel, user_id, limit),
-            )
-        else:
-            rows = await self.fetchall(
-                "SELECT role, content FROM conversation_log "
-                "WHERE channel = ? ORDER BY timestamp DESC LIMIT ?",
-                (channel, limit),
-            )
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        if minutes > 0:
+            cutoff = (datetime.now(JST) - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+            conditions.append("timestamp >= ?")
+            params.append(cutoff)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        rows = await self.fetchall(
+            f"SELECT role, content FROM conversation_log "
+            f"WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+            tuple(params),
+        )
         return list(reversed(rows))
 
     # --- 設定永続化 ---
@@ -215,6 +295,37 @@ class Database:
 
     async def delete_setting(self, key: str) -> None:
         await self.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+    # --- LLMログ ---
+
+    async def log_llm_call(
+        self, provider: str, model: str, purpose: str,
+        prompt_len: int, response_len: int, duration_ms: int,
+        success: bool = True, error: str | None = None,
+        prompt_text: str | None = None, system_text: str | None = None,
+        response_text: str | None = None,
+    ) -> None:
+        await self.execute(
+            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error),
+        )
+
+    async def get_llm_logs(
+        self, limit: int = 50, offset: int = 0,
+        provider: str | None = None,
+    ) -> list[dict]:
+        conditions = []
+        params: list = []
+        if provider:
+            conditions.append("provider = ?")
+            params.append(provider)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
+        return await self.fetchall(
+            f"SELECT * FROM llm_log{where} ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        )
 
     async def get_all_settings(self, prefix: str = "") -> dict[str, str]:
         if prefix:

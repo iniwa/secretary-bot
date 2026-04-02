@@ -29,14 +29,20 @@ class AIMemory:
             return
 
         prompt = (
-            "以下の会話から、AI自身の体験・感情・気づきとして記憶すべき内容を抽出してください。\n"
-            "記憶すべきものがなければ「なし」と答えてください。\n\n"
+            "以下の会話から、あなた(assistant)自身の体験・気づき・学びを箇条書きで抽出してください。\n"
+            "【ルール】\n"
+            "- あなたが感じたこと、学んだこと、次に活かせることだけを短く書くこと\n"
+            "- 推測・解釈・説明は一切書かず、事実だけを箇条書きにすること\n"
+            "- 記憶すべきものがなければ「なし」とだけ答えること\n"
+            "- 必ず日本語で出力すること\n\n"
             f"{conversation}"
         )
         try:
             result = await self.bot.llm_router.generate(prompt, purpose="memory_extraction", ollama_only=True)
-            if result.strip() and result.strip() != "なし":
-                await self.save(result.strip())
+            cleaned = result.strip()
+            if not cleaned or "なし" in cleaned and len(cleaned) < 20:
+                return
+            await self.save(cleaned)
         except Exception as e:
             log.warning("ai_memory extraction failed: %s", e)
 

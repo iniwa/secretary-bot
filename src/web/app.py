@@ -49,58 +49,59 @@ def create_web_app(bot) -> FastAPI:
         if not message:
             raise HTTPException(400, "message is required")
 
-        async with _webgui_lock:
-            ft = get_flow_tracker()
-            flow_id = await ft.start_flow()
-            await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
-            await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
-            try:
-                await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
+        ft = get_flow_tracker()
+        flow_id = await ft.start_flow()
+        await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
 
-                # 直近の会話履歴を取得
-                recent_rows = await bot.database.get_recent_channel_messages(
-                    "webgui", limit=6, user_id=_webgui_user_id,
-                )
-                conversation_context = [
-                    r for r in recent_rows if r["content"] != message
-                ][-4:]
-
-                result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
-                unit_name = result.get("unit", "chat")
-                user_message = result.get("message", message)
-
-                unit = bot.unit_manager.get(unit_name)
-                if unit is None:
-                    unit = bot.unit_manager.get("chat")
-
-                actual_unit = getattr(unit, "unit", unit)
-                actual_unit.session_done = False
-                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id, "conversation_context": conversation_context})
-                if actual_unit.session_done:
-                    bot.unit_router.clear_session("webgui", _webgui_user_id)
-                    actual_unit.clear_exchange("webgui")
-                    await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
-                elif response:
-                    actual_unit.save_exchange("webgui", user_message, response)
-                    await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
-                if response:
-                    mode = "eco" if not bot.llm_router.ollama_available else "normal"
-                    await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name, user_id=_webgui_user_id)
-                    await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
-                    await ft.emit("REPLY", "done", {"channel": "webgui"}, flow_id)
-                await ft.end_flow(flow_id)
-                return {"response": response or "", "unit": unit_name}
-            except Exception as e:
-                log.error("WebGUI chat error: %s", e, exc_info=True)
+        async def _process_chat():
+            async with _webgui_lock:
+                await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
                 try:
-                    await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
+                    await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
+
+                    history_minutes = bot.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
+                    recent_rows = await bot.database.get_recent_channel_messages(
+                        "webgui", limit=6, user_id=_webgui_user_id,
+                        minutes=history_minutes,
+                    )
+                    conversation_context = [
+                        r for r in recent_rows if r["content"] != message
+                    ][-4:]
+
+                    result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
+                    unit_name = result.get("unit", "chat")
+                    user_message = result.get("message", message)
+
+                    unit = bot.unit_manager.get(unit_name)
+                    if unit is None:
+                        unit = bot.unit_manager.get("chat")
+
+                    actual_unit = getattr(unit, "unit", unit)
+                    actual_unit.session_done = False
+                    response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id, "conversation_context": conversation_context})
+                    if actual_unit.session_done:
+                        bot.unit_router.clear_session("webgui", _webgui_user_id)
+                        actual_unit.clear_exchange("webgui")
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
+                    elif response:
+                        actual_unit.save_exchange("webgui", user_message, response)
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
+                    if response:
+                        mode = "eco" if not bot.llm_router.ollama_available else "normal"
+                        await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name, user_id=_webgui_user_id)
+                        await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
+                    await ft.emit("REPLY", "done", {"channel": "webgui", "response": response or "", "unit": unit_name}, flow_id)
                     await ft.end_flow(flow_id)
-                except Exception:
-                    pass
-                return JSONResponse(
-                    status_code=200,
-                    content={"response": f"エラーが発生しました: {e}", "unit": "system"},
-                )
+                except Exception as e:
+                    log.error("WebGUI chat error: %s", e, exc_info=True)
+                    try:
+                        await ft.emit("REPLY", "error", {"channel": "webgui", "response": f"エラーが発生しました: {e}", "unit": "system"}, flow_id)
+                        await ft.end_flow(flow_id)
+                    except Exception:
+                        pass
+
+        asyncio.create_task(_process_chat())
+        return {"flow_id": flow_id}
 
     @app.get("/api/logs", )
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
@@ -143,6 +144,7 @@ def create_web_app(bot) -> FastAPI:
         if mode not in ("allow", "deny", "auto"):
             raise HTTPException(400, "mode must be allow/deny/auto")
         bot.unit_manager.agent_pool.set_mode(agent_id, mode)
+        await bot.database.set_setting(f"delegation_mode.{agent_id}", mode)
         return {"ok": True}
 
     async def _restart_container() -> dict:
@@ -426,6 +428,68 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.execute("DELETE FROM memos WHERE id = ?", (mid,))
         return {"ok": True}
 
+    # --- 天気通知 CRUD ---
+
+    @app.get("/api/units/weather", )
+    async def get_weather_subscriptions(active: int | None = None):
+        if active is not None:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM weather_subscriptions WHERE active = ? ORDER BY id DESC LIMIT 100",
+                (active,),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM weather_subscriptions ORDER BY id DESC LIMIT 100"
+            )
+        return {"items": rows}
+
+    @app.put("/api/units/weather/{wid}", )
+    async def update_weather_sub(wid: int, request: Request):
+        body = await request.json()
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        notify_hour = body.get("notify_hour", row["notify_hour"])
+        notify_minute = body.get("notify_minute", row["notify_minute"])
+        await bot.database.execute(
+            "UPDATE weather_subscriptions SET notify_hour = ?, notify_minute = ? WHERE id = ?",
+            (notify_hour, notify_minute, wid),
+        )
+        # スケジューラ更新
+        if row["active"]:
+            bot.heartbeat.schedule_weather_daily(
+                wid, notify_hour, notify_minute,
+                row["user_id"], row["latitude"], row["longitude"], row["location"],
+            )
+        return {"ok": True}
+
+    @app.delete("/api/units/weather/{wid}", )
+    async def delete_weather_sub(wid: int):
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        await bot.database.execute("DELETE FROM weather_subscriptions WHERE id = ?", (wid,))
+        bot.heartbeat.cancel_weather_daily(wid)
+        return {"ok": True}
+
+    @app.post("/api/units/weather/{wid}/toggle", )
+    async def toggle_weather_sub(wid: int):
+        row = await bot.database.fetchone("SELECT * FROM weather_subscriptions WHERE id = ?", (wid,))
+        if not row:
+            raise HTTPException(404, "not found")
+        new_active = 0 if row["active"] else 1
+        await bot.database.execute(
+            "UPDATE weather_subscriptions SET active = ? WHERE id = ?", (new_active, wid)
+        )
+        if new_active:
+            bot.heartbeat.schedule_weather_daily(
+                wid, row["notify_hour"], row["notify_minute"],
+                row["user_id"], row["latitude"], row["longitude"], row["location"],
+            )
+        else:
+            bot.heartbeat.cancel_weather_daily(wid)
+        return {"ok": True, "active": new_active}
+
     @app.get("/api/units/timers", )
     async def get_timers():
         import time as _time
@@ -518,6 +582,19 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- LLMログ（Ollama/Gemini） ---
+
+    @app.get("/api/logs/llm", dependencies=[Depends(_verify)])
+    async def get_llm_logs(limit: int = 50, offset: int = 0, provider: str | None = None):
+        logs = await bot.database.get_llm_logs(limit=limit, offset=offset, provider=provider)
+        return {"logs": logs}
+
+    # --- デバッグ: ハートビートログ ---
+
+    @app.get("/api/debug/heartbeat-logs", dependencies=[Depends(_verify)])
+    async def debug_heartbeat_logs():
+        return {"logs": list(bot.heartbeat.debug_logs)}
+
     # --- デバッグ: 楽天検索 ---
 
     @app.get("/api/debug/rakuten-search", dependencies=[Depends(_verify)])
@@ -527,6 +604,50 @@ def create_web_app(bot) -> FastAPI:
         if unit is None:
             return {"available": False, "data": {}}
         return {"available": True, "data": getattr(unit, "last_debug", {})}
+
+    # --- 楽天検索設定 ---
+
+    @app.get("/api/rakuten-config", dependencies=[Depends(_verify)])
+    async def get_rakuten_config():
+        cfg = bot.config.get("rakuten_search", {})
+        return {
+            "max_results": cfg.get("max_results", 5),
+            "fetch_details": cfg.get("fetch_details", True),
+        }
+
+    @app.post("/api/rakuten-config", dependencies=[Depends(_verify)])
+    async def set_rakuten_config(request: Request):
+        body = await request.json()
+        cfg = bot.config.setdefault("rakuten_search", {})
+        for key in ("max_results", "fetch_details"):
+            if key in body:
+                cfg[key] = body[key]
+                await bot.database.set_setting(f"rakuten_search.{key}", json.dumps(body[key]))
+        # ユニットの設定をホットリロード
+        unit = bot.cogs.get("RakutenSearchUnit")
+        if unit:
+            unit._max_results = cfg.get("max_results", 5)
+            unit._fetch_details_enabled = cfg.get("fetch_details", True)
+        return {"ok": True}
+
+    # --- 会話履歴設定 ---
+
+    @app.get("/api/chat-config", dependencies=[Depends(_verify)])
+    async def get_chat_config():
+        cfg = bot.config.get("units", {}).get("chat", {})
+        return {
+            "history_minutes": cfg.get("history_minutes", 60),
+        }
+
+    @app.post("/api/chat-config", dependencies=[Depends(_verify)])
+    async def set_chat_config(request: Request):
+        body = await request.json()
+        cfg = bot.config.setdefault("units", {}).setdefault("chat", {})
+        if "history_minutes" in body:
+            val = int(body["history_minutes"])
+            cfg["history_minutes"] = val
+            await bot.database.set_setting("units.chat.history_minutes", json.dumps(val))
+        return {"ok": True}
 
     # --- デバッグ: LLM状態確認 ---
 
@@ -655,6 +776,7 @@ def create_web_app(bot) -> FastAPI:
         body = await request.json()
         persona = body.get("persona", "")
         bot.config.setdefault("character", {})["persona"] = persona
+        await bot.database.set_setting("character.persona", persona)
         return {"ok": True}
 
     # --- フロー追跡 ---

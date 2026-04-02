@@ -1,6 +1,7 @@
 """ChromaDB操作（インプロセス・PersistentClient）。"""
 
 import chromadb
+from chromadb.config import Settings
 
 from src.logger import get_logger
 
@@ -9,7 +10,10 @@ log = get_logger(__name__)
 
 class ChromaMemory:
     def __init__(self, path: str = "/app/data/chromadb"):
-        self._client = chromadb.PersistentClient(path=path)
+        self._client = chromadb.PersistentClient(
+            path=path,
+            settings=Settings(anonymized_telemetry=False),
+        )
         self._collections: dict[str, chromadb.Collection] = {}
         log.info("ChromaDB initialized at %s", path)
 
