@@ -18,13 +18,17 @@ _EXTRACT_PROMPT = """\
 ## タスク
 楽天市場での商品検索に必要なキーワードを抽出してください。
 
+重要: ユーザーの入力が前の検索を修正する指示の場合（例:「詰替え用を除外して」「もっと安いの」「別のブランドで」など）、
+直前の会話履歴から元の検索キーワードを読み取り、新しい条件を組み合わせたキーワードを生成してください。
+
 ## 出力形式（厳守）
 {{"keyword": "検索キーワード"}}
 
 - keywordは商品名・カテゴリ名などコアなキーワードにしてください
 - 「安い」「評価が高い」などの修飾語は除いてください
+- 除外条件がある場合はマイナス検索（例: 洗顔フォーム -詰替え）を使ってください
 - JSON1つだけを返してください
-
+{context_block}
 ## ユーザー入力
 {user_input}
 """
@@ -196,10 +200,11 @@ class RakutenSearchUnit(BaseUnit):
 
         await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
         message = parsed.get("message", "")
+        conversation_context = parsed.get("conversation_context", [])
 
         try:
-            # 1. LLMでキーワードを抽出
-            extracted = await self._extract_keyword(message)
+            # 1. LLMでキーワードを抽出（会話履歴から元のキーワードを保持）
+            extracted = await self._extract_keyword(message, conversation_context)
             keyword = extracted.get("keyword", message)
             log.info("rakuten_search keyword=%s", keyword)
 
@@ -214,8 +219,8 @@ class RakutenSearchUnit(BaseUnit):
                 await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "count": 0}, flow_id)
                 return result
 
-            # 3. LLMでおすすめをまとめる
-            recommendation, llm_prompt = await self._recommend(message, items)
+            # 3. LLMでおすすめをまとめる（会話履歴からユーザーの要望全体を反映）
+            recommendation, llm_prompt = await self._recommend(message, items, conversation_context)
 
             # 4. 出典リストを付与
             sources = self._format_sources(items)
@@ -241,8 +246,12 @@ class RakutenSearchUnit(BaseUnit):
             await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
             raise
 
-    async def _extract_keyword(self, user_input: str) -> dict:
-        prompt = _EXTRACT_PROMPT.format(user_input=user_input)
+    async def _extract_keyword(self, user_input: str, conversation_context: list[dict] | None = None) -> dict:
+        context_block = ""
+        if conversation_context:
+            lines = [f"ユーザー: {r['content']}" for r in conversation_context]
+            context_block = "\n## 直前の会話履歴\n" + "\n".join(lines) + "\n\n"
+        prompt = _EXTRACT_PROMPT.format(user_input=user_input, context_block=context_block)
         return await self.llm.extract_json(prompt)
 
     async def _search_rakuten(self, keyword: str) -> list[dict]:
@@ -285,7 +294,7 @@ class RakutenSearchUnit(BaseUnit):
 
         return unique_items[:self._max_results]
 
-    async def _recommend(self, question: str, items: list[dict]) -> tuple[str, str]:
+    async def _recommend(self, question: str, items: list[dict], conversation_context: list[dict] | None = None) -> tuple[str, str]:
         """LLMで商品を要約・推薦する。(レスポンス, プロンプト) を返す。"""
         results_text = ""
         for i, item in enumerate(items, 1):
@@ -299,8 +308,14 @@ class RakutenSearchUnit(BaseUnit):
                 f"  ショップ: {item['shop']}\n\n"
             )
 
+        # 短いフォローアップの場合、会話履歴からユーザーの要望全体を復元
+        effective_question = question
+        if conversation_context and len(question) <= 30:
+            ctx_lines = [f"ユーザー: {r['content']}" for r in conversation_context]
+            effective_question = "\n".join(ctx_lines) + f"\nユーザー: {question}"
+
         prompt = _RECOMMEND_PROMPT.format(
-            question=question,
+            question=effective_question,
             count=len(items),
             results=results_text.strip(),
         )

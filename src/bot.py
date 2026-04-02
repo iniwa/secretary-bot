@@ -143,10 +143,16 @@ class SecretaryBot(commands.Bot):
                 if unit is None:
                     unit = self.unit_manager.get("chat")
 
+                # chatユニットは会話キャッチボールのため全履歴、それ以外はユーザー発言のみ
+                if unit_name == "chat":
+                    exec_context = conversation_context
+                else:
+                    exec_context = [r for r in conversation_context if r["role"] == "user"]
+
                 try:
                     actual_unit = getattr(unit, "unit", unit)
                     actual_unit.session_done = False
-                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": conversation_context})
+                    response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": exec_context})
                     if actual_unit.session_done:
                         self.unit_router.clear_session("discord", user_id)
                         actual_unit.clear_exchange(lock_key)

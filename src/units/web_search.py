@@ -378,11 +378,8 @@ class WebSearchUnit(BaseUnit):
     async def _extract_query(self, user_input: str, conversation_context: list[dict] | None = None) -> dict:
         context_block = ""
         if conversation_context:
-            lines = []
-            for row in conversation_context:
-                role = "ユーザー" if row["role"] == "user" else "アシスタント"
-                lines.append(f"{role}: {row['content']}")
-            context_block = "\n## 直前の会話履歴\n" + "\n".join(lines) + "\n\n"
+            lines = [f"ユーザー: {r['content']}" for r in conversation_context]
+            context_block = "\n## 直前の会話履歴（ユーザーの発言のみ）\n" + "\n".join(lines) + "\n\n"
         prompt = _EXTRACT_PROMPT.format(user_input=user_input, context_block=context_block)
         return await self.llm.extract_json(prompt)
 
@@ -438,10 +435,7 @@ class WebSearchUnit(BaseUnit):
         # 短い指示（「調べて」等）の場合、会話履歴から元の質問を復元
         effective_question = question
         if conversation_context and len(question) <= 20:
-            ctx_lines = []
-            for row in conversation_context:
-                role = "ユーザー" if row["role"] == "user" else "アシスタント"
-                ctx_lines.append(f"{role}: {row['content']}")
+            ctx_lines = [f"ユーザー: {r['content']}" for r in conversation_context]
             effective_question = "\n".join(ctx_lines) + f"\nユーザー: {question}"
 
         prompt = _SUMMARIZE_PROMPT.format(

@@ -112,7 +112,8 @@ class UnitRouter:
         await ft.emit("SESSION", "done", {"continued": False}, flow_id)
         await ft.emit("ROUTE_LLM", "active", {}, flow_id)
 
-        context_block = self._format_context(conversation_context or [])
+        user_only = [r for r in (conversation_context or []) if r["role"] == "user"]
+        context_block = self._format_context(user_only)
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
             units_text=self._build_units_text(),
             user_input=user_input,
