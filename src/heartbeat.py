@@ -232,6 +232,60 @@ class Heartbeat:
         if rows:
             log.info("Restored %d reminder jobs", len(rows))
 
+    # --- 天気通知スケジュール ---
+
+    def _weather_job_id(self, sub_id: int) -> str:
+        return f"weather_{sub_id}"
+
+    async def _fire_daily_weather(self, sub_id: int, user_id: str, lat: float, lon: float, location: str) -> None:
+        """毎朝の天気通知を発火するコールバック。"""
+        log.info("Daily weather fired: #%d (%s)", sub_id, location)
+        try:
+            unit = self.bot.unit_manager.get("weather")
+            if unit:
+                actual_unit = getattr(unit, "unit", unit)
+                message = await actual_unit.build_daily_notification(lat, lon, location)
+                await actual_unit.notify_user(message, user_id=user_id)
+        except Exception as e:
+            log.error("Daily weather fire failed for #%d: %s", sub_id, e)
+
+    def schedule_weather_daily(self, sub_id: int, hour: int, minute: int, user_id: str, lat: float, lon: float, location: str) -> None:
+        """天気通知をcronジョブとしてスケジューラに登録する。"""
+        job_id = self._weather_job_id(sub_id)
+        self.scheduler.add_job(
+            self._fire_daily_weather,
+            "cron",
+            hour=hour,
+            minute=minute,
+            args=[sub_id, user_id, lat, lon, location],
+            id=job_id,
+            replace_existing=True,
+        )
+        log.info("Scheduled daily weather #%d at %02d:%02d for %s", sub_id, hour, minute, location)
+
+    def cancel_weather_daily(self, sub_id: int) -> None:
+        """天気通知ジョブをキャンセルする。"""
+        job_id = self._weather_job_id(sub_id)
+        if self.scheduler.get_job(job_id):
+            self.scheduler.remove_job(job_id)
+            log.info("Cancelled weather job #%d", sub_id)
+
+    async def restore_weather_subscriptions(self) -> None:
+        """Bot起動時にDBからアクティブな天気通知のジョブを復元する。"""
+        rows = await self.bot.database.fetchall(
+            "SELECT * FROM weather_subscriptions WHERE active = 1"
+        )
+        for r in rows:
+            try:
+                self.schedule_weather_daily(
+                    r["id"], r["notify_hour"], r["notify_minute"],
+                    r["user_id"], r["latitude"], r["longitude"], r["location"],
+                )
+            except Exception as e:
+                log.warning("Failed to restore weather sub #%d: %s", r["id"], e)
+        if rows:
+            log.info("Restored %d weather subscription jobs", len(rows))
+
     def shutdown(self) -> None:
         if self.scheduler.running:
             self.scheduler.shutdown(wait=True)

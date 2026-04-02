@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS llm_log (
     success   BOOLEAN NOT NULL DEFAULT 1,
     error     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS weather_subscriptions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    location      TEXT NOT NULL,
+    latitude      REAL NOT NULL,
+    longitude     REAL NOT NULL,
+    notify_hour   INTEGER NOT NULL DEFAULT 7,
+    notify_minute INTEGER NOT NULL DEFAULT 0,
+    active        BOOLEAN NOT NULL DEFAULT 1,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -134,6 +146,19 @@ class Database:
                 "ALTER TABLE llm_log ADD COLUMN prompt_text TEXT",
                 "ALTER TABLE llm_log ADD COLUMN system_text TEXT",
                 "ALTER TABLE llm_log ADD COLUMN response_text TEXT",
+            ],
+            7: [
+                """CREATE TABLE IF NOT EXISTS weather_subscriptions (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id       TEXT NOT NULL,
+                    location      TEXT NOT NULL,
+                    latitude      REAL NOT NULL,
+                    longitude     REAL NOT NULL,
+                    notify_hour   INTEGER NOT NULL DEFAULT 7,
+                    notify_minute INTEGER NOT NULL DEFAULT 0,
+                    active        BOOLEAN NOT NULL DEFAULT 1,
+                    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

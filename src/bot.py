@@ -325,6 +325,7 @@ async def main() -> None:
     await bot.heartbeat.sync_summaries_to_chroma()
     bot.heartbeat.start()
     await bot.heartbeat.restore_reminders()
+    await bot.heartbeat.restore_weather_subscriptions()
     log.info("Bot setup complete")
 
     if token:

@@ -16,6 +16,7 @@ _UNIT_MODULES = {
     "chat": "src.units.chat",
     "web_search": "src.units.web_search",
     "rakuten_search": "src.units.rakuten_search",
+    "weather": "src.units.weather",
 }
 
 
