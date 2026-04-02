@@ -26,6 +26,7 @@ _EXTRACT_PROMPT = """\
 ## アクション一覧
 - create: 予定の登録（events 配列が必要）
 - register_calendar: カレンダーIDの登録（calendar_id が必要）
+- help: 使い方やカレンダーIDの確認方法などの質問
 
 ## create の events 配列の各要素
 {{"summary": "予定名", "location": "場所(任意)", "description": "詳細(任意)", "start_date": "YYYY-MM-DD", "start_time": "HH:MM(終日ならnull)", "end_date": "YYYY-MM-DD(省略可)", "end_time": "HH:MM(省略可)"}}
@@ -101,7 +102,9 @@ class CalendarUnit(BaseUnit):
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "create")
 
-            if action == "register_calendar":
+            if action == "help":
+                result = self._help_message()
+            elif action == "register_calendar":
                 result = await self._register_calendar(extracted, user_id)
             else:
                 result = await self._create_events(extracted, user_id)
@@ -134,6 +137,33 @@ class CalendarUnit(BaseUnit):
         if context:
             prompt = prompt + context
         return await self.llm.extract_json(prompt)
+
+    # ---- ヘルプ ----
+
+    def _help_message(self) -> str:
+        sa_email = self._get_service_account_email()
+        msg = (
+            "【カレンダーIDの確認方法】\n"
+            "1. Googleカレンダーを開く\n"
+            "2. 左サイドバーで対象カレンダーの「⋮」→「設定と共有」\n"
+            "3.「カレンダーの統合」セクションにある「カレンダーID」をコピー\n"
+            "  （例: xxx@group.calendar.google.com）\n\n"
+            "【初回セットアップ】\n"
+        )
+        if sa_email:
+            msg += (
+                f"1. 上記の「設定と共有」→「特定のユーザーとの共有」で\n"
+                f"   `{sa_email}` を追加し「予定の変更」権限を付与\n"
+                f"2. 「カレンダーIDは xxx@group.calendar.google.com」と伝えてください\n"
+            )
+        else:
+            msg += "1. サービスアカウントとカレンダーを共有（「予定の変更」権限）\n"
+            msg += "2. 「カレンダーIDは xxx@group.calendar.google.com」と伝えてください\n"
+        msg += "\n【使い方の例】\n"
+        msg += "- 「明日14時から会議を登録して」\n"
+        msg += "- 「来週月曜は終日休み」\n"
+        msg += "- 「明日10時に打ち合わせ、15時に歯医者」"
+        return msg
 
     # ---- カレンダーID登録 ----
 
