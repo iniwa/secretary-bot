@@ -1,6 +1,6 @@
 # LLM設定（APIキーは.envで管理）
 llm:
-  ollama_model: "qwen3"
+  ollama_model: "qwen3.5:4b"
   ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
 
