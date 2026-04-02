@@ -240,6 +240,44 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             ucfg.setdefault("llm", {})["gemini_allowed"] = allowed
         log.info("Restored unit gemini settings from DB")
 
+    # ハートビート設定
+    hb_settings = await bot.database.get_all_settings("heartbeat.")
+    if hb_settings:
+        hb_cfg = bot.config.setdefault("heartbeat", {})
+        for key, value in hb_settings.items():
+            short_key = key.removeprefix("heartbeat.")
+            try:
+                hb_cfg[short_key] = int(value)
+            except ValueError:
+                hb_cfg[short_key] = value
+        log.info("Restored heartbeat settings from DB")
+
+    # 楽天検索設定
+    rakuten_settings = await bot.database.get_all_settings("rakuten_search.")
+    if rakuten_settings:
+        r_cfg = bot.config.setdefault("rakuten_search", {})
+        for key, value in rakuten_settings.items():
+            short_key = key.removeprefix("rakuten_search.")
+            try:
+                r_cfg[short_key] = _json.loads(value)
+            except (ValueError, _json.JSONDecodeError):
+                r_cfg[short_key] = value
+        log.info("Restored rakuten_search settings from DB")
+
+    # 委託モード
+    delegation_modes = await bot.database.get_all_settings("delegation_mode.")
+    if delegation_modes:
+        for key, value in delegation_modes.items():
+            agent_id = key.removeprefix("delegation_mode.")
+            bot.unit_manager.agent_pool.set_mode(agent_id, value)
+        log.info("Restored delegation modes from DB")
+
+    # ペルソナ
+    saved_persona = await bot.database.get_setting("character.persona")
+    if saved_persona is not None:
+        bot.config.setdefault("character", {})["persona"] = saved_persona
+        log.info("Restored persona from DB")
+
 
 async def _run_web(bot: SecretaryBot) -> None:
     import uvicorn

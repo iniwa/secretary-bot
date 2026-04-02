@@ -142,6 +142,7 @@ def create_web_app(bot) -> FastAPI:
         if mode not in ("allow", "deny", "auto"):
             raise HTTPException(400, "mode must be allow/deny/auto")
         bot.unit_manager.agent_pool.set_mode(agent_id, mode)
+        await bot.database.set_setting(f"delegation_mode.{agent_id}", mode)
         return {"ok": True}
 
     async def _restart_container() -> dict:
@@ -685,6 +686,7 @@ def create_web_app(bot) -> FastAPI:
         body = await request.json()
         persona = body.get("persona", "")
         bot.config.setdefault("character", {})["persona"] = persona
+        await bot.database.set_setting("character.persona", persona)
         return {"ok": True}
 
     # --- フロー追跡 ---

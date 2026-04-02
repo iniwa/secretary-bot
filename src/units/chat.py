@@ -1,10 +1,15 @@
 """雑談・相談ユニット（フォールバック先）。"""
 
+import asyncio
+
 from src.errors import AllLLMsUnavailableError
 from src.flow_tracker import get_flow_tracker
+from src.logger import get_logger
 from src.memory.ai_memory import AIMemory
 from src.memory.people_memory import PeopleMemory
 from src.units.base_unit import BaseUnit
+
+log = get_logger(__name__)
 
 
 class ChatUnit(BaseUnit):
@@ -34,15 +39,9 @@ class ChatUnit(BaseUnit):
             self.breaker.record_success()
             await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME}, flow_id)
 
-            # 記憶抽出（非同期・失敗しても無視）
-            await ft.emit("MEM_WRITE", "active", {}, flow_id)
+            # 記憶抽出をバックグラウンドで実行（返答速度に影響させない）
             conversation = f"user: {message}\nassistant: {response}"
-            try:
-                await self.ai_memory.extract_and_save(conversation)
-                await self.people_memory.extract_and_save(conversation, user_id=user_id)
-                await ft.emit("MEM_WRITE", "done", {}, flow_id)
-            except Exception:
-                await ft.emit("MEM_WRITE", "error", {}, flow_id)
+            asyncio.create_task(self._extract_memories_bg(conversation, user_id, flow_id))
 
             return response
         except AllLLMsUnavailableError:
@@ -53,6 +52,18 @@ class ChatUnit(BaseUnit):
             self.breaker.record_failure()
             await ft.emit("UNIT_EXEC", "error", {}, flow_id)
             raise
+
+    async def _extract_memories_bg(self, conversation: str, user_id: str, flow_id: str | None) -> None:
+        """記憶抽出をバックグラウンドで実行する。失敗しても無視。"""
+        ft = get_flow_tracker()
+        await ft.emit("MEM_WRITE", "active", {}, flow_id)
+        try:
+            await self.ai_memory.extract_and_save(conversation)
+            await self.people_memory.extract_and_save(conversation, user_id=user_id)
+            await ft.emit("MEM_WRITE", "done", {}, flow_id)
+        except Exception as e:
+            log.warning("Background memory extraction failed: %s", e)
+            await ft.emit("MEM_WRITE", "error", {}, flow_id)
 
     async def _generate_response(self, message: str, flow_id: str | None = None, user_id: str = "") -> str:
         ft = get_flow_tracker()
@@ -96,7 +107,7 @@ class ChatUnit(BaseUnit):
         system = "\n".join(system_parts) if system_parts else None
 
         # 直近の会話履歴をプロンプトに付加（現在のメッセージは除く）
-        history_limit = config.get("chat", {}).get("history_limit", 20)
+        history_limit = config.get("chat", {}).get("history_limit", 8)
         history_rows = await self.bot.database.get_recent_channel_messages(
             "discord", limit=history_limit + 1, user_id=user_id
         )
