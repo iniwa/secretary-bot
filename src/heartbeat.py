@@ -94,7 +94,7 @@ class Heartbeat:
             doc_id = uuid.uuid4().hex[:16]
             self.bot.chroma.add(
                 "conversation_log", doc_id, summary,
-                {"created_at": now.isoformat(), "message_count": msg_count},
+                {"created_at": now, "message_count": msg_count},
             )
             log.info("Context compacted (SQLite + ChromaDB)")
             result["saved"] = True
