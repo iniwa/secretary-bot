@@ -269,6 +269,7 @@ async def main() -> None:
     await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
+    await bot.heartbeat.sync_summaries_to_chroma()
     bot.heartbeat.start()
     await bot.heartbeat.restore_reminders()
     log.info("Bot setup complete")

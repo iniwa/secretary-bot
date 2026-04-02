@@ -1,5 +1,6 @@
 """ハートビート・コンテキスト圧縮・リマインダースケジュール。"""
 
+import uuid
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -59,13 +60,52 @@ class Heartbeat:
         )
         try:
             summary = await self.bot.llm_router.generate(summary_prompt, purpose="memory_extraction")
+            now = jst_now()
             await self.bot.database.execute(
                 "INSERT INTO conversation_summary (summary, created_at) VALUES (?, ?)",
-                (summary, jst_now()),
+                (summary, now),
             )
-            log.info("Context compacted")
+
+            # ChromaDBのconversation_logにも書き込み
+            doc_id = uuid.uuid4().hex[:16]
+            self.bot.chroma.add(
+                "conversation_log", doc_id, summary,
+                {"created_at": now.isoformat(), "message_count": len(messages)},
+            )
+            log.info("Context compacted (SQLite + ChromaDB)")
+
+            # ai_memory抽出（Ollama稼働中のみ）
+            conversation_text = "\n".join(texts)
+            try:
+                from src.memory.ai_memory import AIMemory
+                ai_mem = AIMemory(self.bot)
+                await ai_mem.extract_and_save(conversation_text)
+            except Exception as e:
+                log.debug("ai_memory extraction during compact skipped: %s", e)
         except Exception as e:
             log.warning("Context compaction failed: %s", e)
+
+    async def sync_summaries_to_chroma(self) -> None:
+        """SQLiteのconversation_summaryをChromaDBに同期（起動時用）。"""
+        chroma_count = self.bot.chroma.count("conversation_log")
+        rows = await self.bot.database.fetchall(
+            "SELECT id, summary, created_at FROM conversation_summary ORDER BY id"
+        )
+        if chroma_count >= len(rows):
+            return  # 既に同期済み
+
+        # ChromaDBをクリアして全件再投入
+        existing = self.bot.chroma.get_all("conversation_log", limit=10000)
+        for item in existing:
+            self.bot.chroma.delete("conversation_log", item["id"])
+
+        for row in rows:
+            doc_id = f"summary_{row['id']}"
+            self.bot.chroma.add(
+                "conversation_log", doc_id, row["summary"],
+                {"created_at": str(row["created_at"]), "source": "sqlite_sync"},
+            )
+        log.info("Synced %d summaries from SQLite to ChromaDB conversation_log", len(rows))
 
     def _reschedule(self) -> None:
         minutes = self._get_interval_minutes()
