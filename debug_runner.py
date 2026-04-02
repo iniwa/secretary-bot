@@ -65,6 +65,7 @@ _DEBUG_CONFIG = {
         "web_search": {"enabled": True},
         "rakuten_search": {"enabled": True},
         "weather": {"enabled": True},
+        "calendar": {"enabled": True, "timezone": "Asia/Tokyo"},
     },
     "weather": {
         "geocoding_url": "https://geocoding-api.open-meteo.com/v1/search",
@@ -165,6 +166,7 @@ def _load_unit_class(unit_name: str):
         "web_search": "src.units.web_search",
         "rakuten_search": "src.units.rakuten_search",
         "weather": "src.units.weather",
+        "calendar": "src.units.calendar",
     }
     module_path = module_map.get(unit_name)
     if not module_path:
@@ -228,6 +230,12 @@ SCENARIOS: dict[str, list[dict]] = {
         {"label": "subscribe", "parsed": {"message": "毎朝天気を教えて"}},
         {"label": "list", "parsed": {"message": "天気通知の一覧"}},
         {"label": "unsubscribe", "parsed": {"message": "天気の通知をやめて"}},
+    ],
+    "calendar": [
+        {"label": "create", "parsed": {"message": "明日の14時から会議を登録して"}},
+        {"label": "create_allday", "parsed": {"message": "来週の月曜日は終日休みを登録して"}},
+        {"label": "create_multi", "parsed": {"message": "明日10時に打ち合わせ、15時に歯医者を登録して"}},
+        {"label": "register", "parsed": {"message": "カレンダーIDはxxx@group.calendar.google.comです"}},
     ],
 }
 

@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS weather_subscriptions (
     active        BOOLEAN NOT NULL DEFAULT 1,
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS calendar_settings (
+    user_id     TEXT PRIMARY KEY,
+    calendar_id TEXT NOT NULL,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -158,6 +164,13 @@ class Database:
                     notify_minute INTEGER NOT NULL DEFAULT 0,
                     active        BOOLEAN NOT NULL DEFAULT 1,
                     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+            ],
+            8: [
+                """CREATE TABLE IF NOT EXISTS calendar_settings (
+                    user_id     TEXT PRIMARY KEY,
+                    calendar_id TEXT NOT NULL,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""",
             ],
         }

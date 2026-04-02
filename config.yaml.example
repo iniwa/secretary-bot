@@ -58,6 +58,9 @@ units:
     enabled: true
   weather:
     enabled: true
+  calendar:
+    enabled: true
+    timezone: "Asia/Tokyo"
 
 # Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
 gemini:
