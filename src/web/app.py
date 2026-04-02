@@ -518,6 +518,12 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"unit_gemini.{unit_name}", "true" if allowed else "false")
         return {"ok": True}
 
+    # --- デバッグ: ハートビートログ ---
+
+    @app.get("/api/debug/heartbeat-logs", dependencies=[Depends(_verify)])
+    async def debug_heartbeat_logs():
+        return {"logs": list(bot.heartbeat.debug_logs)}
+
     # --- デバッグ: 楽天検索 ---
 
     @app.get("/api/debug/rakuten-search", dependencies=[Depends(_verify)])

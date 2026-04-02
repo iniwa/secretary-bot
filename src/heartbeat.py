@@ -1,6 +1,7 @@
 """ハートビート・コンテキスト圧縮・リマインダースケジュール。"""
 
 import uuid
+from collections import deque
 from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -10,12 +11,15 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
+_MAX_DEBUG_LOGS = 50
+
 
 class Heartbeat:
     def __init__(self, bot):
         self.bot = bot
         self.scheduler = AsyncIOScheduler(timezone="Asia/Tokyo")
         self._job_id = "heartbeat"
+        self.debug_logs: deque[dict] = deque(maxlen=_MAX_DEBUG_LOGS)
 
     @property
     def _config(self) -> dict:
@@ -28,39 +32,58 @@ class Heartbeat:
 
     async def _tick(self) -> None:
         log.info("Heartbeat tick")
+        tick_log = {
+            "timestamp": jst_now().isoformat(),
+            "units": [],
+            "compact": None,
+            "ollama": None,
+            "next_minutes": None,
+            "error": None,
+        }
         try:
             # 各ユニットの on_heartbeat 呼び出し
             for unit in self.bot.unit_manager.units.values():
+                name = getattr(getattr(unit, "unit", unit), "UNIT_NAME", "?")
                 try:
                     await unit.on_heartbeat()
+                    tick_log["units"].append({"name": name, "ok": True})
                 except Exception as e:
-                    log.error("Heartbeat error in %s: %s", unit.UNIT_NAME, e)
+                    log.error("Heartbeat error in %s: %s", name, e)
+                    tick_log["units"].append({"name": name, "ok": False, "error": str(e)})
 
             # コンテキスト圧縮チェック
-            await self._check_compact()
+            compact_result = await self._check_compact()
+            tick_log["compact"] = compact_result
 
             # Ollama状態を再チェックして次回間隔を調整
-            await self.bot.llm_router.check_ollama()
+            available = await self.bot.llm_router.check_ollama()
+            tick_log["ollama"] = available
         except Exception as e:
             log.error("Heartbeat tick failed: %s", e)
+            tick_log["error"] = str(e)
         finally:
             self._reschedule()
+            tick_log["next_minutes"] = self._get_interval_minutes()
+            self.debug_logs.append(tick_log)
 
-    async def _check_compact(self) -> None:
+    async def _check_compact(self) -> dict:
         threshold = self._config.get("compact_threshold_messages", 20)
         messages = await self.bot.database.get_recent_messages(limit=threshold + 1)
-        if len(messages) <= threshold:
-            return
+        msg_count = len(messages)
+        if msg_count <= threshold:
+            return {"skipped": True, "messages": msg_count, "threshold": threshold}
 
-        log.info("Compacting conversation context (%d messages)", len(messages))
+        log.info("Compacting conversation context (%d messages)", msg_count)
         texts = [f"{m['role']}: {m['content']}" for m in reversed(messages)]
         summary_prompt = (
             "以下の会話履歴を日本語で簡潔に要約してください。重要な情報は残してください。\n"
             "※必ず日本語で出力すること。中国語や英語で書かないこと。\n\n"
             + "\n".join(texts)
         )
+        result = {"skipped": False, "messages": msg_count, "threshold": threshold}
         try:
             summary = await self.bot.llm_router.generate(summary_prompt, purpose="memory_extraction")
+            result["summary"] = summary[:500]
             now = jst_now()
             await self.bot.database.execute(
                 "INSERT INTO conversation_summary (summary, created_at) VALUES (?, ?)",
@@ -71,9 +94,10 @@ class Heartbeat:
             doc_id = uuid.uuid4().hex[:16]
             self.bot.chroma.add(
                 "conversation_log", doc_id, summary,
-                {"created_at": now.isoformat(), "message_count": len(messages)},
+                {"created_at": now.isoformat(), "message_count": msg_count},
             )
             log.info("Context compacted (SQLite + ChromaDB)")
+            result["saved"] = True
 
             # ai_memory抽出（Ollama稼働中のみ）
             conversation_text = "\n".join(texts)
@@ -81,10 +105,15 @@ class Heartbeat:
                 from src.memory.ai_memory import AIMemory
                 ai_mem = AIMemory(self.bot)
                 await ai_mem.extract_and_save(conversation_text)
+                result["ai_memory"] = True
             except Exception as e:
                 log.debug("ai_memory extraction during compact skipped: %s", e)
+                result["ai_memory"] = False
+                result["ai_memory_error"] = str(e)
         except Exception as e:
             log.warning("Context compaction failed: %s", e)
+            result["error"] = str(e)
+        return result
 
     async def sync_summaries_to_chroma(self) -> None:
         """SQLiteのconversation_summaryをChromaDBに同期（起動時・差分のみ）。"""

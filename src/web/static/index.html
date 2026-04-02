@@ -223,6 +223,7 @@ nav.bottom-nav { display: none; }
   </div>
   <div class="nav-group">
     <div class="nav-group-label">Debug</div>
+    <button onclick="showPage('heartbeat-debug')">Heartbeat</button>
     <button onclick="showPage('rakuten-debug')">楽天Search</button>
   </div>
 </nav>
@@ -474,6 +475,17 @@ nav.bottom-nav { display: none; }
     </div>
   </div>
 
+  <!-- Heartbeat Debug -->
+  <div id="page-heartbeat-debug" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>Heartbeat デバッグ</h2>
+      <button onclick="loadHeartbeatDebug()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+    <div id="heartbeat-debug-body">
+      <span style="color:var(--text-dim)">まだデータがありません。ハートビートが実行されると表示されます。</span>
+    </div>
+  </div>
+
   <!-- Rakuten Search Debug -->
   <div id="page-rakuten-debug" class="page">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
@@ -523,6 +535,8 @@ let logOffset = 0;
 function saveState(key, value) { try { sessionStorage.setItem('sb_' + key, JSON.stringify(value)); } catch(e) {} }
 function loadState(key, fallback) { try { const v = sessionStorage.getItem('sb_' + key); return v !== null ? JSON.parse(v) : fallback; } catch(e) { return fallback; } }
 
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
@@ -542,6 +556,7 @@ function showPage(name) {
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
   if (name === 'memory') loadMemory();
+  if (name === 'heartbeat-debug') loadHeartbeatDebug();
   if (name === 'rakuten-debug') loadRakutenDebug();
 }
 
@@ -1547,6 +1562,69 @@ async function loadChatHistory() {
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
+}
+
+// --- Heartbeat Debug ---
+
+async function loadHeartbeatDebug() {
+  const body = document.getElementById('heartbeat-debug-body');
+  body.innerHTML = '<span style="color:var(--text-dim)">読み込み中...</span>';
+  try {
+    const res = await fetch('/api/debug/heartbeat-logs');
+    const data = await res.json();
+    const logs = data.logs || [];
+    if (!logs.length) {
+      body.innerHTML = '<span style="color:var(--text-dim)">まだデータがありません。ハートビートが実行されると表示されます。</span>';
+      return;
+    }
+    let html = '';
+    // 新しい順に表示
+    for (const entry of [...logs].reverse()) {
+      const ts = entry.timestamp || '?';
+      const ollama = entry.ollama ? '<span style="color:#4caf50">ON</span>' : '<span style="color:var(--accent)">OFF</span>';
+      const next = entry.next_minutes != null ? entry.next_minutes + '分' : '?';
+      const err = entry.error ? `<div style="color:var(--accent);margin-top:0.3rem">Error: ${esc(entry.error)}</div>` : '';
+
+      // Units
+      let unitsHtml = '';
+      if (entry.units && entry.units.length) {
+        unitsHtml = entry.units.map(u =>
+          `<span style="margin-right:0.6rem">${esc(u.name)} ${u.ok ? '✓' : '<span style=color:var(--accent)>✗ ' + esc(u.error || '') + '</span>'}</span>`
+        ).join('');
+      }
+
+      // Compact
+      let compactHtml = '';
+      if (entry.compact) {
+        const c = entry.compact;
+        if (c.skipped) {
+          compactHtml = `<span style="color:var(--text-dim)">スキップ (${c.messages}/${c.threshold}件)</span>`;
+        } else {
+          const status = c.error
+            ? `<span style="color:var(--accent)">失敗: ${esc(c.error)}</span>`
+            : `<span style="color:#4caf50">完了</span> (${c.messages}件)`;
+          const aiMem = c.ai_memory ? ' | ai_memory: ✓' : c.ai_memory === false ? ' | ai_memory: ✗' : '';
+          compactHtml = status + aiMem;
+          if (c.summary) {
+            compactHtml += `<details style="margin-top:0.3rem"><summary style="cursor:pointer;color:var(--text-dim);font-size:0.85rem">要約を表示</summary><pre style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--bg);padding:0.6rem;border-radius:6px;border:1px solid var(--border);margin-top:0.3rem;max-height:300px;overflow-y:auto">${esc(c.summary)}</pre></details>`;
+          }
+        }
+      }
+
+      html += `<div class="maint-section" style="margin-bottom:0.8rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+          <strong>${esc(ts)}</strong>
+          <span>Ollama: ${ollama} | 次回: ${esc(next)}</span>
+        </div>
+        <div style="font-size:0.9rem;margin-bottom:0.3rem"><strong>Units:</strong> ${unitsHtml || '<span style="color:var(--text-dim)">なし</span>'}</div>
+        <div style="font-size:0.9rem"><strong>圧縮:</strong> ${compactHtml || '<span style="color:var(--text-dim)">-</span>'}</div>
+        ${err}
+      </div>`;
+    }
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<span style="color:var(--accent)">読み込みエラー: ${esc(String(e))}</span>`;
+  }
 }
 
 // --- Rakuten Search Debug ---
