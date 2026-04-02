@@ -574,18 +574,54 @@ async function sendChat(e) {
   btn.disabled = true;
   appendMsg('user', msg);
   const thinking = appendThinking();
+
+  function chatDone() {
+    chatBusy = false;
+    btn.disabled = false;
+    input.focus();
+  }
+
   try {
     const res = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: msg}) });
     const data = await res.json();
-    thinking.remove();
-    appendMsg('assistant', data.response || '(empty)', data.unit);
+    const flowId = data.flow_id;
+    if (!flowId) {
+      // flow_idがない場合は旧形式（直接レスポンス）
+      thinking.remove();
+      appendMsg('assistant', data.response || '(empty)', data.unit);
+      chatDone();
+      return;
+    }
+    // SSEでREPLYイベントを待ち受け
+    const sse = new EventSource('/api/flow/stream');
+    const timeoutId = setTimeout(() => {
+      sse.close();
+      thinking.remove();
+      appendMsg('assistant', 'タイムアウトしました。処理は継続中の可能性があります。');
+      chatDone();
+    }, 300000);
+    sse.onmessage = (ev) => {
+      try {
+        const event = JSON.parse(ev.data);
+        // フローページが開いていれば転送
+        if (typeof handleFlowEvent === 'function') handleFlowEvent(event);
+        if (event.flow_id !== flowId || event.node !== 'REPLY') return;
+        clearTimeout(timeoutId);
+        sse.close();
+        thinking.remove();
+        const detail = event.detail || {};
+        appendMsg('assistant', detail.response || '(empty)', detail.unit);
+        chatDone();
+      } catch (err) { /* ignore parse errors */ }
+    };
+    sse.onerror = () => {
+      // SSE接続エラー時は再接続せずタイムアウトに任せる
+    };
   } catch (err) {
     thinking.remove();
     appendMsg('assistant', 'Error: ' + err.message);
+    chatDone();
   }
-  chatBusy = false;
-  btn.disabled = false;
-  input.focus();
 }
 
 document.getElementById('chat-input').addEventListener('keydown', function(e) {

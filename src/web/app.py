@@ -49,58 +49,57 @@ def create_web_app(bot) -> FastAPI:
         if not message:
             raise HTTPException(400, "message is required")
 
-        async with _webgui_lock:
-            ft = get_flow_tracker()
-            flow_id = await ft.start_flow()
-            await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
-            await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
-            try:
-                await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
+        ft = get_flow_tracker()
+        flow_id = await ft.start_flow()
+        await ft.emit("MSG", "done", {"content": message[:80], "channel": "webgui"}, flow_id)
 
-                # 直近の会話履歴を取得
-                recent_rows = await bot.database.get_recent_channel_messages(
-                    "webgui", limit=6, user_id=_webgui_user_id,
-                )
-                conversation_context = [
-                    r for r in recent_rows if r["content"] != message
-                ][-4:]
-
-                result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
-                unit_name = result.get("unit", "chat")
-                user_message = result.get("message", message)
-
-                unit = bot.unit_manager.get(unit_name)
-                if unit is None:
-                    unit = bot.unit_manager.get("chat")
-
-                actual_unit = getattr(unit, "unit", unit)
-                actual_unit.session_done = False
-                response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id, "conversation_context": conversation_context})
-                if actual_unit.session_done:
-                    bot.unit_router.clear_session("webgui", _webgui_user_id)
-                    actual_unit.clear_exchange("webgui")
-                    await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
-                elif response:
-                    actual_unit.save_exchange("webgui", user_message, response)
-                    await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
-                if response:
-                    mode = "eco" if not bot.llm_router.ollama_available else "normal"
-                    await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name, user_id=_webgui_user_id)
-                    await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
-                    await ft.emit("REPLY", "done", {"channel": "webgui"}, flow_id)
-                await ft.end_flow(flow_id)
-                return {"response": response or "", "unit": unit_name}
-            except Exception as e:
-                log.error("WebGUI chat error: %s", e, exc_info=True)
+        async def _process_chat():
+            async with _webgui_lock:
+                await ft.emit("LOCK", "done", {"channel": "webgui"}, flow_id)
                 try:
-                    await ft.emit("REPLY", "error", {"error": str(e)}, flow_id)
+                    await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
+
+                    recent_rows = await bot.database.get_recent_channel_messages(
+                        "webgui", limit=6, user_id=_webgui_user_id,
+                    )
+                    conversation_context = [
+                        r for r in recent_rows if r["content"] != message
+                    ][-4:]
+
+                    result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
+                    unit_name = result.get("unit", "chat")
+                    user_message = result.get("message", message)
+
+                    unit = bot.unit_manager.get(unit_name)
+                    if unit is None:
+                        unit = bot.unit_manager.get("chat")
+
+                    actual_unit = getattr(unit, "unit", unit)
+                    actual_unit.session_done = False
+                    response = await unit.execute(None, {"message": user_message, "channel": "webgui", "user_id": _webgui_user_id, "flow_id": flow_id, "conversation_context": conversation_context})
+                    if actual_unit.session_done:
+                        bot.unit_router.clear_session("webgui", _webgui_user_id)
+                        actual_unit.clear_exchange("webgui")
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
+                    elif response:
+                        actual_unit.save_exchange("webgui", user_message, response)
+                        await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
+                    if response:
+                        mode = "eco" if not bot.llm_router.ollama_available else "normal"
+                        await bot.database.log_conversation("webgui", "assistant", response, mode=mode, unit=unit_name, user_id=_webgui_user_id)
+                        await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
+                    await ft.emit("REPLY", "done", {"channel": "webgui", "response": response or "", "unit": unit_name}, flow_id)
                     await ft.end_flow(flow_id)
-                except Exception:
-                    pass
-                return JSONResponse(
-                    status_code=200,
-                    content={"response": f"エラーが発生しました: {e}", "unit": "system"},
-                )
+                except Exception as e:
+                    log.error("WebGUI chat error: %s", e, exc_info=True)
+                    try:
+                        await ft.emit("REPLY", "error", {"channel": "webgui", "response": f"エラーが発生しました: {e}", "unit": "system"}, flow_id)
+                        await ft.end_flow(flow_id)
+                    except Exception:
+                        pass
+
+        asyncio.create_task(_process_chat())
+        return {"flow_id": flow_id}
 
     @app.get("/api/logs", )
     async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
