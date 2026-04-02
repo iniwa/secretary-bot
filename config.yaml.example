@@ -101,7 +101,10 @@ searxng:
 
 # 楽天市場商品検索（検索結果ページ直接取得）
 rakuten_search:
-  max_results: 10   # 表示する商品の最大件数
+  max_results: 5                  # 表示する商品の最大件数（WebGUIで変更可）
+  fetch_details: true             # 個別商品ページから詳細取得（WebGUIで変更可）
+  detail_concurrency: 5           # 個別ページ取得の並列数
+  detail_max_desc_chars: 300      # 商品説明の最大文字数
 
 # デバッグ
 debug:

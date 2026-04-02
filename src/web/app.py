@@ -533,6 +533,31 @@ def create_web_app(bot) -> FastAPI:
             return {"available": False, "data": {}}
         return {"available": True, "data": getattr(unit, "last_debug", {})}
 
+    # --- 楽天検索設定 ---
+
+    @app.get("/api/rakuten-config", dependencies=[Depends(_verify)])
+    async def get_rakuten_config():
+        cfg = bot.config.get("rakuten_search", {})
+        return {
+            "max_results": cfg.get("max_results", 5),
+            "fetch_details": cfg.get("fetch_details", True),
+        }
+
+    @app.post("/api/rakuten-config", dependencies=[Depends(_verify)])
+    async def set_rakuten_config(request: Request):
+        body = await request.json()
+        cfg = bot.config.setdefault("rakuten_search", {})
+        for key in ("max_results", "fetch_details"):
+            if key in body:
+                cfg[key] = body[key]
+                await bot.database.set_setting(f"rakuten_search.{key}", json.dumps(body[key]))
+        # ユニットの設定をホットリロード
+        unit = bot.cogs.get("RakutenSearchUnit")
+        if unit:
+            unit._max_results = cfg.get("max_results", 5)
+            unit._fetch_details_enabled = cfg.get("fetch_details", True)
+        return {"ok": True}
+
     # --- デバッグ: LLM状態確認 ---
 
     @app.get("/api/debug/llm-state", )

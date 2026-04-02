@@ -42,7 +42,7 @@ _RECOMMEND_PROMPT = """\
 - レビューがない商品はその旨記載
 - 広告（[PR]）商品はその旨を軽く触れてよい
 - URLは含めなくてよいです（別途表示されます）
-- 商品の特徴は商品名から読み取れる情報を要約する
+- 商品の特徴は商品説明がある場合はその内容を要約し、ない場合は商品名から読み取れる情報を要約する
 
 ## ユーザーの要望
 {question}
@@ -51,7 +51,7 @@ _RECOMMEND_PROMPT = """\
 {results}
 """
 
-_DEFAULT_MAX_RESULTS = 10
+_DEFAULT_MAX_RESULTS = 5
 
 # ブラウザに偽装したヘッダーセット
 _BROWSER_HEADERS = {
@@ -60,12 +60,17 @@ _BROWSER_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
     "DNT": "1",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
+    "Referer": "https://search.rakuten.co.jp/",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-site",
+    "Sec-Fetch-User": "?1",
 }
 
 
@@ -179,6 +184,68 @@ def _extract_item_from_card(card_html: str) -> dict | None:
     }
 
 
+def _normalize_rating(raw: str) -> str:
+    """ratingValue を5点スケールに正規化する。"""
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return ""
+    if val <= 5:
+        result = val
+    elif val <= 500:
+        result = val / 100
+    else:
+        result = val / 200
+    result = round(result, 2)
+    log.debug("rakuten rating normalize: raw=%s -> %.2f", raw, result)
+    return f"{result:.2f}"
+
+
+def _parse_item_page(html: str, max_desc_chars: int = 300) -> dict:
+    """個別商品ページのHTMLから詳細情報を抽出する。"""
+    info: dict[str, str] = {
+        "title": "",
+        "description": "",
+        "price": "",
+        "rating": "",
+        "review_count": "",
+    }
+
+    # og:title（「【楽天市場】商品名：ショップ名」形式 → ショップ名除去）
+    og = re.search(r'<meta[^>]*property="og:title"[^>]*content="([^"]+)"', html)
+    if og:
+        title = og.group(1).strip()
+        # 「【楽天市場】」プレフィックスを除去
+        title = re.sub(r"^【楽天市場】\s*", "", title)
+        # 末尾の「：ショップ名」を除去
+        title = re.sub(r"：[^：]+$", "", title)
+        info["title"] = title
+
+    # 商品説明（item_desc クラス内のテキスト）
+    desc_match = re.search(r'class="item_desc[^"]*">(.*?)</div>', html, re.DOTALL)
+    if desc_match:
+        desc_text = re.sub(r"<[^>]+>", " ", desc_match.group(1))
+        desc_text = " ".join(desc_text.split())[:max_desc_chars]
+        info["description"] = desc_text
+
+    # 価格（itemprop="price"）
+    price_match = re.search(r'itemprop="price"[^>]*content="(\d+)"', html)
+    if price_match:
+        info["price"] = f"{int(price_match.group(1)):,}円"
+
+    # レビュー評価（ratingValue）
+    rating_match = re.search(r'ratingValue[^0-9]*([0-9.]+)', html)
+    if rating_match:
+        info["rating"] = _normalize_rating(rating_match.group(1))
+
+    # レビュー件数（reviewCount）
+    review_match = re.search(r'reviewCount[^0-9]*(\d+)', html)
+    if review_match:
+        info["review_count"] = review_match.group(1)
+
+    return info
+
+
 class RakutenSearchUnit(BaseUnit):
     UNIT_NAME = "rakuten_search"
     UNIT_DESCRIPTION = "楽天市場で商品を検索・提案する。「楽天で◯◯を探して」「楽天でおすすめの◯◯は？」「楽天で安い◯◯を教えて」など。"
@@ -187,6 +254,9 @@ class RakutenSearchUnit(BaseUnit):
         super().__init__(bot)
         cfg = bot.config.get("rakuten_search", {})
         self._max_results = cfg.get("max_results", _DEFAULT_MAX_RESULTS)
+        self._fetch_details_enabled = cfg.get("fetch_details", True)
+        self._detail_concurrency = cfg.get("detail_concurrency", 5)
+        self._detail_max_desc_chars = cfg.get("detail_max_desc_chars", 300)
         # デバッグ用: 最後の実行データを保持
         self.last_debug: dict = {}
 
@@ -219,12 +289,18 @@ class RakutenSearchUnit(BaseUnit):
                 await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "count": 0}, flow_id)
                 return result
 
-            # 3. LLMでおすすめをまとめる（会話履歴からユーザーの要望全体を反映）
+            # 3. 個別商品ページから詳細情報を並列取得
+            if self._fetch_details_enabled:
+                items = await self._fetch_item_details(items)
+                detail_count = sum(1 for it in items if it.get("detail_fetched"))
+                log.info("rakuten_search: fetched details for %d/%d items", detail_count, len(items))
+
+            # 4. LLMでおすすめをまとめる（会話履歴からユーザーの要望全体を反映）
             recommendation, llm_prompt = await self._recommend(message, items, conversation_context)
 
-            # 4. 出典リストを付与
-            sources = self._format_sources(items)
-            result = f"{recommendation}\n\n{sources}"
+            # 5. カード型リストを付与
+            cards = self._format_item_cards(items, keyword)
+            result = f"{recommendation}\n\n{cards}"
 
             # デバッグデータ保存（WebGUIで閲覧可能）
             self.last_debug = {
@@ -299,12 +375,33 @@ class RakutenSearchUnit(BaseUnit):
         results_text = ""
         for i, item in enumerate(items, 1):
             pr_tag = " [PR]" if item["is_pr"] else ""
-            rating_str = f"★{item['rating']}（{item['review_count']}）" if item["rating"] else "レビューなし"
+
+            # 詳細取得成功時は詳細情報を優先
+            if item.get("detail_fetched"):
+                title = item.get("detail_title") or item["title"]
+                price = item.get("detail_price") or item["price"]
+                rating_val = item.get("detail_rating", "")
+                review_cnt = item.get("detail_review_count", "") or item.get("review_count", "")
+                if rating_val:
+                    rating_str = f"★{rating_val}（{review_cnt}件）"
+                elif item["rating"]:
+                    rating_str = f"★{item['rating']}（{item['review_count']}）"
+                else:
+                    rating_str = "レビューなし"
+                desc = item.get("description", "")
+                desc_line = f"  特徴: {desc}\n" if desc else ""
+            else:
+                title = item["title"]
+                price = item["price"]
+                rating_str = f"★{item['rating']}（{item['review_count']}）" if item["rating"] else "レビューなし"
+                desc_line = ""
+
             results_text += (
-                f"[{i}]{pr_tag} {item['title']}\n"
-                f"  価格: {item['price']}"
+                f"[{i}]{pr_tag} {title}\n"
+                f"  価格: {price}"
                 f"{' / ' + item['shipping'] if item['shipping'] else ''}\n"
                 f"  レビュー: {rating_str}\n"
+                f"{desc_line}"
                 f"  ショップ: {item['shop']}\n\n"
             )
 
@@ -322,13 +419,86 @@ class RakutenSearchUnit(BaseUnit):
         response = await self.llm.generate(prompt)
         return response, prompt
 
-    def _format_sources(self, items: list[dict]) -> str:
-        lines = ["🛒 楽天市場 検索結果リンク"]
+    def _format_item_cards(self, items: list[dict], keyword: str) -> str:
+        """商品ごとのカード型リストを生成する。"""
+        lines = [f"🛒 楽天市場「{keyword}」の検索結果（{len(items)}件）"]
         for i, item in enumerate(items, 1):
             pr_tag = " [PR]" if item["is_pr"] else ""
-            name = item["title"][:50] + ("…" if len(item["title"]) > 50 else "")
-            lines.append(f"  [{i}]{pr_tag} {name}: {item['url']}")
+
+            # 詳細取得成功時は詳細情報を優先
+            if item.get("detail_fetched"):
+                title = item.get("detail_title") or item["title"]
+                price = item.get("detail_price") or item["price"]
+                rating_val = item.get("detail_rating", "")
+                review_cnt = item.get("detail_review_count", "") or item.get("review_count", "")
+                if rating_val:
+                    rating_str = f"{rating_val}（{review_cnt}件）"
+                elif item["rating"]:
+                    rating_str = f"{item['rating']}（{item['review_count']}）"
+                else:
+                    rating_str = "なし"
+                desc = item.get("description", "")
+            else:
+                title = item["title"]
+                price = item["price"]
+                rating_str = f"{item['rating']}（{item['review_count']}）" if item["rating"] else "なし"
+                desc = ""
+
+            shipping = f"（{item['shipping']}）" if item.get("shipping") else ""
+
+            lines.append("")
+            lines.append("━━━━━━━━━━━━━━━━━━")
+            lines.append(f"{i}. {title}{pr_tag}")
+            lines.append(f"💰 {price}{shipping}")
+            lines.append(f"⭐ {rating_str}")
+            if desc:
+                lines.append(f"📝 {desc}")
+            lines.append(f"🔗 {item['url']}")
+
         return "\n".join(lines)
+
+    async def _fetch_item_detail(self, item: dict) -> dict:
+        """個別商品ページから詳細情報を取得し、item辞書に追加する。"""
+        url = item.get("url", "")
+        if not url:
+            item["detail_fetched"] = False
+            return item
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(url, headers=_BROWSER_HEADERS)
+                resp.raise_for_status()
+
+            # 楽天商品ページは EUC-JP が多い
+            charset = "euc-jp"
+            ct = resp.headers.get("content-type", "")
+            ct_match = re.search(r"charset=([^\s;]+)", ct, re.IGNORECASE)
+            if ct_match:
+                charset = ct_match.group(1)
+            html = resp.content.decode(charset, errors="replace")
+
+            detail = _parse_item_page(html, self._detail_max_desc_chars)
+            item["detail_title"] = detail["title"]
+            item["description"] = detail["description"]
+            item["detail_price"] = detail["price"]
+            item["detail_rating"] = detail["rating"]
+            item["detail_review_count"] = detail["review_count"]
+            item["detail_fetched"] = True
+        except Exception as e:
+            log.debug("rakuten detail fetch failed for %s: %s", url, e)
+            item["detail_fetched"] = False
+
+        return item
+
+    async def _fetch_item_details(self, items: list[dict]) -> list[dict]:
+        """個別商品ページの詳細情報を並列取得する。"""
+        sem = asyncio.Semaphore(self._detail_concurrency)
+
+        async def _with_sem(item: dict) -> dict:
+            async with sem:
+                return await self._fetch_item_detail(item)
+
+        return list(await asyncio.gather(*[_with_sem(it) for it in items]))
 
 
 async def setup(bot) -> None:

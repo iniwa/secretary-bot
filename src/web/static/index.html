@@ -380,6 +380,28 @@ nav.bottom-nav { display: none; }
     </div>
 
     <div class="maint-section" style="margin-top:1rem">
+      <h3>楽天Search Settings</h3>
+      <div class="setting-row">
+        <span>表示件数<br><span style="font-size:0.8rem;color:var(--text-dim)">検索結果に表示する商品の最大件数</span></span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="number" id="rakuten-max-results" min="1" max="20" step="1" style="width:100px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <span style="color:var(--text-dim);font-size:0.85rem">件</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>個別ページ詳細取得<br><span style="font-size:0.8rem;color:var(--text-dim)">各商品ページにアクセスして商品説明・レビュー詳細を取得</span></span>
+        <label class="toggle">
+          <input type="checkbox" id="rakuten-fetch-details">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.8rem;align-items:center">
+        <button class="btn-update" onclick="saveRakutenConfig()">保存</button>
+        <span id="rakuten-config-status" style="font-size:0.85rem;color:var(--text-dim)"></span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
       <h3>Gemini Settings</h3>
       <div id="gemini-settings"></div>
     </div>
@@ -551,7 +573,7 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadRakutenConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
@@ -927,6 +949,33 @@ async function saveHeartbeatConfig() {
   };
   try {
     const res = await fetch('/api/heartbeat-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    status.textContent = data.ok ? '保存しました' : 'エラー';
+    setTimeout(() => { status.textContent = ''; }, 3000);
+  } catch(e) {
+    status.textContent = 'エラー: ' + e;
+  }
+}
+
+async function loadRakutenConfig() {
+  try {
+    const res = await fetch('/api/rakuten-config');
+    const data = await res.json();
+    document.getElementById('rakuten-max-results').value = data.max_results ?? 5;
+    document.getElementById('rakuten-fetch-details').checked = data.fetch_details ?? true;
+  } catch(e) {
+    console.error('loadRakutenConfig failed:', e);
+  }
+}
+
+async function saveRakutenConfig() {
+  const status = document.getElementById('rakuten-config-status');
+  const payload = {
+    max_results: parseInt(document.getElementById('rakuten-max-results').value),
+    fetch_details: document.getElementById('rakuten-fetch-details').checked,
+  };
+  try {
+    const res = await fetch('/api/rakuten-config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     status.textContent = data.ok ? '保存しました' : 'エラー';
     setTimeout(() => { status.textContent = ''; }, 3000);
