@@ -128,6 +128,16 @@ def _extract_item_from_card(card_html: str) -> dict | None:
         title = title_match.group(1)
         title = title.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
 
+    # 商品URL: <a href> から item.rakuten.co.jp の実URLを抽出
+    # （data-shop-id/data-id は数値IDであり、実URLのパスとは異なるため使用しない）
+    url_match = re.search(r'href="(https://item\.rakuten\.co\.jp/[^"]+)"', card_html)
+    redirect_url = ""
+    if not url_match:
+        # PR商品はリダイレクトURLを使う → 詳細取得時にfinal URLを取得
+        redirect_match = re.search(r'href="(https://[^"]*redirect[^"]*)"', card_html)
+        if redirect_match:
+            redirect_url = redirect_match.group(1).replace("&amp;", "&")
+
     # レビュー評価
     rating = ""
     rating_match = re.search(r'class="score"[^>]*>([^<]+)', card_html)
@@ -165,10 +175,16 @@ def _extract_item_from_card(card_html: str) -> dict | None:
     if ship_match:
         shipping = ship_match.group(1).strip()
 
-    # 商品URL構築
+    # 商品URL（上で抽出済み）
     url = ""
-    if shop_id and item_id:
-        url = f"https://item.rakuten.co.jp/{shop_id}/{item_id}/"
+    needs_url_resolve = False
+    if url_match:
+        url = url_match.group(1).replace("&amp;", "&")
+        # variantIdパラメータは除去してクリーンなURLにする
+        url = re.sub(r'\?variantId=[^&]*', '', url)
+    elif redirect_url:
+        url = redirect_url
+        needs_url_resolve = True  # 詳細取得時にfinal URLへ解決
 
     is_pr = card_type == "cpc"
 
@@ -181,6 +197,7 @@ def _extract_item_from_card(card_html: str) -> dict | None:
         "shipping": shipping,
         "url": url,
         "is_pr": is_pr,
+        "needs_url_resolve": needs_url_resolve,
     }
 
 
@@ -294,6 +311,9 @@ class RakutenSearchUnit(BaseUnit):
                 items = await self._fetch_item_details(items)
                 detail_count = sum(1 for it in items if it.get("detail_fetched"))
                 log.info("rakuten_search: fetched details for %d/%d items", detail_count, len(items))
+            else:
+                # 詳細取得無効でもPR商品のURL解決だけは行う
+                items = await self._resolve_redirect_urls(items)
 
             # 4. LLMでおすすめをまとめる（会話履歴からユーザーの要望全体を反映）
             recommendation, llm_prompt = await self._recommend(message, items, conversation_context)
@@ -469,6 +489,16 @@ class RakutenSearchUnit(BaseUnit):
                 resp = await client.get(url, headers=_BROWSER_HEADERS)
                 resp.raise_for_status()
 
+            # リダイレクトURL経由の場合、最終URLで表示用URLを更新
+            final_url = str(resp.url)
+            if item.get("needs_url_resolve") and "item.rakuten.co.jp" in final_url:
+                # クエリパラメータを除去してクリーンなURLにする
+                clean_url = final_url.split("?")[0]
+                if not clean_url.endswith("/"):
+                    clean_url += "/"
+                item["url"] = clean_url
+                item["needs_url_resolve"] = False
+
             # 楽天商品ページは EUC-JP が多い
             charset = "euc-jp"
             ct = resp.headers.get("content-type", "")
@@ -499,6 +529,36 @@ class RakutenSearchUnit(BaseUnit):
                 return await self._fetch_item_detail(item)
 
         return list(await asyncio.gather(*[_with_sem(it) for it in items]))
+
+    async def _resolve_redirect_urls(self, items: list[dict]) -> list[dict]:
+        """リダイレクトURLを持つ商品のURLを実URLに解決する（詳細取得無効時用）。"""
+        need_resolve = [it for it in items if it.get("needs_url_resolve")]
+        if not need_resolve:
+            return items
+
+        async def _resolve(item: dict) -> dict:
+            try:
+                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                    resp = await client.head(item["url"], headers=_BROWSER_HEADERS)
+                    final_url = str(resp.url)
+                    if "item.rakuten.co.jp" in final_url:
+                        clean = final_url.split("?")[0]
+                        if not clean.endswith("/"):
+                            clean += "/"
+                        item["url"] = clean
+                        item["needs_url_resolve"] = False
+            except Exception as e:
+                log.debug("rakuten URL resolve failed: %s", e)
+            return item
+
+        sem = asyncio.Semaphore(self._detail_concurrency)
+
+        async def _with_sem(item: dict) -> dict:
+            async with sem:
+                return await _resolve(item)
+
+        await asyncio.gather(*[_with_sem(it) for it in need_resolve])
+        return items
 
 
 async def setup(bot) -> None:
