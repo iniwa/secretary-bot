@@ -55,7 +55,8 @@ class Heartbeat:
         log.info("Compacting conversation context (%d messages)", len(messages))
         texts = [f"{m['role']}: {m['content']}" for m in reversed(messages)]
         summary_prompt = (
-            "以下の会話履歴を簡潔に要約してください。重要な情報は残してください。\n\n"
+            "以下の会話履歴を日本語で簡潔に要約してください。重要な情報は残してください。\n"
+            "※必ず日本語で出力すること。中国語や英語で書かないこと。\n\n"
             + "\n".join(texts)
         )
         try:
