@@ -1738,8 +1738,9 @@ async function loadOllamaLogs(offset) {
       return;
     }
     body.innerHTML = '';
-    logs.forEach(l => {
+    logs.forEach((l, i) => {
       const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
       const durSec = (l.duration_ms / 1000).toFixed(1) + 's';
       const status = l.success ? '<span style="color:#4caf50">OK</span>' : '<span style="color:#f44336" title="' + esc(l.error || '') + '">ERROR</span>';
       tr.innerHTML = '<td>' + esc(l.timestamp) + '</td>'
@@ -1749,7 +1750,37 @@ async function loadOllamaLogs(offset) {
         + '<td style="text-align:right">' + l.response_len.toLocaleString() + '</td>'
         + '<td style="text-align:right">' + durSec + '</td>'
         + '<td>' + status + '</td>';
+      const detailId = 'ollama-detail-' + i;
+      tr.onclick = () => {
+        const el = document.getElementById(detailId);
+        el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+      };
       body.appendChild(tr);
+      // 展開行（入出力テキスト）
+      const detailTr = document.createElement('tr');
+      detailTr.id = detailId;
+      detailTr.style.display = 'none';
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.style.padding = '0.8rem';
+      td.style.background = 'var(--bg)';
+      let html = '';
+      if (l.system_text) {
+        html += '<div style="margin-bottom:0.5rem"><strong>System:</strong><pre style="white-space:pre-wrap;word-break:break-word;margin:0.3rem 0;padding:0.5rem;background:var(--surface);border-radius:4px;border:1px solid var(--border);max-height:300px;overflow-y:auto;font-size:0.82rem">' + esc(l.system_text) + '</pre></div>';
+      }
+      if (l.prompt_text) {
+        html += '<div style="margin-bottom:0.5rem"><strong>Prompt:</strong><pre style="white-space:pre-wrap;word-break:break-word;margin:0.3rem 0;padding:0.5rem;background:var(--surface);border-radius:4px;border:1px solid var(--border);max-height:300px;overflow-y:auto;font-size:0.82rem">' + esc(l.prompt_text) + '</pre></div>';
+      }
+      if (l.response_text) {
+        html += '<div><strong>Response:</strong><pre style="white-space:pre-wrap;word-break:break-word;margin:0.3rem 0;padding:0.5rem;background:var(--surface);border-radius:4px;border:1px solid var(--border);max-height:300px;overflow-y:auto;font-size:0.82rem">' + esc(l.response_text) + '</pre></div>';
+      }
+      if (l.error) {
+        html += '<div style="margin-top:0.5rem"><strong style="color:#f44336">Error:</strong> ' + esc(l.error) + '</div>';
+      }
+      if (!html) html = '<span style="color:var(--text-dim)">テキストデータなし</span>';
+      td.innerHTML = html;
+      detailTr.appendChild(td);
+      body.appendChild(detailTr);
     });
   } catch(e) {
     body.innerHTML = '<tr><td colspan="7" style="color:#f44336">読み込みエラー: ' + esc(e.message) + '</td></tr>';

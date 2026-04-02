@@ -54,6 +54,8 @@ class LLMRouter:
         self, provider: str, model: str, purpose: str,
         prompt_len: int, response_len: int, duration_ms: int,
         success: bool = True, error: str | None = None,
+        prompt_text: str | None = None, system_text: str | None = None,
+        response_text: str | None = None,
     ) -> None:
         if self._database:
             try:
@@ -61,6 +63,8 @@ class LLMRouter:
                     provider, model, purpose,
                     prompt_len, response_len, duration_ms,
                     success, error,
+                    prompt_text=prompt_text, system_text=system_text,
+                    response_text=response_text,
                 )
             except Exception as e:
                 log.debug("Failed to log LLM call: %s", e)
@@ -115,13 +119,19 @@ class LLMRouter:
                 await ft.emit("OLLAMA", "active", {"model": _model}, flow_id)
                 result = await self.ollama.generate(prompt, system=system, model=ollama_model)
                 dur = int((time.monotonic() - t0) * 1000)
-                await self._log_llm_call("ollama", _model, purpose, len(prompt), len(result), dur)
+                await self._log_llm_call(
+                    "ollama", _model, purpose, len(prompt), len(result), dur,
+                    prompt_text=prompt, system_text=system, response_text=result,
+                )
                 await ft.emit("OLLAMA", "done", {"model": _model}, flow_id)
                 await ft.emit("LLM_SELECT", "done", {"selected": "ollama"}, flow_id)
                 return result
             except OllamaUnavailableError as e:
                 dur = int((time.monotonic() - t0) * 1000)
-                await self._log_llm_call("ollama", _model, purpose, len(prompt), 0, dur, False, str(e))
+                await self._log_llm_call(
+                    "ollama", _model, purpose, len(prompt), 0, dur, False, str(e),
+                    prompt_text=prompt, system_text=system,
+                )
                 self.ollama_available = False
                 log.warning("Ollama became unavailable, checking Gemini fallback")
                 await ft.emit("OLLAMA", "error", {"reason": "unavailable"}, flow_id)
@@ -138,13 +148,19 @@ class LLMRouter:
                 await ft.emit("GEMINI", "active", {"purpose": purpose}, flow_id)
                 result = await self.gemini.generate(prompt, system=system, model=gemini_model)
                 dur = int((time.monotonic() - t0) * 1000)
-                await self._log_llm_call("gemini", _gmodel, purpose, len(prompt), len(result), dur)
+                await self._log_llm_call(
+                    "gemini", _gmodel, purpose, len(prompt), len(result), dur,
+                    prompt_text=prompt, system_text=system, response_text=result,
+                )
                 await ft.emit("GEMINI", "done", {"purpose": purpose}, flow_id)
                 await ft.emit("LLM_SELECT", "done", {"selected": "gemini"}, flow_id)
                 return result
             except GeminiError as e:
                 dur = int((time.monotonic() - t0) * 1000)
-                await self._log_llm_call("gemini", _gmodel, purpose, len(prompt), 0, dur, False, str(e))
+                await self._log_llm_call(
+                    "gemini", _gmodel, purpose, len(prompt), 0, dur, False, str(e),
+                    prompt_text=prompt, system_text=system,
+                )
                 log.error("Gemini also failed: %s", e)
                 await ft.emit("GEMINI", "error", {"error": str(e)}, flow_id)
 

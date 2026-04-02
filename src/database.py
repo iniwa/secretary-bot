@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS llm_log (
     provider  TEXT NOT NULL,
     model     TEXT NOT NULL,
     purpose   TEXT NOT NULL,
+    prompt_text TEXT,
+    system_text TEXT,
+    response_text TEXT,
     prompt_len INTEGER NOT NULL DEFAULT 0,
     response_len INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
@@ -126,6 +129,11 @@ class Database:
                     success   BOOLEAN NOT NULL DEFAULT 1,
                     error     TEXT
                 )""",
+            ],
+            6: [
+                "ALTER TABLE llm_log ADD COLUMN prompt_text TEXT",
+                "ALTER TABLE llm_log ADD COLUMN system_text TEXT",
+                "ALTER TABLE llm_log ADD COLUMN response_text TEXT",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -256,11 +264,13 @@ class Database:
         self, provider: str, model: str, purpose: str,
         prompt_len: int, response_len: int, duration_ms: int,
         success: bool = True, error: str | None = None,
+        prompt_text: str | None = None, system_text: str | None = None,
+        response_text: str | None = None,
     ) -> None:
         await self.execute(
-            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_len, response_len, duration_ms, success, error) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (jst_now(), provider, model, purpose, prompt_len, response_len, duration_ms, success, error),
+            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error),
         )
 
     async def get_llm_logs(
