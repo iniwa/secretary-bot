@@ -163,12 +163,24 @@ class WeatherUnit(BaseUnit):
 
     # --- API呼び出し ---
 
+    # 北海道など、サフィックス除去が無意味な地名のフォールバック
+    _SPECIAL_FALLBACKS = {"北海道": "札幌"}
+
     async def _geocode(self, location: str) -> dict | None:
-        """地名から緯度経度を取得する。見つからない場合は「市」「県」付きでリトライ。"""
+        """地名から緯度経度を取得する。見つからない場合はサフィックスの追加・除去でリトライ。"""
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
-            # 候補リスト: そのまま → 「市」付き → 「県」付き
+            _SUFFIXES = ("市", "区", "町", "村", "県", "都", "府", "道")
             candidates = [location]
-            if not location.endswith(("市", "区", "町", "村", "県", "都", "府", "道")):
+            if location in self._SPECIAL_FALLBACKS:
+                candidates.append(self._SPECIAL_FALLBACKS[location])
+                candidates.append(f"{self._SPECIAL_FALLBACKS[location]}市")
+            elif location.endswith(_SUFFIXES):
+                # サフィックスを外したバージョンも試す（千葉県→千葉→千葉市）
+                base = location[:-1]
+                candidates.append(base)
+                if not location.endswith("市"):
+                    candidates.append(f"{base}市")
+            else:
                 candidates.append(f"{location}市")
                 candidates.append(f"{location}県")
 
