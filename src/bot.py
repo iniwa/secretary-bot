@@ -163,6 +163,7 @@ class SecretaryBot(commands.Bot):
                         await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                     elif response:
                         actual_unit.save_exchange(lock_key, user_message, response)
+                        self.unit_router.refresh_session(channel_tag, user_id)
                         await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
                 except Exception as e:
                     log.error("Unit execution failed: %s", e, exc_info=True)

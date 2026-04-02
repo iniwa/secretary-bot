@@ -75,6 +75,13 @@ class UnitRouter:
     def _set_session(self, channel: str, unit_name: str) -> None:
         self._sessions[channel] = {"unit": unit_name, "ts": time.monotonic()}
 
+    def refresh_session(self, channel: str, user_id: str = "") -> None:
+        """セッションのタイムスタンプを更新する（execute完了後に呼ぶ）。"""
+        session_key = f"{channel}:{user_id}" if user_id else channel
+        session = self._sessions.get(session_key)
+        if session:
+            session["ts"] = time.monotonic()
+
     def clear_session(self, channel: str, user_id: str = "") -> None:
         """ユニットが処理完了時にセッションをクリアする。"""
         session_key = f"{channel}:{user_id}" if user_id else channel

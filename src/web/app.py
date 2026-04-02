@@ -85,6 +85,7 @@ def create_web_app(bot) -> FastAPI:
                         await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                     elif response:
                         actual_unit.save_exchange("webgui", user_message, response)
+                        bot.unit_router.refresh_session("webgui", _webgui_user_id)
                         await ft.emit("SESSION_UPDATE", "done", {"action": "saved"}, flow_id)
                     if response:
                         mode = "eco" if not bot.llm_router.ollama_available else "normal"
