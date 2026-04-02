@@ -33,7 +33,7 @@ class Heartbeat:
     async def _tick(self) -> None:
         log.info("Heartbeat tick")
         tick_log = {
-            "timestamp": jst_now().isoformat(),
+            "timestamp": jst_now(),
             "units": [],
             "compact": None,
             "ollama": None,
