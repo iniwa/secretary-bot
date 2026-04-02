@@ -1,6 +1,7 @@
 """楽天市場商品検索ユニット。楽天検索結果ページを直接取得し、商品情報を抽出してLLMでおすすめを提示する。"""
 
 import asyncio
+import html as html_mod
 import re
 import urllib.parse
 
@@ -33,22 +34,13 @@ _EXTRACT_PROMPT = """\
 {user_input}
 """
 
-_RECOMMEND_PROMPT = """\
-以下は楽天市場の検索結果から抽出した商品データです。
-ユーザーの要望に合わせて、おすすめ商品を紹介してください。
+_SUMMARIZE_ITEM_PROMPT = """\
+以下の商品情報を日本語で1〜2文に要約してください。
+購入判断に役立つ特徴・用途・注意点を簡潔に書いてください。
+商品名や価格は書かないでください（別途表示されます）。
 
-## ルール
-- 各商品について【商品名】【価格】【レビュー】【特徴】を整理して紹介
-- レビューがない商品はその旨記載
-- 広告（[PR]）商品はその旨を軽く触れてよい
-- URLは含めなくてよいです（別途表示されます）
-- 商品の特徴は商品説明がある場合はその内容を要約し、ない場合は商品名から読み取れる情報を要約する
-
-## ユーザーの要望
-{question}
-
-## 商品データ（{count}件）
-{results}
+商品名: {title}
+商品説明: {description}
 """
 
 _DEFAULT_MAX_RESULTS = 5
@@ -74,6 +66,12 @@ _BROWSER_HEADERS = {
 }
 
 
+def _decode_entities(text: str) -> str:
+    """HTMLエンティティをデコードし、余計な空白を正規化する。"""
+    text = html_mod.unescape(text)
+    return " ".join(text.split())
+
+
 def _parse_search_results(html: str) -> list[dict]:
     """楽天検索結果ページのHTMLから商品情報を抽出する。
 
@@ -81,17 +79,6 @@ def _parse_search_results(html: str) -> list[dict]:
     """
     items = []
 
-    # searchresultitem の各カードを分割して処理
-    card_pattern = re.compile(
-        r'<div\s+class="[^"]*searchresultitem[^"]*"'
-        r'[^>]*?data-id="([^"]*)"'
-        r'[^>]*?data-shop-id="([^"]*)"'
-        r'[^>]*?data-track-price="([^"]*)"'
-        r'[^>]*?data-card-type="([^"]*)"'
-        r'[^>]*?>'
-        r'(.*?)(?=<div\s+class="[^"]*searchresultitem|$)',
-        re.DOTALL,
-    )
     # data属性の順序が異なる場合に対応するため、個別にも抽出
     card_split = re.compile(
         r'(<div\s+class="[^"]*searchresultitem[^"]*"[^>]*>.*?)(?=<div\s+class="[^"]*searchresultitem|$)',
@@ -125,8 +112,7 @@ def _extract_item_from_card(card_html: str) -> dict | None:
     if not title_match:
         title_match = re.search(r'<a[^>]*?class="[^"]*title-link[^"]*"[^>]*?title="([^"]*)"', card_html)
     if title_match:
-        title = title_match.group(1)
-        title = title.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+        title = _decode_entities(title_match.group(1))
 
     # 商品URL: <a href> から item.rakuten.co.jp の実URLを抽出
     # （data-shop-id/data-id は数値IDであり、実URLのパスとは異なるため使用しない）
@@ -236,13 +222,13 @@ def _parse_item_page(html: str, max_desc_chars: int = 300) -> dict:
         title = re.sub(r"^【楽天市場】\s*", "", title)
         # 末尾の「：ショップ名」を除去
         title = re.sub(r"：[^：]+$", "", title)
-        info["title"] = title
+        info["title"] = _decode_entities(title)
 
     # 商品説明（item_desc クラス内のテキスト）
     desc_match = re.search(r'class="item_desc[^"]*">(.*?)</div>', html, re.DOTALL)
     if desc_match:
         desc_text = re.sub(r"<[^>]+>", " ", desc_match.group(1))
-        desc_text = " ".join(desc_text.split())[:max_desc_chars]
+        desc_text = _decode_entities(desc_text)[:max_desc_chars]
         info["description"] = desc_text
 
     # 価格（itemprop="price"）
@@ -315,20 +301,25 @@ class RakutenSearchUnit(BaseUnit):
                 # 詳細取得無効でもPR商品のURL解決だけは行う
                 items = await self._resolve_redirect_urls(items)
 
-            # 4. LLMでおすすめをまとめる（ペルソナ込み・会話履歴からユーザーの要望全体を反映）
-            recommendation, llm_prompt = await self._recommend(message, items, conversation_context, flow_id)
+            # 4. 商品ごとにLLMで要約を並列生成
+            items = await self._summarize_items(items)
 
-            # 5. カード型リストを付与（LLMに書き換えさせず、そのまま結合）
+            # 5. カード型リストを整形（URL等は取得データをそのまま使用）
             cards = self._format_item_cards(items, keyword)
-            result = f"{recommendation}\n\n{cards}"
+
+            # 6. ペルソナ付きイントロを生成（商品詳細には触れない一言）
+            await ft.emit("PERSONA", "active", {}, flow_id)
+            intro = await self._generate_intro(message, keyword, len(items), flow_id)
+            await ft.emit("PERSONA", "done", {}, flow_id)
+
+            result = f"{intro}\n\n{cards}"
 
             # デバッグデータ保存（WebGUIで閲覧可能）
             self.last_debug = {
                 "keyword": keyword,
                 "item_count": len(items),
                 "items": items,
-                "llm_prompt": llm_prompt,
-                "llm_response": recommendation,
+                "intro": intro,
                 "final_output": result,
             }
             self.breaker.record_success()
@@ -388,72 +379,49 @@ class RakutenSearchUnit(BaseUnit):
 
         return unique_items[:self._max_results]
 
-    async def _recommend(self, question: str, items: list[dict], conversation_context: list[dict] | None = None, flow_id: str | None = None) -> tuple[str, str]:
-        """LLMで商品を要約・推薦する。ペルソナ込み。(レスポンス, プロンプト) を返す。"""
-        ft = get_flow_tracker()
-        results_text = ""
-        for i, item in enumerate(items, 1):
-            pr_tag = " [PR]" if item["is_pr"] else ""
-
-            # 詳細取得成功時は詳細情報を優先
-            if item.get("detail_fetched"):
-                title = item.get("detail_title") or item["title"]
-                price = item.get("detail_price") or item["price"]
-                rating_val = item.get("detail_rating", "")
-                review_cnt = item.get("detail_review_count", "") or item.get("review_count", "")
-                if rating_val:
-                    rating_str = f"★{rating_val}（{review_cnt}件）"
-                elif item["rating"]:
-                    rating_str = f"★{item['rating']}（{item['review_count']}）"
-                else:
-                    rating_str = "レビューなし"
-                desc = item.get("description", "")
-                desc_line = f"  特徴: {desc}\n" if desc else ""
-            else:
-                title = item["title"]
-                price = item["price"]
-                rating_str = f"★{item['rating']}（{item['review_count']}）" if item["rating"] else "レビューなし"
-                desc_line = ""
-
-            results_text += (
-                f"[{i}]{pr_tag} {title}\n"
-                f"  価格: {price}"
-                f"{' / ' + item['shipping'] if item['shipping'] else ''}\n"
-                f"  レビュー: {rating_str}\n"
-                f"{desc_line}"
-                f"  ショップ: {item['shop']}\n\n"
-            )
-
-        # 短いフォローアップの場合、会話履歴からユーザーの要望全体を復元
-        effective_question = question
-        if conversation_context and len(question) <= 30:
-            ctx_lines = [f"ユーザー: {r['content']}" for r in conversation_context]
-            effective_question = "\n".join(ctx_lines) + f"\nユーザー: {question}"
-
-        prompt = _RECOMMEND_PROMPT.format(
-            question=effective_question,
-            count=len(items),
-            results=results_text.strip(),
-        )
-
-        # ペルソナをsystemプロンプトとして注入（Ollama稼働時のみ）
-        system = None
+    async def _generate_intro(self, user_message: str, keyword: str, count: int, flow_id: str | None = None) -> str:
+        """ペルソナ付きの一言イントロを生成する。商品内容には触れない。"""
+        persona = ""
         if self.bot.llm_router.ollama_available:
             persona = self.bot.config.get("character", {}).get("persona", "")
-            if persona:
-                await ft.emit("PERSONA", "active", {}, flow_id)
-                system = persona
-                await ft.emit("PERSONA_GEN", "active", {}, flow_id)
 
-        response = await self.llm.generate(prompt, system=system)
+        if not persona:
+            return f"楽天市場で「{keyword}」を{count}件見つけました。"
 
-        if system:
-            await ft.emit("PERSONA_GEN", "done", {}, flow_id)
+        system = persona
+        prompt = (
+            f"ユーザーが「{user_message}」と言ったので、楽天市場で「{keyword}」を検索して{count}件の商品を見つけました。\n"
+            "検索結果を渡す前の一言コメントだけを生成してください。\n"
+            "商品の具体的な内容やおすすめには一切触れないでください。\n"
+            "「調べたよ」「見つけたよ」程度の軽い一言を1文だけ。"
+        )
+        return await self.llm.generate(prompt, system=system)
 
-        return response, prompt
+    async def _summarize_items(self, items: list[dict]) -> list[dict]:
+        """商品ごとにLLMで要約を並列生成する。"""
+        sem = asyncio.Semaphore(self._detail_concurrency)
+
+        async def _summarize_one(item: dict) -> dict:
+            title = item.get("detail_title") or item["title"]
+            desc = item.get("description", "")
+            if not desc:
+                # 説明がない場合はタイトルから読み取れる情報で要約不要
+                item["summary"] = ""
+                return item
+            prompt = _SUMMARIZE_ITEM_PROMPT.format(title=title, description=desc)
+            try:
+                async with sem:
+                    item["summary"] = await self.llm.generate(prompt)
+            except Exception as e:
+                log.debug("rakuten item summary failed: %s", e)
+                item["summary"] = ""
+            return item
+
+        await asyncio.gather(*[_summarize_one(it) for it in items])
+        return items
 
     def _format_item_cards(self, items: list[dict], keyword: str) -> str:
-        """商品ごとのカード型リストを生成する。"""
+        """商品ごとのカード型リストを生成する。URL等は取得データをそのまま使用。"""
         lines = [f"🛒 楽天市場「{keyword}」の検索結果（{len(items)}件）"]
         for i, item in enumerate(items, 1):
             pr_tag = " [PR]" if item["is_pr"] else ""
@@ -470,23 +438,23 @@ class RakutenSearchUnit(BaseUnit):
                     rating_str = f"{item['rating']}（{item['review_count']}）"
                 else:
                     rating_str = "なし"
-                desc = item.get("description", "")
             else:
                 title = item["title"]
                 price = item["price"]
                 rating_str = f"{item['rating']}（{item['review_count']}）" if item["rating"] else "なし"
-                desc = ""
 
             shipping = f"（{item['shipping']}）" if item.get("shipping") else ""
+            summary = item.get("summary", "")
 
             lines.append("")
             lines.append("━━━━━━━━━━━━━━━━━━")
             lines.append(f"{i}. {title}{pr_tag}")
             lines.append(f"💰 {price}{shipping}")
             lines.append(f"⭐ {rating_str}")
-            if desc:
-                lines.append(f"📝 {desc}")
-            lines.append(f"🔗 {item['url']}")
+            if summary:
+                lines.append(f"📝 {summary}")
+            if item.get("url"):
+                lines.append(f"🔗 {item['url']}")
 
         return "\n".join(lines)
 
