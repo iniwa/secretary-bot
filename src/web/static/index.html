@@ -168,11 +168,11 @@ td .done { text-decoration: line-through; color: var(--text-dim); }
 .flow-status-indicator.done { background: #27ae60; }
 
 /* Mermaid node state overrides (applied to SVG) */
-.node-idle rect, .node-idle polygon { fill: #555 !important; stroke: #666 !important; }
-.node-active rect, .node-active polygon { fill: #f39c12 !important; stroke: #e67e22 !important; animation: pulse-glow 1.5s ease-in-out infinite; }
-.node-done rect, .node-done polygon { fill: #27ae60 !important; stroke: #2ecc71 !important; }
-.node-error rect, .node-error polygon { fill: #e74c3c !important; stroke: #c0392b !important; animation: shake 0.5s; }
-.node-skipped rect, .node-skipped polygon { fill: #444 !important; stroke: #555 !important; opacity: 0.6; }
+.node-idle rect, .node-idle polygon, .node-idle path { fill: #555 !important; stroke: #666 !important; }
+.node-active rect, .node-active polygon, .node-active path { fill: #f39c12 !important; stroke: #e67e22 !important; animation: pulse-glow 1.5s ease-in-out infinite; }
+.node-done rect, .node-done polygon, .node-done path { fill: #27ae60 !important; stroke: #2ecc71 !important; }
+.node-error rect, .node-error polygon, .node-error path { fill: #e74c3c !important; stroke: #c0392b !important; animation: shake 0.5s; }
+.node-skipped rect, .node-skipped polygon, .node-skipped path { fill: #444 !important; stroke: #555 !important; opacity: 0.6; }
 .node-active .nodeLabel, .node-done .nodeLabel, .node-error .nodeLabel { fill: #fff !important; color: #fff !important; }
 
 @keyframes pulse-glow {
@@ -1485,16 +1485,30 @@ function addNodeClickHandlers() {
     node.style.cursor = 'pointer';
     node.addEventListener('click', (e) => {
       e.stopPropagation();
-      const nodeId = extractNodeId(node.id);
+      const nodeId = extractNodeId(node);
       if (nodeId) showNodeInfo(nodeId);
     });
   });
 }
 
-function extractNodeId(svgId) {
-  // SVG id format: "flowchart-NODEID-N"
-  const m = svgId.match(/^flowchart-(.+?)-\d+$/);
-  return m ? m[1] : null;
+function extractNodeId(nodeEl) {
+  // Try id-based: "flowchart-NODEID-N" or "PREFIX-flowchart-NODEID-N" (Mermaid v11+)
+  if (nodeEl.id) {
+    const m = nodeEl.id.match(/flowchart-(.+?)-\d+$/);
+    if (m) return m[1];
+  }
+  // Try data-id attribute (some Mermaid versions)
+  const dataId = nodeEl.getAttribute('data-id');
+  if (dataId && NODE_LABELS[dataId]) return dataId;
+  // Fallback: match label text against NODE_LABELS keys
+  const label = nodeEl.querySelector('.nodeLabel');
+  if (label) {
+    const text = label.textContent.trim();
+    for (const key of Object.keys(NODE_LABELS)) {
+      if (text.startsWith(key)) return key;
+    }
+  }
+  return null;
 }
 
 function highlightNode(nodeId, status) {
@@ -1503,7 +1517,7 @@ function highlightNode(nodeId, status) {
   // Find the node group
   const nodes = svgEl.querySelectorAll('.node');
   nodes.forEach(node => {
-    const nid = extractNodeId(node.id);
+    const nid = extractNodeId(node);
     if (nid === nodeId) {
       node.classList.remove('node-idle', 'node-active', 'node-done', 'node-error', 'node-skipped');
       node.classList.add('node-' + status);
