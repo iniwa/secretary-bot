@@ -99,35 +99,37 @@ class SecretaryBot(commands.Bot):
             return
 
         user_id = str(message.author.id)
+        is_dm = isinstance(message.channel, discord.DMChannel)
+        channel_tag = "discord_dm" if is_dm else "discord"
 
-        # メンションなしのメッセージは会話ログのみ保存して終了
-        if self.user not in message.mentions:
-            await self.database.log_conversation("discord", "user", content, user_id=user_id)
+        # DMでなく、メンションなしのメッセージは会話ログのみ保存して終了
+        if not is_dm and self.user not in message.mentions:
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
             return
 
-        # メンション部分をテキストから除去
+        # メンション部分をテキストから除去（DMではメンション不要だが念のため）
         content = content.replace(f"<@{self.user.id}>", "").replace(f"<@!{self.user.id}>", "").strip()
         if not content:
             return
 
         # ユーザーごとにロックを取得（同一ユーザーのメッセージを直列化）
-        lock_key = f"discord:{user_id}"
+        lock_key = f"{channel_tag}:{user_id}"
         if lock_key not in self._user_locks:
             self._user_locks[lock_key] = asyncio.Lock()
 
         async with self._user_locks[lock_key]:
             ft = get_flow_tracker()
             flow_id = await ft.start_flow()
-            await ft.emit("MSG", "done", {"content": content[:80], "channel": "discord"}, flow_id)
+            await ft.emit("MSG", "done", {"content": content[:80], "channel": channel_tag}, flow_id)
             await ft.emit("LOCK", "done", {"user_id": user_id}, flow_id)
 
             # 会話ログ保存
-            await self.database.log_conversation("discord", "user", content, user_id=user_id)
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
 
             # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
             history_minutes = self.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
             recent_rows = await self.database.get_recent_channel_messages(
-                "discord", limit=6, user_id=user_id,
+                channel_tag, limit=6, user_id=user_id,
                 minutes=history_minutes,
             )
             # 現在のメッセージは既にログ保存済みなので除外
@@ -137,7 +139,7 @@ class SecretaryBot(commands.Bot):
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                result = await self.unit_router.route(content, channel="discord", user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
+                result = await self.unit_router.route(content, channel=channel_tag, user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
                 unit_name = result.get("unit", "chat")
                 user_message = result.get("message", content)
 
@@ -156,7 +158,7 @@ class SecretaryBot(commands.Bot):
                     actual_unit.session_done = False
                     response = await unit.execute(ctx, {"message": user_message, "channel": lock_key, "user_id": user_id, "flow_id": flow_id, "conversation_context": exec_context})
                     if actual_unit.session_done:
-                        self.unit_router.clear_session("discord", user_id)
+                        self.unit_router.clear_session(channel_tag, user_id)
                         actual_unit.clear_exchange(lock_key)
                         await ft.emit("SESSION_UPDATE", "done", {"action": "cleared"}, flow_id)
                     elif response:
@@ -170,9 +172,9 @@ class SecretaryBot(commands.Bot):
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation("discord", "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
+                await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
-                await ft.emit("REPLY", "done", {"channel": "discord"}, flow_id)
+                await ft.emit("REPLY", "done", {"channel": channel_tag}, flow_id)
             await ft.end_flow(flow_id)
 
     async def notify_admin(self, message: str) -> None:

@@ -1796,7 +1796,7 @@ async function loadChatHistory() {
     const data = await res.json();
     const msgs = (data.logs || []).reverse();
     msgs.forEach(l => {
-      const ch = l.channel === 'discord' ? 'Discord' : null;
+      const ch = l.channel === 'discord' ? 'Discord' : l.channel === 'discord_dm' ? 'DM' : null;
       appendMsg(l.role, l.content, l.unit, ch);
     });
   } catch (err) { console.error('Chat history load failed:', err); }
