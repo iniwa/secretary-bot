@@ -59,8 +59,10 @@ def create_web_app(bot) -> FastAPI:
                 try:
                     await bot.database.log_conversation("webgui", "user", message, user_id=_webgui_user_id)
 
+                    history_minutes = bot.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
                     recent_rows = await bot.database.get_recent_channel_messages(
                         "webgui", limit=6, user_id=_webgui_user_id,
+                        minutes=history_minutes,
                     )
                     conversation_context = [
                         r for r in recent_rows if r["content"] != message

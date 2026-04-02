@@ -51,6 +51,7 @@ units:
     enabled: true
   chat:
     enabled: true
+    history_minutes: 60           # 会話履歴の参照範囲（分）。0=時間制限なし
   web_search:
     enabled: true
   rakuten_search:

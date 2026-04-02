@@ -183,22 +183,29 @@ class Database:
         )
 
     async def get_recent_channel_messages(
-        self, channel: str, limit: int = 20, user_id: str = ""
+        self, channel: str, limit: int = 20, user_id: str = "",
+        minutes: int = 0,
     ) -> list[dict]:
-        """チャネル・ユーザー単位の直近会話履歴を古い順で返す。"""
+        """チャネル・ユーザー単位の直近会話履歴を古い順で返す。
+
+        minutes: 0以外を指定すると、現在時刻から指定分以内のメッセージのみ返す。
+        """
+        conditions = ["channel = ?"]
+        params: list = [channel]
         if user_id:
-            rows = await self.fetchall(
-                "SELECT role, content FROM conversation_log "
-                "WHERE channel = ? AND user_id = ? "
-                "ORDER BY timestamp DESC LIMIT ?",
-                (channel, user_id, limit),
-            )
-        else:
-            rows = await self.fetchall(
-                "SELECT role, content FROM conversation_log "
-                "WHERE channel = ? ORDER BY timestamp DESC LIMIT ?",
-                (channel, limit),
-            )
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        if minutes > 0:
+            cutoff = (datetime.now(JST) - timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+            conditions.append("timestamp >= ?")
+            params.append(cutoff)
+        where = " AND ".join(conditions)
+        params.append(limit)
+        rows = await self.fetchall(
+            f"SELECT role, content FROM conversation_log "
+            f"WHERE {where} ORDER BY timestamp DESC LIMIT ?",
+            tuple(params),
+        )
         return list(reversed(rows))
 
     # --- 設定永続化 ---

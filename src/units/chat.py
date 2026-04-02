@@ -108,8 +108,10 @@ class ChatUnit(BaseUnit):
 
         # 直近の会話履歴をプロンプトに付加（現在のメッセージは除く）
         history_limit = config.get("chat", {}).get("history_limit", 8)
+        history_minutes = config.get("chat", {}).get("history_minutes", 60)
         history_rows = await self.bot.database.get_recent_channel_messages(
-            "discord", limit=history_limit + 1, user_id=user_id
+            "discord", limit=history_limit + 1, user_id=user_id,
+            minutes=history_minutes,
         )
         # 末尾が今保存したばかりのユーザー発言と一致する場合は除外（重複防止）
         if history_rows and history_rows[-1]["role"] == "user" and history_rows[-1]["content"] == message:

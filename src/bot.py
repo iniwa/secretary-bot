@@ -125,8 +125,10 @@ class SecretaryBot(commands.Bot):
             await self.database.log_conversation("discord", "user", content, user_id=user_id)
 
             # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
+            history_minutes = self.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
             recent_rows = await self.database.get_recent_channel_messages(
                 "discord", limit=6, user_id=user_id,
+                minutes=history_minutes,
             )
             # 現在のメッセージは既にログ保存済みなので除外
             conversation_context = [
