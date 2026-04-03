@@ -329,7 +329,8 @@ nav.bottom-nav { display: none; }
       <div class="setting-row">
         <span>Ollama Model (Global)</span>
         <div style="display:flex;gap:0.5rem;align-items:center">
-          <input type="text" id="ollama-model" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <input type="text" id="ollama-model" list="ollama-model-list" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <datalist id="ollama-model-list"></datalist>
         </div>
       </div>
       <div class="setting-row">
@@ -629,7 +630,7 @@ function showPage(name) {
   if (name === 'status') loadStatus();
   if (name === 'logs') loadLogs(0);
   if (name === 'maint') loadVersion();
-  if (name === 'settings') { loadPersona(); loadLLMConfig(); loadHeartbeatConfig(); loadRakutenConfig(); loadChatConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
+  if (name === 'settings') { loadPersona(); loadOllamaModels(); loadLLMConfig(); loadHeartbeatConfig(); loadRakutenConfig(); loadChatConfig(); loadGeminiSettings(); loadUnitGeminiSettings(); }
   if (name === 'unit-reminder') { loadReminders(); loadTodos(); }
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
@@ -940,6 +941,15 @@ async function savePersona() {
 
 const UNIT_NAMES = ['reminder', 'memo', 'timer', 'status', 'chat'];
 
+async function loadOllamaModels() {
+  try {
+    const res = await fetch('/api/ollama-models');
+    const data = await res.json();
+    const dl = document.getElementById('ollama-model-list');
+    dl.innerHTML = (data.models || []).map(m => `<option value="${m}">`).join('');
+  } catch (err) { console.error(err); }
+}
+
 async function loadLLMConfig() {
   try {
     const res = await fetch('/api/llm-config');
@@ -954,7 +964,7 @@ async function loadLLMConfig() {
       container.innerHTML += `
         <div class="setting-row">
           <span style="font-size:0.9rem;color:var(--text-dim)">${name}</span>
-          <input type="text" id="unit-model-${name}" value="${val}" placeholder="(global)" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.9rem">
+          <input type="text" id="unit-model-${name}" value="${val}" list="ollama-model-list" placeholder="(global)" style="width:180px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.9rem">
         </div>`;
     });
   } catch (err) { console.error(err); }

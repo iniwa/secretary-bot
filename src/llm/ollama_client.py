@@ -40,6 +40,19 @@ class OllamaClient:
     def is_available(self) -> bool:
         return self._available_url is not None
 
+    async def list_models(self) -> list[str]:
+        """利用可能なOllamaモデル名一覧を返す。"""
+        if not self._available_url:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{self._available_url}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+                return [m["name"] for m in data.get("models", [])]
+        except Exception:
+            return []
+
     @staticmethod
     def _clean_response(text: str) -> str:
         """特殊トークン除去・連続重複除去。"""

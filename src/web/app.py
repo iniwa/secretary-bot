@@ -137,6 +137,12 @@ def create_web_app(bot) -> FastAPI:
         bot.heartbeat._reschedule()
         return {"ollama_available": available}
 
+    @app.get("/api/ollama-models")
+    async def ollama_models():
+        """Ollamaで利用可能なモデル一覧を返す。"""
+        models = await bot.llm_router.ollama.list_models()
+        return {"models": models}
+
     @app.post("/api/delegation-mode", )
     async def set_delegation_mode(request: Request):
         body = await request.json()
