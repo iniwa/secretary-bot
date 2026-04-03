@@ -42,10 +42,13 @@ class PowerUnit(BaseUnit):
     UNIT_NAME = "power"
     UNIT_DESCRIPTION = "PCの電源管理。起動（WoL）・シャットダウン・再起動。「メインPCを起動して」「PCをシャットダウン」など。"
 
+    ADMIN_ONLY = True
+
     def __init__(self, bot):
         super().__init__(bot)
         self._agents = bot.config.get("windows_agents", [])
         self._agent_token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        self._admin_user_id = os.environ.get("WEBGUI_USER_ID", "")
 
         wol_cfg = bot.config.get("wol", {})
         self._wol_url = wol_cfg.get("url", "http://localhost:8090")
@@ -69,9 +72,19 @@ class PowerUnit(BaseUnit):
         # キャンセル可能期間の追跡
         self._active_shutdowns: dict[str, float] = {}
 
+    def _is_admin(self, user_id: str) -> bool:
+        if not self._admin_user_id:
+            return False
+        return str(user_id) == self._admin_user_id
+
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()
         flow_id = parsed.get("flow_id")
+
+        # 管理者のみ使用可能
+        user_id = parsed.get("user_id", "")
+        if not self._is_admin(user_id):
+            return "この機能は管理者のみ使用できます。"
 
         await ft.emit("CB_CHECK", "active", {"unit": self.UNIT_NAME}, flow_id)
         self.breaker.check()
