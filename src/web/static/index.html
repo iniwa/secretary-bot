@@ -543,8 +543,25 @@ nav.bottom-nav { display: none; }
       <button onclick="loadOllamaLogs(0)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
     </div>
     <div style="flex:1;overflow:auto">
-      <table>
-        <thead><tr><th>Time</th><th>Model</th><th>Purpose</th><th>Prompt</th><th>Response</th><th>tok/s</th><th>Duration</th><th>Status</th></tr></thead>
+      <table style="table-layout:fixed;width:100%">
+        <colgroup>
+          <col style="width:145px">
+          <col style="width:120px">
+          <col style="width:auto">
+          <col style="width:75px">
+          <col style="width:75px">
+          <col style="width:70px">
+          <col style="width:75px">
+          <col style="width:60px">
+        </colgroup>
+        <thead><tr>
+          <th>Time</th><th>Model</th><th>Purpose</th>
+          <th style="text-align:right">Prompt</th>
+          <th style="text-align:right">Response</th>
+          <th style="text-align:right">tok/s</th>
+          <th style="text-align:right">Duration</th>
+          <th style="text-align:center">Status</th>
+        </tr></thead>
         <tbody id="ollama-log-body"></tbody>
       </table>
     </div>
@@ -1834,14 +1851,14 @@ async function loadOllamaLogs(offset) {
       const durSec = (l.duration_ms / 1000).toFixed(1) + 's';
       const tokSec = l.tokens_per_sec != null ? l.tokens_per_sec.toFixed(1) : '-';
       const status = l.success ? '<span style="color:#4caf50">OK</span>' : '<span style="color:#f44336" title="' + esc(l.error || '') + '">ERROR</span>';
-      tr.innerHTML = '<td>' + esc(l.timestamp) + '</td>'
-        + '<td>' + esc(l.model) + '</td>'
-        + '<td>' + esc(l.purpose) + '</td>'
-        + '<td style="text-align:right">' + l.prompt_len.toLocaleString() + '</td>'
-        + '<td style="text-align:right">' + l.response_len.toLocaleString() + '</td>'
-        + '<td style="text-align:right">' + tokSec + '</td>'
-        + '<td style="text-align:right">' + durSec + '</td>'
-        + '<td>' + status + '</td>';
+      tr.innerHTML = '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.timestamp) + '</td>'
+        + '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.model) + '</td>'
+        + '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.purpose) + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">' + l.prompt_len.toLocaleString() + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">' + l.response_len.toLocaleString() + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">' + tokSec + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">' + durSec + '</td>'
+        + '<td style="text-align:center">' + status + '</td>';
       const detailId = 'ollama-detail-' + i;
       tr.onclick = () => {
         const el = document.getElementById(detailId);
