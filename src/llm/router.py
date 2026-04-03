@@ -56,6 +56,9 @@ class LLMRouter:
         success: bool = True, error: str | None = None,
         prompt_text: str | None = None, system_text: str | None = None,
         response_text: str | None = None,
+        tokens_per_sec: float | None = None,
+        eval_count: int | None = None,
+        prompt_eval_count: int | None = None,
     ) -> None:
         if self._database:
             try:
@@ -65,6 +68,9 @@ class LLMRouter:
                     success, error,
                     prompt_text=prompt_text, system_text=system_text,
                     response_text=response_text,
+                    tokens_per_sec=tokens_per_sec,
+                    eval_count=eval_count,
+                    prompt_eval_count=prompt_eval_count,
                 )
             except Exception as e:
                 log.debug("Failed to log LLM call: %s", e)
