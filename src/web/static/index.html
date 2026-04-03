@@ -544,7 +544,7 @@ nav.bottom-nav { display: none; }
     </div>
     <div style="flex:1;overflow:auto">
       <table>
-        <thead><tr><th>Time</th><th>Model</th><th>Purpose</th><th>Prompt</th><th>Response</th><th>Duration</th><th>Status</th></tr></thead>
+        <thead><tr><th>Time</th><th>Model</th><th>Purpose</th><th>Prompt</th><th>Response</th><th>tok/s</th><th>Duration</th><th>Status</th></tr></thead>
         <tbody id="ollama-log-body"></tbody>
       </table>
     </div>
@@ -1818,13 +1818,13 @@ async function loadOllamaLogs(offset) {
   if (offset < 0) offset = 0;
   ollamaLogOffset = offset;
   const body = document.getElementById('ollama-log-body');
-  body.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">読み込み中...</td></tr>';
+  body.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim)">読み込み中...</td></tr>';
   try {
     const res = await fetch('/api/logs/llm?limit=50&offset=' + offset + '&provider=ollama');
     const data = await res.json();
     const logs = data.logs || [];
     if (!logs.length) {
-      body.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim)">データがありません</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim)">データがありません</td></tr>';
       return;
     }
     body.innerHTML = '';
@@ -1832,12 +1832,14 @@ async function loadOllamaLogs(offset) {
       const tr = document.createElement('tr');
       tr.style.cursor = 'pointer';
       const durSec = (l.duration_ms / 1000).toFixed(1) + 's';
+      const tokSec = l.tokens_per_sec != null ? l.tokens_per_sec.toFixed(1) : '-';
       const status = l.success ? '<span style="color:#4caf50">OK</span>' : '<span style="color:#f44336" title="' + esc(l.error || '') + '">ERROR</span>';
       tr.innerHTML = '<td>' + esc(l.timestamp) + '</td>'
         + '<td>' + esc(l.model) + '</td>'
         + '<td>' + esc(l.purpose) + '</td>'
         + '<td style="text-align:right">' + l.prompt_len.toLocaleString() + '</td>'
         + '<td style="text-align:right">' + l.response_len.toLocaleString() + '</td>'
+        + '<td style="text-align:right">' + tokSec + '</td>'
         + '<td style="text-align:right">' + durSec + '</td>'
         + '<td>' + status + '</td>';
       const detailId = 'ollama-detail-' + i;
@@ -1851,10 +1853,16 @@ async function loadOllamaLogs(offset) {
       detailTr.id = detailId;
       detailTr.style.display = 'none';
       const td = document.createElement('td');
-      td.colSpan = 7;
+      td.colSpan = 8;
       td.style.padding = '0.8rem';
       td.style.background = 'var(--bg)';
       let html = '';
+      if (l.eval_count != null || l.prompt_eval_count != null) {
+        html += '<div style="margin-bottom:0.5rem;font-size:0.85rem;color:var(--text-dim)">'
+          + '<strong>Tokens:</strong> eval=' + (l.eval_count ?? '-') + ', prompt_eval=' + (l.prompt_eval_count ?? '-')
+          + (l.tokens_per_sec != null ? ', <strong>' + l.tokens_per_sec.toFixed(1) + ' tok/s</strong>' : '')
+          + '</div>';
+      }
       if (l.system_text) {
         html += '<div style="margin-bottom:0.5rem"><strong>System:</strong><pre style="white-space:pre-wrap;word-break:break-word;margin:0.3rem 0;padding:0.5rem;background:var(--surface);border-radius:4px;border:1px solid var(--border);max-height:300px;overflow-y:auto;font-size:0.82rem">' + esc(l.system_text) + '</pre></div>';
       }

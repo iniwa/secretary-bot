@@ -73,7 +73,12 @@ class OllamaClient:
                 result.append(line)
         return "\n".join(result).strip()
 
-    async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> str:
+    async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> tuple[str, dict]:
+        """生成結果のテキストとOllamaメトリクスを返す。
+
+        Returns:
+            (text, metrics) — metricsは eval_count, eval_duration, prompt_eval_count, prompt_eval_duration, tokens_per_sec を含む
+        """
         if not self._available_url:
             raise OllamaUnavailableError("No Ollama instance available")
 
@@ -100,7 +105,22 @@ class OllamaClient:
                 text = data.get("response", "")
                 # <think>...</think> タグが残っている場合は除去
                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-                return self._clean_response(text)
+
+                # Ollamaのパフォーマンスメトリクスを抽出
+                eval_count = data.get("eval_count", 0)
+                eval_duration = data.get("eval_duration", 0)
+                prompt_eval_count = data.get("prompt_eval_count", 0)
+                prompt_eval_duration = data.get("prompt_eval_duration", 0)
+                tokens_per_sec = (eval_count / (eval_duration / 1e9)) if eval_duration > 0 else 0.0
+                metrics = {
+                    "eval_count": eval_count,
+                    "eval_duration": eval_duration,
+                    "prompt_eval_count": prompt_eval_count,
+                    "prompt_eval_duration": prompt_eval_duration,
+                    "tokens_per_sec": round(tokens_per_sec, 2),
+                }
+
+                return self._clean_response(text), metrics
         except Exception as e:
             self._available_url = None
             raise OllamaUnavailableError(f"Ollama generation failed: {e}") from e

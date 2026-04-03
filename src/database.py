@@ -82,7 +82,10 @@ CREATE TABLE IF NOT EXISTS llm_log (
     response_len INTEGER NOT NULL DEFAULT 0,
     duration_ms INTEGER NOT NULL DEFAULT 0,
     success   BOOLEAN NOT NULL DEFAULT 1,
-    error     TEXT
+    error     TEXT,
+    tokens_per_sec REAL,
+    eval_count INTEGER,
+    prompt_eval_count INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS weather_subscriptions (
@@ -172,6 +175,11 @@ class Database:
                     calendar_id TEXT NOT NULL,
                     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""",
+            ],
+            9: [
+                "ALTER TABLE llm_log ADD COLUMN tokens_per_sec REAL",
+                "ALTER TABLE llm_log ADD COLUMN eval_count INTEGER",
+                "ALTER TABLE llm_log ADD COLUMN prompt_eval_count INTEGER",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -304,11 +312,14 @@ class Database:
         success: bool = True, error: str | None = None,
         prompt_text: str | None = None, system_text: str | None = None,
         response_text: str | None = None,
+        tokens_per_sec: float | None = None,
+        eval_count: int | None = None,
+        prompt_eval_count: int | None = None,
     ) -> None:
         await self.execute(
-            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error),
+            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count),
         )
 
     async def get_llm_logs(

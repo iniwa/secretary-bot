@@ -117,11 +117,14 @@ class LLMRouter:
             t0 = time.monotonic()
             try:
                 await ft.emit("OLLAMA", "active", {"model": _model}, flow_id)
-                result = await self.ollama.generate(prompt, system=system, model=ollama_model)
+                result, metrics = await self.ollama.generate(prompt, system=system, model=ollama_model)
                 dur = int((time.monotonic() - t0) * 1000)
                 await self._log_llm_call(
                     "ollama", _model, purpose, len(prompt), len(result), dur,
                     prompt_text=prompt, system_text=system, response_text=result,
+                    tokens_per_sec=metrics.get("tokens_per_sec"),
+                    eval_count=metrics.get("eval_count"),
+                    prompt_eval_count=metrics.get("prompt_eval_count"),
                 )
                 await ft.emit("OLLAMA", "done", {"model": _model}, flow_id)
                 await ft.emit("LLM_SELECT", "done", {"selected": "ollama"}, flow_id)
