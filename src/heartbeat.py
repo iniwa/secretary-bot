@@ -68,6 +68,20 @@ class Heartbeat:
 
     async def _check_compact(self) -> dict:
         threshold = self._config.get("compact_threshold_messages", 20)
+
+        # 前回コンパクション以降の新規メッセージのみカウント
+        last_id_str = await self.bot.database.get_setting("last_compact_msg_id")
+        last_id = int(last_id_str) if last_id_str else 0
+
+        if last_id > 0:
+            rows = await self.bot.database.fetchall(
+                "SELECT id FROM conversation_log WHERE id > ? ORDER BY id DESC LIMIT ?",
+                (last_id, threshold + 1),
+            )
+            new_count = len(rows)
+            if new_count < threshold:
+                return {"skipped": True, "new_messages": new_count, "threshold": threshold, "reason": "not_enough_new"}
+
         messages = await self.bot.database.get_recent_messages(limit=threshold + 1)
         msg_count = len(messages)
         if msg_count <= threshold:
@@ -98,6 +112,10 @@ class Heartbeat:
             )
             log.info("Context compacted (SQLite + ChromaDB)")
             result["saved"] = True
+
+            # 処理済みの最新メッセージIDを記録（次回の重複防止）
+            max_id = max(m["id"] for m in messages)
+            await self.bot.database.set_setting("last_compact_msg_id", str(max_id))
 
             # ai_memory抽出（Ollama稼働中のみ）
             conversation_text = "\n".join(texts)
