@@ -95,10 +95,8 @@ class UnitLLM:
         global_llm_cfg = global_config.get("llm", {})
         character_cfg = global_config.get("character", {})
 
-        ollama_model = (
-            unit_llm_cfg.get("ollama_model")
-            or global_llm_cfg.get("ollama_model")
-        )
+        # ユニット別上書きがある場合のみ設定。Noneならルーターのグローバルモデルを使用
+        ollama_model = unit_llm_cfg.get("ollama_model")
         gemini_model = unit_llm_cfg.get("gemini_model")
         ollama_only = unit_llm_cfg.get(
             "ollama_only", character_cfg.get("ollama_only", False),
