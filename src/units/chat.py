@@ -35,7 +35,8 @@ class ChatUnit(BaseUnit):
 
         await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
         try:
-            response = await self._generate_response(message, flow_id, user_id=user_id)
+            conversation_context = parsed.get("conversation_context")
+            response = await self._generate_response(message, flow_id, user_id=user_id, conversation_context=conversation_context)
             self.breaker.record_success()
             await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME}, flow_id)
 
@@ -65,7 +66,7 @@ class ChatUnit(BaseUnit):
             log.warning("Background memory extraction failed: %s", e)
             await ft.emit("MEM_WRITE", "error", {}, flow_id)
 
-    async def _generate_response(self, message: str, flow_id: str | None = None, user_id: str = "") -> str:
+    async def _generate_response(self, message: str, flow_id: str | None = None, user_id: str = "", conversation_context: list[dict] | None = None) -> str:
         ft = get_flow_tracker()
         config = self.bot.config
         character = config.get("character", {})
@@ -106,20 +107,25 @@ class ChatUnit(BaseUnit):
 
         system = "\n".join(system_parts) if system_parts else None
 
-        # 直近の会話履歴をプロンプトに付加（現在のメッセージは除く）
-        history_limit = config.get("chat", {}).get("history_limit", 8)
-        history_minutes = config.get("chat", {}).get("history_minutes", 60)
-        history_rows = await self.bot.database.get_recent_channel_messages(
-            "discord", limit=history_limit + 1, user_id=user_id,
-            minutes=history_minutes,
-        )
-        # 末尾が今保存したばかりのユーザー発言と一致する場合は除外（重複防止）
-        if history_rows and history_rows[-1]["role"] == "user" and history_rows[-1]["content"] == message:
-            history_rows = history_rows[:-1]
+        # 直近の会話履歴をプロンプトに付加
+        if conversation_context is not None:
+            # bot.pyから渡されたDiscordチャンネル履歴を使用
+            history_rows = conversation_context
+        else:
+            # WebGUI等: DBから取得
+            history_limit = config.get("chat", {}).get("history_limit", 8)
+            history_minutes = config.get("chat", {}).get("history_minutes", 60)
+            history_rows = await self.bot.database.get_recent_channel_messages(
+                "discord", limit=history_limit + 1, user_id=user_id,
+                minutes=history_minutes,
+            )
+            # 末尾が今保存したばかりのユーザー発言と一致する場合は除外（重複防止）
+            if history_rows and history_rows[-1]["role"] == "user" and history_rows[-1]["content"] == message:
+                history_rows = history_rows[:-1]
 
         if history_rows:
             history_text = "\n".join(
-                f"{'ユーザー' if r['role'] == 'user' else 'アシスタント'}: {r['content']}"
+                f"{r.get('name', 'ユーザー') if r['role'] == 'user' else 'アシスタント'}: {r['content']}"
                 for r in history_rows
             )
             prompt = f"【過去の会話履歴】\n{history_text}\n\n【現在のメッセージ】\n{message}"

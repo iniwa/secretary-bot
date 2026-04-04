@@ -84,6 +84,35 @@ class SecretaryBot(commands.Bot):
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
 
+    async def _fetch_discord_history(
+        self, message: discord.Message, minutes: int, limit: int,
+    ) -> list[dict]:
+        """Discordチャンネルから直近のメッセージ履歴を取得する。"""
+        from datetime import datetime, timedelta, timezone
+        after = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        history: list[dict] = []
+        try:
+            async for msg in message.channel.history(limit=limit + 1, after=after, oldest_first=True):
+                if msg.id == message.id:
+                    continue  # 現在のメッセージは除外
+                if not msg.content.strip():
+                    continue
+                # メンション部分を除去
+                text = msg.content
+                if self.user:
+                    text = text.replace(f"<@{self.user.id}>", "").replace(f"<@!{self.user.id}>", "").strip()
+                if not text:
+                    continue
+                role = "assistant" if msg.author.id == self.user.id else "user"
+                name = msg.author.display_name if role == "user" else None
+                entry = {"role": role, "content": text}
+                if name:
+                    entry["name"] = name
+                history.append(entry)
+        except Exception as e:
+            log.warning("Failed to fetch Discord history: %s", e)
+        return history[-limit:]
+
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
@@ -128,14 +157,10 @@ class SecretaryBot(commands.Bot):
 
             # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
             history_minutes = self.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
-            recent_rows = await self.database.get_recent_channel_messages(
-                channel_tag, limit=6, user_id=user_id,
-                minutes=history_minutes,
+            history_limit = self.config.get("units", {}).get("chat", {}).get("history_limit", 8)
+            conversation_context = await self._fetch_discord_history(
+                message, history_minutes, history_limit,
             )
-            # 現在のメッセージは既にログ保存済みなので除外
-            conversation_context = [
-                r for r in recent_rows if r["content"] != content
-            ][-4:]  # 直近4件（2往復分）
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
