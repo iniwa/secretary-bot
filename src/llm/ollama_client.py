@@ -15,7 +15,7 @@ DEFAULT_OLLAMA_URLS = [
 
 
 class OllamaClient:
-    def __init__(self, model: str = "qwen3", urls: list[str] | None = None, timeout: int = 300):
+    def __init__(self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 300):
         self.model = model
         self.urls = urls or []
         self.timeout = timeout
@@ -82,14 +82,18 @@ class OllamaClient:
         if not self._available_url:
             raise OllamaUnavailableError("No Ollama instance available")
 
+        use_model = model or self.model
+        options: dict = {}
+        # qwen系モデルの場合のみ思考モード無効化・ChatMLストップトークンを設定
+        if "qwen" in use_model.lower():
+            options["think"] = False
+            options["stop"] = ["<|endoftext|>", "<|im_start|>", "<|im_end|>"]
+
         payload = {
-            "model": model or self.model,
+            "model": use_model,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "think": False,  # qwen3思考モード無効化
-                "stop": ["<|endoftext|>", "<|im_start|>", "<|im_end|>"],
-            },
+            "options": options,
         }
         if system:
             payload["system"] = system
@@ -103,8 +107,9 @@ class OllamaClient:
                 resp.raise_for_status()
                 data = resp.json()
                 text = data.get("response", "")
-                # <think>...</think> タグが残っている場合は除去
-                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                # <think>...</think> タグが残っている場合は除去（qwen系）
+                if "<think>" in text:
+                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
                 # Ollamaのパフォーマンスメトリクスを抽出
                 eval_count = data.get("eval_count", 0)

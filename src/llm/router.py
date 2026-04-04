@@ -40,7 +40,7 @@ class LLMRouter:
                 if url not in ollama_urls:
                     ollama_urls.append(url)
 
-        model = config.get("llm", {}).get("ollama_model", "qwen3")
+        model = config.get("llm", {}).get("ollama_model", "gemma4")
         timeout = int(config.get("llm", {}).get("ollama_timeout", 300))
         self.ollama = OllamaClient(model=model, urls=ollama_urls, timeout=timeout)
         self.gemini = GeminiClient()

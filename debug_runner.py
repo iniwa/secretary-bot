@@ -41,7 +41,7 @@ log = get_logger(__name__)
 # --- デバッグ用config ---
 
 _DEBUG_CONFIG = {
-    "llm": {"ollama_model": "qwen3"},
+    "llm": {"ollama_model": "gemma4"},
     "gemini": {
         "conversation": False,
         "memory_extraction": False,
