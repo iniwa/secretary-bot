@@ -227,7 +227,7 @@ nav.bottom-nav { display: none; }
   <div class="nav-group">
     <div class="nav-group-label">Logs</div>
     <button onclick="showPage('logs')">会話ログ</button>
-    <button onclick="showPage('ollama-logs')">Ollama</button>
+    <button onclick="showPage('ollama-logs')">LLM</button>
     <button onclick="showPage('heartbeat-debug')">Heartbeat</button>
     <button onclick="showPage('rakuten-debug')">楽天Search</button>
   </div>
@@ -542,13 +542,19 @@ nav.bottom-nav { display: none; }
   <!-- Ollama Logs -->
   <div id="page-ollama-logs" class="page">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
-      <h2>Ollama 動作履歴</h2>
+      <h2>LLM 動作履歴</h2>
+      <select id="llm-log-provider" onchange="loadOllamaLogs(0)" style="padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.9rem">
+        <option value="">All</option>
+        <option value="ollama">Ollama</option>
+        <option value="gemini">Gemini</option>
+      </select>
       <button onclick="loadOllamaLogs(0)" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
     </div>
     <div style="flex:1;overflow:auto">
       <table style="table-layout:fixed;width:100%">
         <colgroup>
           <col style="width:175px">
+          <col style="width:70px">
           <col style="width:120px">
           <col style="width:auto">
           <col style="width:75px">
@@ -558,7 +564,7 @@ nav.bottom-nav { display: none; }
           <col style="width:60px">
         </colgroup>
         <thead><tr>
-          <th>Time</th><th>Model</th><th>Purpose</th>
+          <th>Time</th><th>Provider</th><th>Model</th><th>Purpose</th>
           <th style="text-align:right">Prompt</th>
           <th style="text-align:right">Response</th>
           <th style="text-align:right">tok/s</th>
@@ -1837,19 +1843,22 @@ async function loadChatHistory() {
   } catch (err) { console.error('Chat history load failed:', err); }
 }
 
-// --- Ollama Logs ---
+// --- LLM Logs ---
 let ollamaLogOffset = 0;
 async function loadOllamaLogs(offset) {
   if (offset < 0) offset = 0;
   ollamaLogOffset = offset;
   const body = document.getElementById('ollama-log-body');
-  body.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim)">読み込み中...</td></tr>';
+  body.innerHTML = '<tr><td colspan="9" style="color:var(--text-dim)">読み込み中...</td></tr>';
   try {
-    const res = await fetch('/api/logs/llm?limit=50&offset=' + offset + '&provider=ollama');
+    const provider = document.getElementById('llm-log-provider').value;
+    let url = '/api/logs/llm?limit=50&offset=' + offset;
+    if (provider) url += '&provider=' + provider;
+    const res = await fetch(url);
     const data = await res.json();
     const logs = data.logs || [];
     if (!logs.length) {
-      body.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim)">データがありません</td></tr>';
+      body.innerHTML = '<tr><td colspan="9" style="color:var(--text-dim)">データがありません</td></tr>';
       return;
     }
     body.innerHTML = '';
@@ -1859,7 +1868,10 @@ async function loadOllamaLogs(offset) {
       const durSec = (l.duration_ms / 1000).toFixed(1) + 's';
       const tokSec = l.tokens_per_sec != null ? l.tokens_per_sec.toFixed(1) : '-';
       const status = l.success ? '<span style="color:#4caf50">OK</span>' : '<span style="color:#f44336" title="' + esc(l.error || '') + '">ERROR</span>';
+      const providerColor = l.provider === 'ollama' ? '#4caf50' : '#2196f3';
+      const providerLabel = '<span style="color:' + providerColor + '">' + esc(l.provider || '-') + '</span>';
       tr.innerHTML = '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.timestamp) + '</td>'
+        + '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + providerLabel + '</td>'
         + '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.model) + '</td>'
         + '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(l.purpose) + '</td>'
         + '<td style="text-align:right;white-space:nowrap">' + l.prompt_len.toLocaleString() + '</td>'
@@ -1867,7 +1879,7 @@ async function loadOllamaLogs(offset) {
         + '<td style="text-align:right;white-space:nowrap">' + tokSec + '</td>'
         + '<td style="text-align:right;white-space:nowrap">' + durSec + '</td>'
         + '<td style="text-align:center">' + status + '</td>';
-      const detailId = 'ollama-detail-' + i;
+      const detailId = 'llm-detail-' + i;
       tr.onclick = () => {
         const el = document.getElementById(detailId);
         el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
@@ -1878,7 +1890,7 @@ async function loadOllamaLogs(offset) {
       detailTr.id = detailId;
       detailTr.style.display = 'none';
       const td = document.createElement('td');
-      td.colSpan = 8;
+      td.colSpan = 9;
       td.style.padding = '0.8rem';
       td.style.background = 'var(--bg)';
       let html = '';
@@ -1906,7 +1918,7 @@ async function loadOllamaLogs(offset) {
       body.appendChild(detailTr);
     });
   } catch(e) {
-    body.innerHTML = '<tr><td colspan="7" style="color:#f44336">読み込みエラー: ' + esc(e.message) + '</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" style="color:#f44336">読み込みエラー: ' + esc(e.message) + '</td></tr>';
   }
 }
 
