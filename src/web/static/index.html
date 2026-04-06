@@ -72,6 +72,9 @@ main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .status-card .val { font-size: 1.1rem; font-weight: bold; }
 .status-card .val.ok { color: #4caf50; }
 .status-card .val.ng { color: var(--accent); }
+.skeleton { background: var(--border); border-radius: 4px; position: relative; overflow: hidden; }
+.skeleton::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); animation: skeleton-shimmer 1.5s infinite; }
+@keyframes skeleton-shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
 /* Logs */
 .log-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
@@ -782,11 +785,20 @@ function appendMsg(role, text, unit, channel) {
   el.scrollIntoView({ behavior: 'smooth' });
 }
 
+function skeletonCard() {
+  return `<div class="status-card"><div class="skeleton" style="width:60%;height:0.95rem;margin-bottom:0.5rem"></div><div class="skeleton" style="width:40%;height:1.1rem"></div></div>`;
+}
+function skeletonUnit() {
+  return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.8rem;background:var(--surface);border-radius:6px;border:1px solid var(--border)"><div class="skeleton" style="width:50px;height:1rem"></div><div class="skeleton" style="width:120px;height:1rem"></div><div class="skeleton" style="width:180px;height:0.85rem;margin-left:auto"></div></div>`;
+}
 async function loadStatus() {
+  const grid = document.getElementById('status-grid');
+  const ulist = document.getElementById('units-list');
+  grid.innerHTML = skeletonCard().repeat(4);
+  ulist.innerHTML = skeletonUnit().repeat(3);
   try {
-    const res = await fetch('/api/status');
-    const data = await res.json();
-    const grid = document.getElementById('status-grid');
+    const [res, ures] = await Promise.all([fetch('/api/status'), fetch('/api/units/loaded')]);
+    const [data, udata] = await Promise.all([res.json(), ures.json()]);
     grid.innerHTML = '';
     grid.innerHTML += card('Version', data.version);
     grid.innerHTML += card('Uptime', Math.floor(data.uptime / 60) + ' min');
@@ -794,10 +806,6 @@ async function loadStatus() {
     (data.agents || []).forEach(a => {
       grid.innerHTML += card(a.name, (a.alive ? 'Active' : 'Inactive') + ' / ' + a.mode, a.alive);
     });
-    // ユニット一覧
-    const ures = await fetch('/api/units/loaded');
-    const udata = await ures.json();
-    const ulist = document.getElementById('units-list');
     ulist.innerHTML = '';
     (udata.units || []).forEach(u => {
       const state = u.breaker_state === 'closed' ? 'ok' : 'ng';
@@ -1819,7 +1827,7 @@ function showNodeInfo(nodeId) {
 // --- チャット履歴をバックエンドから復元 ---
 async function loadChatHistory() {
   try {
-    const res = await fetch('/api/logs?limit=50');
+    const res = await fetch('/api/logs?limit=50&bot_only=1');
     const data = await res.json();
     const msgs = (data.logs || []).reverse();
     msgs.forEach(l => {

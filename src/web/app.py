@@ -105,8 +105,8 @@ def create_web_app(bot) -> FastAPI:
         return {"flow_id": flow_id}
 
     @app.get("/api/logs", )
-    async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None):
-        logs = await bot.database.get_conversation_logs(limit=limit, offset=offset, keyword=keyword, channel=channel)
+    async def get_logs(limit: int = 50, offset: int = 0, keyword: str | None = None, channel: str | None = None, bot_only: bool = False):
+        logs = await bot.database.get_conversation_logs(limit=limit, offset=offset, keyword=keyword, channel=channel, bot_only=bot_only)
         return {"logs": logs}
 
     @app.get("/api/status", )

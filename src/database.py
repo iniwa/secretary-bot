@@ -241,6 +241,7 @@ class Database:
         self, limit: int = 50, offset: int = 0,
         keyword: str | None = None,
         channel: str | None = None,
+        bot_only: bool = False,
     ) -> list[dict]:
         conditions = []
         params: list = []
@@ -250,6 +251,19 @@ class Database:
         if channel:
             conditions.append("channel = ?")
             params.append(channel)
+        if bot_only:
+            # webguiは全表示、discord系はボットが応答した会話のみ
+            conditions.append(
+                "(channel = 'webgui'"
+                " OR role = 'assistant'"
+                " OR (role = 'user' AND EXISTS ("
+                "   SELECT 1 FROM conversation_log c2"
+                "   WHERE c2.role = 'assistant'"
+                "   AND c2.channel = conversation_log.channel"
+                "   AND c2.id > conversation_log.id"
+                "   AND c2.id <= conversation_log.id + 5"
+                ")))"
+            )
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         params.extend([limit, offset])
         return await self.fetchall(
