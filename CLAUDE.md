@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-> 設計の詳細・背景は `plan.md` を参照。
-
 ## Communication
 - User writes in Japanese; **respond in Japanese**.
 - Write lightweight, efficient code. Prefer minimal dependencies.
