@@ -257,7 +257,7 @@ nav.bottom-nav { display: none; }
           <button onclick="flowZoom(0.2)" title="ズームイン">+</button>
           <button onclick="flowZoom(-0.2)" title="ズームアウト">−</button>
           <button onclick="flowZoomReset()" title="リセット">⟲</button>
-          <div class="flow-zoom-level" id="flow-zoom-level">100%</div>
+          <div class="flow-zoom-level" id="flow-zoom-level">50%</div>
         </div>
       </div>
     </div>
@@ -1538,10 +1538,10 @@ let flowNodeStates = {}; // nodeId -> {status, detail, updated_at, started_at, d
 let flowActive = false;
 
 // --- Zoom & Pan state ---
-let flowScale = 1.5;  // default: 150% for better readability
+let flowScale = 0.5;  // default: 50%
 let flowPanX = 0, flowPanY = 0;
 let flowIsPanning = false, flowPanStartX = 0, flowPanStartY = 0;
-const FLOW_SCALE_MIN = 0.5, FLOW_SCALE_MAX = 4.0, FLOW_SCALE_DEFAULT = 1.5;
+const FLOW_SCALE_MIN = 0.2, FLOW_SCALE_MAX = 4.0, FLOW_SCALE_DEFAULT = 0.5;
 
 function flowApplyTransform() {
   const svgEl = document.querySelector('#flow-mermaid svg');
