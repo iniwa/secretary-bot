@@ -221,6 +221,11 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('unit-weather')">Weather</button>
   </div>
   <div class="nav-group">
+    <div class="nav-group-label">Inner Mind</div>
+    <button onclick="showPage('inner-mind')">Monologue</button>
+    <button onclick="showPage('inner-mind-settings')">IM Settings</button>
+  </div>
+  <div class="nav-group">
     <div class="nav-group-label">Memory</div>
     <button onclick="showPage('memory')">Memory</button>
   </div>
@@ -621,6 +626,51 @@ nav.bottom-nav { display: none; }
       <pre id="rakuten-debug-output" style="white-space:pre-wrap;word-break:break-word;font-size:0.85rem;background:var(--bg);padding:1rem;border-radius:6px;border:1px solid var(--border);max-height:400px;overflow-y:auto"></pre>
     </div>
   </div>
+
+  <!-- Inner Mind Monologue -->
+  <div id="page-inner-mind" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>Inner Mind — モノローグ</h2>
+      <button onclick="loadMonologues()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+    <div id="monologue-list" style="display:flex;flex-direction:column;gap:0.5rem">
+      <span style="color:var(--text-dim)">ページを開いた時に自動読み込みされます。</span>
+    </div>
+  </div>
+
+  <!-- Inner Mind Settings -->
+  <div id="page-inner-mind-settings" class="page">
+    <h2 style="margin-bottom:1rem">Inner Mind 設定</h2>
+    <div class="maint-section">
+      <div class="setting-row">
+        <span>有効</span>
+        <label class="toggle">
+          <input type="checkbox" id="im-enabled" onchange="saveIMSettings()">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <span>発言確率</span>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <input type="range" id="im-prob" min="0" max="100" step="5" style="width:120px" oninput="document.getElementById('im-prob-val').textContent=this.value+'%'" onchange="saveIMSettings()">
+          <span id="im-prob-val">20%</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <span>最低発言インターバル（分）</span>
+        <input type="number" id="im-interval" min="0" value="0" style="width:80px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);text-align:center" onchange="saveIMSettings()">
+      </div>
+      <div class="setting-row">
+        <span>発言チャンネルID</span>
+        <input type="text" id="im-channel" placeholder="Discord Channel ID" style="width:200px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)" onchange="saveIMSettings()">
+      </div>
+      <div class="setting-row">
+        <span>監視ユーザーID</span>
+        <input type="text" id="im-user" placeholder="Discord User ID" style="width:200px;padding:0.4rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)" onchange="saveIMSettings()">
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <nav class="bottom-nav">
@@ -665,6 +715,8 @@ function showPage(name) {
   if (name === 'ollama-logs') loadOllamaLogs(0);
   if (name === 'heartbeat-debug') loadHeartbeatDebug();
   if (name === 'rakuten-debug') loadRakutenDebug();
+  if (name === 'inner-mind') loadMonologues();
+  if (name === 'inner-mind-settings') loadIMSettings();
 }
 
 let chatBusy = false;
@@ -2136,6 +2188,73 @@ async function deleteMemoryEntry(collection, docId) {
   const savedPage = loadState('page', 'chat');
   showPage(savedPage);
 })();
+
+// --- Inner Mind ---
+
+async function loadMonologues() {
+  const el = document.getElementById('monologue-list');
+  el.innerHTML = '<span style="color:var(--text-dim)">読み込み中...</span>';
+  try {
+    const res = await fetch('/api/monologue?limit=50');
+    const data = await res.json();
+    const rows = data.monologues || [];
+    if (!rows.length) {
+      el.innerHTML = '<span style="color:var(--text-dim)">まだモノローグがありません。</span>';
+      return;
+    }
+    el.innerHTML = rows.map(r => {
+      const time = (r.created_at || '').slice(11, 16);
+      const date = (r.created_at || '').slice(0, 10);
+      const mood = r.mood || '?';
+      const moodColor = {curious:'#f0c040',calm:'#6ecf6e',talkative:'#60b0f0',concerned:'#e07070',idle:'#999'}[mood] || 'var(--text-dim)';
+      const sent = r.did_notify ? `<span style="color:var(--accent);font-size:0.8rem;margin-left:0.5rem" title="${(r.notified_message||'').replace(/"/g,'&quot;')}">&#9993; 送信済</span>` : '';
+      return `<div style="background:var(--surface);padding:0.8rem 1rem;border-radius:8px;border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem">
+          <span style="color:var(--text-dim);font-size:0.85rem">${date} ${time}</span>
+          <span style="color:${moodColor};font-size:0.85rem;font-weight:bold">[${mood}]</span>
+          ${sent}
+        </div>
+        <div style="font-size:0.95rem">「${r.monologue.replace(/</g,'&lt;')}」</div>
+        ${r.notified_message ? `<div style="margin-top:0.3rem;font-size:0.85rem;color:var(--text-dim)">→ ${r.notified_message.replace(/</g,'&lt;')}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<span style="color:var(--accent)">読み込みエラー: ${e.message}</span>`;
+  }
+}
+
+async function loadIMSettings() {
+  try {
+    const res = await fetch('/api/inner-mind/settings');
+    const s = await res.json();
+    document.getElementById('im-enabled').checked = s.enabled;
+    document.getElementById('im-prob').value = Math.round(s.speak_probability * 100);
+    document.getElementById('im-prob-val').textContent = Math.round(s.speak_probability * 100) + '%';
+    document.getElementById('im-interval').value = s.min_speak_interval_minutes;
+    document.getElementById('im-channel').value = s.speak_channel_id || '';
+    document.getElementById('im-user').value = s.target_user_id || '';
+  } catch(e) {
+    console.error('Failed to load IM settings', e);
+  }
+}
+
+async function saveIMSettings() {
+  try {
+    await fetch('/api/inner-mind/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        enabled: document.getElementById('im-enabled').checked,
+        speak_probability: parseInt(document.getElementById('im-prob').value) / 100,
+        min_speak_interval_minutes: parseInt(document.getElementById('im-interval').value) || 0,
+        speak_channel_id: document.getElementById('im-channel').value,
+        target_user_id: document.getElementById('im-user').value,
+      })
+    });
+  } catch(e) {
+    console.error('Failed to save IM settings', e);
+  }
+}
 </script>
 </body>
 </html>

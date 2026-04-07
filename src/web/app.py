@@ -817,6 +817,60 @@ def create_web_app(bot) -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    # --- InnerMind モノローグ ---
+
+    @app.get("/api/monologue", dependencies=[Depends(_verify)])
+    async def get_monologues(limit: int = 50):
+        rows = await bot.database.get_monologues(limit=limit)
+        return {"monologues": rows}
+
+    @app.get("/api/inner-mind/settings", dependencies=[Depends(_verify)])
+    async def get_inner_mind_settings():
+        im_cfg = bot.config.get("inner_mind", {})
+        # DB保存値を優先読み込み
+        enabled = await bot.database.get_setting("inner_mind.enabled")
+        prob = await bot.database.get_setting("inner_mind.speak_probability")
+        interval = await bot.database.get_setting("inner_mind.min_speak_interval_minutes")
+        return {
+            "enabled": (enabled == "true") if enabled is not None else im_cfg.get("enabled", False),
+            "speak_probability": float(prob) if prob is not None else im_cfg.get("speak_probability", 0.20),
+            "min_speak_interval_minutes": int(interval) if interval is not None else im_cfg.get("min_speak_interval_minutes", 0),
+            "thinking_interval_ticks": im_cfg.get("thinking_interval_ticks", 2),
+            "speak_channel_id": im_cfg.get("speak_channel_id", ""),
+            "target_user_id": im_cfg.get("target_user_id", ""),
+        }
+
+    @app.post("/api/inner-mind/settings", dependencies=[Depends(_verify)])
+    async def set_inner_mind_settings(request: Request):
+        body = await request.json()
+        im_cfg = bot.config.setdefault("inner_mind", {})
+
+        if "enabled" in body:
+            val = bool(body["enabled"])
+            im_cfg["enabled"] = val
+            await bot.database.set_setting("inner_mind.enabled", str(val).lower())
+
+        if "speak_probability" in body:
+            val = float(body["speak_probability"])
+            if not 0 <= val <= 1:
+                raise HTTPException(400, "speak_probability must be 0.0-1.0")
+            im_cfg["speak_probability"] = val
+            await bot.database.set_setting("inner_mind.speak_probability", str(val))
+
+        if "min_speak_interval_minutes" in body:
+            val = int(body["min_speak_interval_minutes"])
+            if val < 0:
+                raise HTTPException(400, "min_speak_interval_minutes must be >= 0")
+            im_cfg["min_speak_interval_minutes"] = val
+            await bot.database.set_setting("inner_mind.min_speak_interval_minutes", str(val))
+
+        if "speak_channel_id" in body:
+            im_cfg["speak_channel_id"] = str(body["speak_channel_id"])
+        if "target_user_id" in body:
+            im_cfg["target_user_id"] = str(body["target_user_id"])
+
+        return {"ok": True}
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")

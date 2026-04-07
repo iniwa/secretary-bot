@@ -1,5 +1,6 @@
 """ハートビート・コンテキスト圧縮・リマインダースケジュール。"""
 
+import asyncio
 import uuid
 from collections import deque
 from datetime import datetime
@@ -7,6 +8,7 @@ from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.database import JST, jst_now
+from src.inner_mind.core import InnerMind
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -20,6 +22,9 @@ class Heartbeat:
         self.scheduler = AsyncIOScheduler(timezone="Asia/Tokyo")
         self._job_id = "heartbeat"
         self.debug_logs: deque[dict] = deque(maxlen=_MAX_DEBUG_LOGS)
+        self.inner_mind = InnerMind(bot)
+        self._think_tick = 0
+        self._think_running = False
 
     @property
     def _config(self) -> dict:
@@ -30,6 +35,15 @@ class Heartbeat:
             return self._config.get("interval_with_ollama_minutes", 15)
         return self._config.get("interval_without_ollama_minutes", 180)
 
+    async def _run_think(self) -> None:
+        """inner_mind.think() をバックグラウンドで実行。ハートビートをブロックしない。"""
+        try:
+            await self.inner_mind.think()
+        except Exception as e:
+            log.error("InnerMind think failed: %s", e)
+        finally:
+            self._think_running = False
+
     async def _tick(self) -> None:
         log.info("Heartbeat tick")
         tick_log = {
@@ -37,10 +51,28 @@ class Heartbeat:
             "units": [],
             "compact": None,
             "ollama": None,
+            "inner_mind": None,
             "next_minutes": None,
             "error": None,
         }
         try:
+            # InnerMind 思考サイクル
+            self._think_tick += 1
+            im_cfg = self.bot.config.get("inner_mind", {})
+            if im_cfg.get("enabled", False):
+                interval = im_cfg.get("thinking_interval_ticks", 2)
+                if self._think_tick % interval == 0:
+                    if not self._think_running:
+                        self._think_running = True
+                        asyncio.create_task(self._run_think())
+                        tick_log["inner_mind"] = "launched"
+                    else:
+                        tick_log["inner_mind"] = "already_running"
+                else:
+                    tick_log["inner_mind"] = f"waiting ({self._think_tick % interval}/{interval})"
+            else:
+                tick_log["inner_mind"] = "disabled"
+
             # 各ユニットの on_heartbeat 呼び出し
             for unit in self.bot.unit_manager.units.values():
                 name = getattr(getattr(unit, "unit", unit), "UNIT_NAME", "?")

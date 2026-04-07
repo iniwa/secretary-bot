@@ -62,6 +62,8 @@ class SecretaryBot(commands.Bot):
     def __init__(self, config: dict):
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.presences = True
+        intents.members = True
         super().__init__(command_prefix="!", intents=intents)
 
         self.config = config
@@ -313,6 +315,28 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             except (ValueError, _json.JSONDecodeError):
                 chat_cfg[short_key] = value
         log.info("Restored chat settings from DB")
+
+    # InnerMind設定
+    im_settings = await bot.database.get_all_settings("inner_mind.")
+    if im_settings:
+        im_cfg = bot.config.setdefault("inner_mind", {})
+        for key, value in im_settings.items():
+            short_key = key.removeprefix("inner_mind.")
+            if short_key == "enabled":
+                im_cfg[short_key] = value == "true"
+            elif short_key in ("speak_probability",):
+                try:
+                    im_cfg[short_key] = float(value)
+                except ValueError:
+                    im_cfg[short_key] = value
+            elif short_key in ("min_speak_interval_minutes",):
+                try:
+                    im_cfg[short_key] = int(value)
+                except ValueError:
+                    im_cfg[short_key] = value
+            else:
+                im_cfg[short_key] = value
+        log.info("Restored inner_mind settings from DB")
 
     # ペルソナ
     saved_persona = await bot.database.get_setting("character.persona")

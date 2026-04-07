@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 10
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -105,6 +105,22 @@ CREATE TABLE IF NOT EXISTS calendar_settings (
     calendar_id TEXT NOT NULL,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS mimi_monologue (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    monologue        TEXT NOT NULL,
+    mood             TEXT,
+    did_notify       BOOLEAN DEFAULT 0,
+    notified_message TEXT,
+    created_at       DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mimi_self_model (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at DATETIME NOT NULL
+);
 """
 
 
@@ -180,6 +196,22 @@ class Database:
                 "ALTER TABLE llm_log ADD COLUMN tokens_per_sec REAL",
                 "ALTER TABLE llm_log ADD COLUMN eval_count INTEGER",
                 "ALTER TABLE llm_log ADD COLUMN prompt_eval_count INTEGER",
+            ],
+            10: [
+                """CREATE TABLE IF NOT EXISTS mimi_monologue (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monologue        TEXT NOT NULL,
+                    mood             TEXT,
+                    did_notify       BOOLEAN DEFAULT 0,
+                    notified_message TEXT,
+                    created_at       DATETIME NOT NULL
+                )""",
+                """CREATE TABLE IF NOT EXISTS mimi_self_model (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key        TEXT NOT NULL,
+                    value      TEXT NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
@@ -359,4 +391,66 @@ class Database:
             )
         else:
             rows = await self.fetchall("SELECT key, value FROM settings")
+        return {r["key"]: r["value"] for r in rows}
+
+    # --- InnerMind モノローグ ---
+
+    async def save_monologue(
+        self, monologue: str, mood: str | None = None,
+        did_notify: bool = False, notified_message: str | None = None,
+    ) -> int:
+        """モノローグを保存し、挿入されたIDを返す。"""
+        cursor = await self.execute(
+            "INSERT INTO mimi_monologue (monologue, mood, did_notify, notified_message, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (monologue, mood, 1 if did_notify else 0, notified_message, jst_now()),
+        )
+        return cursor.lastrowid
+
+    async def update_monologue_notify(
+        self, monologue_id: int, notified_message: str,
+    ) -> None:
+        """モノローグの発言情報を更新する。"""
+        await self.execute(
+            "UPDATE mimi_monologue SET did_notify = 1, notified_message = ? WHERE id = ?",
+            (notified_message, monologue_id),
+        )
+
+    async def get_monologues(
+        self, limit: int = 50, did_notify_only: bool = False,
+    ) -> list[dict]:
+        """モノローグ履歴を取得する。"""
+        where = " WHERE did_notify = 1" if did_notify_only else ""
+        return await self.fetchall(
+            f"SELECT * FROM mimi_monologue{where} ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+
+    async def get_last_monologue(self) -> dict | None:
+        """最新のモノローグを1件取得する。"""
+        return await self.fetchone(
+            "SELECT * FROM mimi_monologue ORDER BY created_at DESC LIMIT 1"
+        )
+
+    # --- InnerMind 自己モデル ---
+
+    async def upsert_self_model(self, key: str, value: str) -> None:
+        """自己モデルのkey-valueを更新（存在すればUPDATE、なければINSERT）。"""
+        existing = await self.fetchone(
+            "SELECT id FROM mimi_self_model WHERE key = ?", (key,)
+        )
+        if existing:
+            await self.execute(
+                "UPDATE mimi_self_model SET value = ?, updated_at = ? WHERE key = ?",
+                (value, jst_now(), key),
+            )
+        else:
+            await self.execute(
+                "INSERT INTO mimi_self_model (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, jst_now()),
+            )
+
+    async def get_self_model(self) -> dict[str, str]:
+        """自己モデル全体をdict形式で取得する。"""
+        rows = await self.fetchall("SELECT key, value FROM mimi_self_model")
         return {r["key"]: r["value"] for r in rows}
