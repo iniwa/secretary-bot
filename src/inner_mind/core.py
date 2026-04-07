@@ -353,14 +353,49 @@ class InnerMind:
         # 3. 最初の { から最後の } を抽出
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
+            candidate = m.group(0)
             try:
-                return json.loads(m.group(0))
+                return json.loads(candidate)
             except json.JSONDecodeError:
-                pass
+                # 余分な括弧を修復して再試行
+                repaired = self._repair_json_braces(candidate)
+                if repaired:
+                    try:
+                        return json.loads(repaired)
+                    except json.JSONDecodeError:
+                        pass
 
         # 4. すべて失敗
         log.warning("InnerMind: failed to parse JSON, saving raw response")
         return {"monologue": raw, "mood": "unknown", "memory_update": None}
+
+    @staticmethod
+    def _repair_json_braces(s: str) -> str | None:
+        """括弧の不一致を修復する。末尾の余分な } や先頭の余分な { を除去。"""
+        # 括弧の深さをカウント
+        depth = 0
+        for ch in s:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+        if depth == 0:
+            return None  # バランスしているのに失敗 → 修復不能
+        if depth < 0:
+            # } が多い → 末尾から余分な } を除去
+            result = s
+            for _ in range(-depth):
+                idx = result.rfind("}")
+                if idx >= 0:
+                    result = result[:idx] + result[idx + 1:]
+            return result
+        # { が多い → 先頭から余分な { を除去
+        result = s
+        for _ in range(depth):
+            idx = result.find("{", 1)
+            if idx >= 0:
+                result = result[idx:]
+        return result
 
 
 def _to_bool(val) -> bool:
