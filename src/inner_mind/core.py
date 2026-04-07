@@ -268,7 +268,7 @@ class InnerMind:
 
     async def _send_to_discord(self, message: str, monologue_id: int) -> None:
         """Discord に自発発言を送信し、DBを更新する。"""
-        channel_id = self._get_config().get("speak_channel_id", "")
+        channel_id = await self._get_setting("speak_channel_id", "")
         if not channel_id:
             log.warning("InnerMind: speak_channel_id not configured, skipping send")
             return
@@ -297,7 +297,7 @@ class InnerMind:
 
     async def _get_user_status(self) -> str:
         """Discordユーザーのオンライン状態を取得。取得不能時は 'online' 扱い。"""
-        user_id = self._get_config().get("target_user_id", "")
+        user_id = await self._get_setting("target_user_id", "")
         if not user_id:
             return "online"
         try:
