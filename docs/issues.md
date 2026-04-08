@@ -1,31 +1,5 @@
 # 改善・追加実装案
 
-## 設計済み（設計書あり）
-
-- [ ] **RSSフィーダー + ニュース機能** → `docs/design/rss_feeder_design.md`
-  - 定期巡回・LLM要約・カテゴリ別ダイジェスト通知
-  - ニュース機能はRSSフィードとして統合
-
-- [ ] **アクティビティ判定** → `docs/design/activity_detection_design.md`
-  - OBS・ゲームプロセス・Discord VCの複合判定
-  - 重い処理（LLM要約等）の実行可否を制御
-
-- [ ] **OBSディレクトリ管理** → `docs/design/obs_dir_manage_design.md`
-  - 録画・リプレイ・スクショをゲーム名フォルダに自動整理
-  - 2pc-obs プロジェクトからの移植・統合
-
-- [ ] **いにわボイスのSTT** → `docs/design/stt_design.md`
-  - Main PCマイク直接キャプチャ + kotoba-whisper（Sub PC）でバッチSTT
-  - LLM要約 → ChromaDB保存、InnerMind ContextSourceとして活用
-
-- [ ] **リマインダーの自然言語操作** → `docs/design/reminder_nlp_design.md`
-  - エスカレーション間隔スヌーズ（30分→1時間→3時間→6時間）
-  - LLMによる会話文脈解決 + 聞き返しフォールバック
-
-- [x] **Input Relay 統合** → `docs/design/input_relay_integration_design.md`
-  - git submodule + Windows Agent プロセス管理 + WebGUI統合
-  - 実装済み（ロール判定、自動起動、死活監視、ログ表示）
-
 ## 実装のみ（設計不要）
 
 - [ ] **WebGUI: モノローグログの追加**
