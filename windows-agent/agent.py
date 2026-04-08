@@ -363,9 +363,11 @@ async def stt_control(request: Request):
             if not _whisper_engine:
                 stt_cfg = _agent_config.get("stt", {})
                 _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
-            _stt_pipeline = LocalSTTPipeline(_stt_capture, _whisper_engine, {
-                "process_interval_seconds": body.get("process_interval_seconds", 30),
-            })
+            pipeline_cfg = _agent_config.get("stt", {}).get("pipeline", {})
+            pipeline_cfg["process_interval_seconds"] = body.get(
+                "process_interval_seconds", pipeline_cfg.get("process_interval_seconds", 30)
+            )
+            _stt_pipeline = LocalSTTPipeline(_stt_capture, _whisper_engine, pipeline_cfg)
             _stt_capture.start()
             _stt_pipeline.start()
             return {"status": "initialized", "mode": "local", "capture": _stt_capture.get_status()}
