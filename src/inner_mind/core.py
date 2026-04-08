@@ -1,5 +1,6 @@
 """InnerMind — ミミの自律思考サイクル。"""
 
+import hashlib
 import json
 import random
 import re
@@ -80,6 +81,17 @@ class InnerMind:
             # コンテキスト収集
             context = await self._collect_context()
 
+            # コンテキスト変化チェック（不変ならスキップ）
+            ctx_key = (
+                context["discord_status"]
+                + "|".join(sr["text"][:200] for sr in context["sources"])
+            )
+            ctx_hash = hashlib.md5(ctx_key.encode()).hexdigest()
+            if hasattr(self, "_last_ctx_hash") and self._last_ctx_hash == ctx_hash:
+                log.info("InnerMind: context unchanged, skipping think cycle")
+                return
+            self._last_ctx_hash = ctx_hash
+
             # 思考フェーズ
             thought = await self._think_phase(context)
             if not thought:
@@ -150,12 +162,22 @@ class InnerMind:
         sm = context["self_model"]
         self_model_text = "\n".join(f"{k}: {v}" for k, v in sm.items()) if sm else "（未形成）"
 
+        # 直近5件のモノローグ要約（重複思考防止用）
+        recent_monos = await self.bot.database.get_monologues(limit=5)
+        if recent_monos:
+            mono_lines = []
+            for m in recent_monos:
+                mono_lines.append(f"- [{m['mood']}] {m['monologue'][:100]}")
+            recent_monologues_text = "\n".join(mono_lines)
+        else:
+            recent_monologues_text = "（初回思考）"
+
         system = THINK_SYSTEM.format(persona=persona)
         prompt = THINK_PROMPT.format(
             datetime=context["datetime"],
             discord_status=context["discord_status"],
             context_sections=context_sections,
-            last_monologue=context["last_monologue"] or "（初回思考）",
+            recent_monologues=recent_monologues_text,
             self_model=self_model_text,
         )
 
@@ -177,15 +199,24 @@ class InnerMind:
         if mood and mood != "unknown":
             await self.bot.database.upsert_self_model("mood", mood)
 
-        # memory_update があれば ChromaDB に保存
+        # interest_topic の保存
+        interest = thought.get("interest_topic")
+        if interest and interest != "null":
+            await self.bot.database.upsert_self_model("interest_topic", interest)
+
+        # memory_update があれば ChromaDB に保存（重複検出付き）
         mem_update = thought.get("memory_update")
         if mem_update and mem_update != "null":
-            doc_id = uuid.uuid4().hex[:16]
-            self.bot.chroma.add(
-                "ai_memory", doc_id, mem_update,
-                {"source": "inner_mind", "created_at": jst_now()},
-            )
-            log.info("InnerMind: memory updated: %s", mem_update[:80])
+            existing = self.bot.chroma.search("ai_memory", query=mem_update, n_results=1)
+            if existing and existing[0].get("distance", 1.0) < 0.3:
+                log.info("InnerMind: memory_update too similar to existing, skipped")
+            else:
+                doc_id = uuid.uuid4().hex[:16]
+                self.bot.chroma.add(
+                    "ai_memory", doc_id, mem_update,
+                    {"source": "inner_mind", "created_at": jst_now()},
+                )
+                log.info("InnerMind: memory updated: %s", mem_update[:80])
 
         log.info("InnerMind: thought saved (mood=%s): %s", mood, monologue[:80])
         return monologue_id
@@ -314,8 +345,17 @@ class InnerMind:
     # --- JSON パース ---
 
     def _parse_think_response(self, raw: str) -> dict:
-        """LLM応答からthink JSONを抽出。4段階フォールバック。"""
+        """LLM応答からthink JSONを抽出。4段階フォールバック + 二次検証。"""
         result = self._extract_json(raw)
+        # monologue が JSON 文字列の場合、再パースを試みる
+        mono = result.get("monologue", "")
+        if isinstance(mono, str) and mono.strip().startswith("{"):
+            try:
+                inner = json.loads(mono)
+                if isinstance(inner, dict) and "monologue" in inner:
+                    result = inner
+            except (json.JSONDecodeError, TypeError):
+                pass
         # 最低限の構造を保証
         if "monologue" not in result:
             result["monologue"] = raw
