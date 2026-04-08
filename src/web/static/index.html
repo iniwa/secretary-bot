@@ -737,7 +737,7 @@ nav.bottom-nav { display: none; }
     </div>
 
     <div class="maint-section">
-      <h3>Main PC — マイクキャプチャ</h3>
+      <h3>Sub PC — マイクキャプチャ＆Whisper</h3>
       <div id="stt-main-status" style="margin-bottom:0.8rem">
         <span style="color:var(--text-dim)">読み込み中...</span>
       </div>
@@ -753,13 +753,6 @@ nav.bottom-nav { display: none; }
         <button onclick="sttControl('stop')" style="padding:0.5rem 1.2rem;border-radius:6px;border:none;background:#f44336;color:#fff;cursor:pointer;font-size:0.9rem">停止</button>
       </div>
       <span id="stt-control-result" style="font-size:0.85rem;color:var(--text-dim);margin-top:0.5rem;display:block"></span>
-    </div>
-
-    <div class="maint-section" style="margin-top:1rem">
-      <h3>Sub PC — Whisperモデル</h3>
-      <div id="stt-sub-status">
-        <span style="color:var(--text-dim)">読み込み中...</span>
-      </div>
     </div>
 
     <div class="maint-section" style="margin-top:1rem">
@@ -2518,44 +2511,35 @@ async function controlInputRelay(role, action) {
 
 // --- STT ---
 async function loadSTTStatus() {
-  // Main PC status
   const mainEl = document.getElementById('stt-main-status');
-  const subEl = document.getElementById('stt-sub-status');
   try {
     const resp = await fetch('/api/stt/status');
     const data = await resp.json();
     const agents = data.agents || [];
-    const mainAgent = agents.find(a => a.role === 'main');
     const subAgent = agents.find(a => a.role === 'sub');
-    if (mainAgent && !mainAgent.error) {
-      const cap = mainAgent.capture || {};
-      const cli = mainAgent.client || {};
+    if (subAgent && !subAgent.error) {
+      const cap = subAgent.capture || {};
+      const wh = subAgent.whisper || {};
       const running = cap.running || false;
       const dot = running ? '🟢' : '🔴';
       const deviceText = cap.device != null ? `デバイスID: ${cap.device}` : '未設定';
-      mainEl.innerHTML = `<span>${dot} ${running ? 'キャプチャ中' : '停止中'}</span>` +
-        `<span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${deviceText} / バッファ: ${cap.buffer_utterances || 0} / 総キャプチャ: ${cap.total_captured || 0}</span>` +
-        (cli.last_error ? `<div style="color:#f44336;font-size:0.8rem;margin-top:0.3rem">送信エラー: ${esc(cli.last_error)}</div>` : '');
-    } else {
-      const err = mainAgent?.error || 'Main PC agent接続失敗';
-      mainEl.innerHTML = `<span>🔴 未接続</span><span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${esc(err)}</span>`;
-    }
-    if (subAgent && !subAgent.error) {
-      const w = subAgent.whisper || subAgent;
-      const loaded = w.loaded || false;
-      const dot = loaded ? '🟢' : '⚪';
-      subEl.innerHTML = `<span>${dot} ${loaded ? 'ロード済み' : '未ロード（初回推論時にロード）'}</span>` +
-        `<div style="font-size:0.85rem;color:var(--text-dim);margin-top:0.3rem">モデル: ${esc(w.model || '?')} / デバイス: ${w.device || '?'}` +
-        (w.idle_seconds != null ? ` / アイドル: ${w.idle_seconds}s` : '') + '</div>';
+      const whLoaded = wh.loaded ? '🟢 ロード済み' : '⚪ 未ロード';
+      const whModel = wh.model || 'kotoba-whisper-v2.0';
+      const processed = subAgent.total_processed || 0;
+      const transcripts = subAgent.transcript_count || 0;
+      mainEl.innerHTML = `<div><span>${dot} ${running ? 'キャプチャ中' : '停止中'}</span>` +
+        `<span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${deviceText} / バッファ: ${cap.buffer_utterances || 0} / 総キャプチャ: ${cap.total_captured || 0}</span></div>` +
+        `<div style="margin-top:0.3rem;font-size:0.85rem">Whisper: ${whLoaded} (${esc(whModel)})` +
+        (wh.idle_seconds != null ? ` / アイドル: ${wh.idle_seconds}s` : '') + `</div>` +
+        `<div style="margin-top:0.3rem;font-size:0.85rem;color:var(--text-dim)">処理済み: ${processed} / Transcript蓄積: ${transcripts}</div>` +
+        (subAgent.last_error ? `<div style="color:#f44336;font-size:0.8rem;margin-top:0.3rem">エラー: ${esc(subAgent.last_error)}</div>` : '');
     } else {
       const err = subAgent?.error || 'Sub PC agent接続失敗';
-      subEl.innerHTML = `<span>🔴 未接続</span><span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${esc(err)}</span>`;
+      mainEl.innerHTML = `<span>🔴 未接続</span><span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${esc(err)}</span>`;
     }
   } catch(e) {
     mainEl.innerHTML = '<span style="color:#f44336">取得失敗</span>';
-    subEl.innerHTML = '<span style="color:#f44336">取得失敗</span>';
   }
-  // Load devices
   loadSTTDevices();
 }
 
@@ -2582,13 +2566,13 @@ async function sttInit() {
   const sel = document.getElementById('stt-device-select');
   const device = parseInt(sel.value, 10);
   const el = document.getElementById('stt-control-result');
-  el.textContent = '初期化中...';
+  el.textContent = '初期化中...（Whisperモデル初回ロード時は数十秒かかります）';
   el.style.color = 'var(--text-dim)';
   try {
     const resp = await fetch('/api/stt/control', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: 'init', device: isNaN(device) ? null : device})
+      body: JSON.stringify({action: 'init', role: 'sub', device: isNaN(device) ? null : device})
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
@@ -2608,7 +2592,7 @@ async function sttControl(action) {
     const resp = await fetch('/api/stt/control', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action})
+      body: JSON.stringify({action, role: 'sub'})
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);

@@ -1049,25 +1049,26 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/stt/status", )
     async def stt_status():
-        """両PCのSTT状態を返す。"""
+        """全AgentのSTT状態を返す。"""
         results = await _agent_request("GET", "/stt/status")
         return {"agents": results}
 
     @app.get("/api/stt/devices", )
-    async def stt_devices():
-        """Main PCのマイクデバイス一覧を返す。"""
-        results = await _agent_request("GET", "/stt/devices", role="main")
+    async def stt_devices(role: str = "sub"):
+        """指定PCのマイクデバイス一覧を返す。"""
+        results = await _agent_request("GET", "/stt/devices", role=role)
         if not results:
-            return {"devices": [], "error": "Main PC agent not reachable"}
+            return {"devices": [], "error": f"{role} PC agent not reachable"}
         return results[0]
 
     @app.post("/api/stt/control", )
     async def stt_control(request: Request):
-        """Main PCのSTT制御（init/start/stop/set_device）。"""
+        """STT制御（init/start/stop/set_device）。roleパラメータで対象PC指定。"""
         body = await request.json()
-        results = await _agent_request_json("POST", "/stt/control", role="main", json_body=body)
+        role = body.pop("role", "sub")
+        results = await _agent_request_json("POST", "/stt/control", role=role, json_body=body)
         if not results:
-            raise HTTPException(503, "Main PC agent not reachable")
+            raise HTTPException(503, f"{role} PC agent not reachable")
         return results[0]
 
     @app.get("/api/stt/model/status", )
@@ -1079,9 +1080,9 @@ def create_web_app(bot) -> FastAPI:
         return results[0]
 
     @app.get("/api/stt/transcripts", )
-    async def stt_transcripts():
-        """Main PCの最新transcriptを返す。"""
-        results = await _agent_request("GET", "/stt/transcripts", role="main")
+    async def stt_transcripts(role: str = "sub"):
+        """指定PCの最新transcriptを返す。"""
+        results = await _agent_request("GET", "/stt/transcripts", role=role)
         if not results:
             return {"transcripts": []}
         return results[0]

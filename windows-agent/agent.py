@@ -15,9 +15,10 @@ from tools.tool_manager import ToolManager, create_tool_manager
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _tool_manager: ToolManager | None = None
 _obs_manager: OBSManager | None = None
-_stt_capture = None  # MicCapture (Main PC)
-_stt_client = None   # STTClient (Main PC)
+_stt_capture = None   # MicCapture
+_stt_client = None    # STTClient (Main PC → Sub PC送信用、未使用時None)
 _whisper_engine = None  # WhisperEngine (Sub PC)
+_stt_pipeline = None  # LocalSTTPipeline (Sub PC: キャプチャ+推論)
 _agent_role: str = "unknown"
 _agent_config: dict = {}
 
@@ -59,7 +60,7 @@ def _detect_role() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _tool_manager, _obs_manager, _stt_capture, _stt_client, _whisper_engine
+    global _tool_manager, _obs_manager, _stt_capture, _stt_client, _whisper_engine, _stt_pipeline
     global _agent_role, _agent_config
     role = _detect_role()
     config = _load_agent_config()
@@ -77,7 +78,19 @@ async def lifespan(app: FastAPI):
     # STT初期化
     stt_cfg = config.get("stt", {})
     if stt_cfg.get("enabled", False):
-        if role == "main":
+        if role == "sub":
+            # Sub PC: ローカルパイプライン（キャプチャ + Whisper推論）
+            from stt.mic_capture import MicCapture
+            from stt.whisper_engine import WhisperEngine
+            from stt.local_pipeline import LocalSTTPipeline
+            _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
+            _stt_capture = MicCapture(stt_cfg.get("capture", {}))
+            _stt_pipeline = LocalSTTPipeline(_stt_capture, _whisper_engine, stt_cfg.get("pipeline", {}))
+            _stt_capture.start()
+            _stt_pipeline.start()
+            print("[Agent] STT local pipeline started (Sub PC: capture + whisper)")
+        elif role == "main":
+            # Main PC: キャプチャ → Sub PC送信
             from stt.mic_capture import MicCapture
             from stt.stt_client import STTClient
             _stt_capture = MicCapture(stt_cfg.get("capture", {}))
@@ -88,15 +101,13 @@ async def lifespan(app: FastAPI):
             })
             _stt_capture.start()
             _stt_client.start()
-            print("[Agent] STT capture started (Main PC)")
-        elif role == "sub":
-            from stt.whisper_engine import WhisperEngine
-            _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
-            print("[Agent] Whisper engine ready (Sub PC, lazy load)")
+            print("[Agent] STT capture started (Main PC → Sub PC)")
 
     yield
 
     # STTシャットダウン
+    if _stt_pipeline:
+        _stt_pipeline.stop()
     if _stt_client:
         _stt_client.stop()
     if _stt_capture:
@@ -289,45 +300,52 @@ async def stt_devices(request: Request):
 async def stt_status(request: Request):
     _verify_token(request)
     result: dict = {"role": _agent_role, "enabled": _stt_capture is not None or _whisper_engine is not None}
-    if _stt_capture:
-        result["capture"] = _stt_capture.get_status()
-        result["capture"]["device"] = _stt_capture._device
-    if _stt_client:
-        result["client"] = {
-            "running": _stt_client.running,
-            "transcript_count": len(_stt_client._transcripts),
-            "last_error": _stt_client._last_error,
-        }
-    if _whisper_engine:
-        result["whisper"] = _whisper_engine.get_status()
+    if _stt_pipeline:
+        result.update(_stt_pipeline.get_status())
+    else:
+        if _stt_capture:
+            result["capture"] = _stt_capture.get_status()
+            result["capture"]["device"] = _stt_capture._device
+        if _stt_client:
+            result["client"] = {
+                "running": _stt_client.running,
+                "transcript_count": len(_stt_client._transcripts),
+                "last_error": _stt_client._last_error,
+            }
+        if _whisper_engine:
+            result["whisper"] = _whisper_engine.get_status()
     return result
 
 
 @app.get("/stt/transcripts")
 async def stt_transcripts(request: Request, since: str | None = None):
     _verify_token(request)
-    if not _stt_client:
-        return {"transcripts": []}
-    return {"transcripts": _stt_client.get_transcripts(since=since)}
+    if _stt_pipeline:
+        return {"transcripts": _stt_pipeline.get_transcripts(since=since)}
+    if _stt_client:
+        return {"transcripts": _stt_client.get_transcripts(since=since)}
+    return {"transcripts": []}
 
 
 @app.post("/stt/control")
 async def stt_control(request: Request):
-    """STTの開始/停止/デバイス変更。Main PCのみ。"""
+    """STTの開始/停止/デバイス変更/動的初期化。"""
     _verify_token(request)
-    global _stt_capture, _stt_client
+    global _stt_capture, _stt_client, _whisper_engine, _stt_pipeline
     body = await request.json()
     action = body.get("action", "")
 
     if action == "init":
-        # WebGUIから動的に初期化（configなしでも起動可能）
+        # 既存のパイプラインを停止
+        if _stt_pipeline:
+            _stt_pipeline.stop()
         if _stt_capture and _stt_capture.running:
             _stt_capture.stop()
         if _stt_client and _stt_client.running:
             _stt_client.stop()
 
         from stt.mic_capture import MicCapture
-        from stt.stt_client import STTClient
+
         device_id = body.get("device")
         capture_cfg = {
             "device": device_id,
@@ -337,22 +355,43 @@ async def stt_control(request: Request):
             "min_utterance_seconds": body.get("min_utterance_seconds", 1.0),
         }
         _stt_capture = MicCapture(capture_cfg)
-        _stt_client = STTClient(_stt_capture, {
-            "sub_pc_url": body.get("sub_pc_url", "http://192.168.1.211:7777"),
-            "interval_minutes": body.get("interval_minutes", 5),
-            "agent_token": _SECRET_TOKEN,
-        })
-        _stt_capture.start()
-        _stt_client.start()
-        return {"status": "initialized", "capture": _stt_capture.get_status()}
+
+        if _agent_role == "sub":
+            # Sub PC: ローカルパイプライン
+            from stt.whisper_engine import WhisperEngine
+            from stt.local_pipeline import LocalSTTPipeline
+            if not _whisper_engine:
+                stt_cfg = _agent_config.get("stt", {})
+                _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
+            _stt_pipeline = LocalSTTPipeline(_stt_capture, _whisper_engine, {
+                "process_interval_seconds": body.get("process_interval_seconds", 30),
+            })
+            _stt_capture.start()
+            _stt_pipeline.start()
+            return {"status": "initialized", "mode": "local", "capture": _stt_capture.get_status()}
+        else:
+            # Main PC: Sub PCへ送信
+            from stt.stt_client import STTClient
+            _stt_client = STTClient(_stt_capture, {
+                "sub_pc_url": body.get("sub_pc_url", "http://192.168.1.211:7777"),
+                "interval_minutes": body.get("interval_minutes", 5),
+                "agent_token": _SECRET_TOKEN,
+            })
+            _stt_capture.start()
+            _stt_client.start()
+            return {"status": "initialized", "mode": "remote", "capture": _stt_capture.get_status()}
 
     if action == "start":
         if not _stt_capture:
             raise HTTPException(400, "STT not initialized. Use action='init' first.")
         _stt_capture.start()
-        if _stt_client and not _stt_client.running:
+        if _stt_pipeline and not _stt_pipeline.running:
+            _stt_pipeline.start()
+        elif _stt_client and not _stt_client.running:
             _stt_client.start()
     elif action == "stop":
+        if _stt_pipeline:
+            _stt_pipeline.stop()
         if _stt_capture:
             _stt_capture.stop()
         if _stt_client:

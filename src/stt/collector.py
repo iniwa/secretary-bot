@@ -18,7 +18,8 @@ class STTCollector:
     async def collect(self) -> int:
         """新規 transcript を収集し保存する。保存件数を返す。"""
         pool = self.bot.agent_pool
-        agent = pool.get_agent_by_role("main") if pool else None
+        # STTパイプラインはSub PCで稼働
+        agent = pool.get_agent_by_role("sub") if pool else None
         if not agent:
             return 0
 
