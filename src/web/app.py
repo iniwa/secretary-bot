@@ -1122,6 +1122,11 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/rss/feeds", dependencies=[Depends(_verify)])
     async def rss_feeds():
+        # プリセットフィードを同期
+        from src.rss.fetcher import RSSFetcher
+        fetcher = RSSFetcher(bot)
+        await fetcher.ensure_preset_feeds()
+
         feeds = await bot.database.fetchall(
             "SELECT * FROM rss_feeds ORDER BY category, title"
         )

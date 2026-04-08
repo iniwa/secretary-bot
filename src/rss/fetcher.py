@@ -21,6 +21,7 @@ class RSSFetcher:
 
     async def fetch_all_feeds(self) -> dict:
         """全フィードを巡回し新規記事をINSERT。古い記事をパージ。"""
+        await self.ensure_preset_feeds()
         feeds = await self.bot.database.fetchall("SELECT * FROM rss_feeds")
         if not feeds:
             return {"fetched": 0, "new_articles": 0}
