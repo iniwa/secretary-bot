@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
-from activity.game_detector import get_activity as get_game_activity
+from activity.game_detector import get_activity as get_game_activity, reload_process_map
 from activity.obs_manager import OBSManager, create_obs_manager
 from tools.tool_manager import ToolManager, create_tool_manager
 
@@ -438,6 +438,92 @@ async def stt_model_status(request: Request):
     if not _whisper_engine:
         return {"loaded": False, "error": "Whisper engine not available on this agent"}
     return _whisper_engine.get_status()
+
+
+# --- OBS: ゲームプロセス管理 ---
+
+_GAMES_FILE = os.path.join(os.path.dirname(__file__), "config", "game_processes.json")
+_GROUPS_FILE = os.path.join(os.path.dirname(__file__), "config", "game_groups.json")
+
+
+def _load_games_data() -> dict:
+    import json as _json
+    games_raw = {}
+    if os.path.exists(_GAMES_FILE):
+        with open(_GAMES_FILE, encoding="utf-8") as f:
+            games_raw = _json.load(f)
+    groups_data = {"groups": [], "assignments": {}}
+    if os.path.exists(_GROUPS_FILE):
+        with open(_GROUPS_FILE, encoding="utf-8") as f:
+            groups_data = _json.load(f)
+    games = [
+        {"process": k, "name": v, "group": groups_data["assignments"].get(k, "")}
+        for k, v in games_raw.items()
+    ]
+    return {"games": games, "groups": groups_data["groups"]}
+
+
+def _save_games_data(data: dict) -> None:
+    import json as _json
+    games_dict = {g["process"]: g["name"] for g in data["games"]}
+    with open(_GAMES_FILE, "w", encoding="utf-8") as f:
+        _json.dump(games_dict, f, ensure_ascii=False, indent=2)
+    assignments = {g["process"]: g["group"] for g in data["games"] if g.get("group")}
+    groups_data = {"groups": data["groups"], "assignments": assignments}
+    with open(_GROUPS_FILE, "w", encoding="utf-8") as f:
+        _json.dump(groups_data, f, ensure_ascii=False, indent=2)
+    reload_process_map()
+
+
+@app.get("/obs/games")
+async def obs_games(request: Request):
+    _verify_token(request)
+    return _load_games_data()
+
+
+@app.post("/obs/games")
+async def obs_games_save(request: Request):
+    _verify_token(request)
+    body = await request.json()
+    _save_games_data(body)
+    return {"ok": True, "count": len(body.get("games", []))}
+
+
+@app.get("/obs/status")
+async def obs_status(request: Request):
+    _verify_token(request)
+    if _obs_manager:
+        return {**_obs_manager.get_status(), "file_organizer_enabled": _obs_manager._enabled}
+    return {"obs_connected": False, "file_organizer_enabled": False}
+
+
+@app.get("/obs/logs")
+async def obs_logs(request: Request, lines: int = 100):
+    """OBSManager関連のログを返す。"""
+    _verify_token(request)
+    log_entries = []
+    try:
+        import logging
+        # ルートロガーのハンドラからログファイルを探す
+        for handler in logging.root.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_path = handler.baseFilename
+                if os.path.exists(log_path):
+                    with open(log_path, encoding="utf-8", errors="replace") as f:
+                        all_lines = f.readlines()
+                    # OBS関連のログをフィルタ
+                    obs_lines = [
+                        l.rstrip() for l in all_lines
+                        if "obs" in l.lower() or "moved" in l.lower()
+                        or "recording" in l.lower() or "replay" in l.lower()
+                        or "screenshot" in l.lower() or "sweep" in l.lower()
+                        or "compress" in l.lower() or "organize" in l.lower()
+                    ]
+                    log_entries = obs_lines[-lines:]
+                break
+    except Exception:
+        pass
+    return {"logs": log_entries}
 
 
 # --- PC制御 ---

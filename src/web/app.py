@@ -1087,6 +1087,37 @@ def create_web_app(bot) -> FastAPI:
             return {"transcripts": []}
         return results[0]
 
+    # --- OBS: ゲームプロセス管理 ---
+
+    @app.get("/api/obs/games", )
+    async def obs_games():
+        results = await _agent_request("GET", "/obs/games", role="sub")
+        if not results:
+            return {"games": [], "groups": []}
+        return results[0]
+
+    @app.post("/api/obs/games", )
+    async def obs_games_save(request: Request):
+        body = await request.json()
+        results = await _agent_request_json("POST", "/obs/games", role="sub", json_body=body)
+        if not results:
+            raise HTTPException(502, "Sub PC agent unreachable")
+        return results[0]
+
+    @app.get("/api/obs/status", )
+    async def obs_status():
+        results = await _agent_request("GET", "/obs/status", role="sub")
+        if not results:
+            return {"obs_connected": False}
+        return results[0]
+
+    @app.get("/api/obs/logs", )
+    async def obs_logs(lines: int = 100):
+        results = await _agent_request("GET", f"/obs/logs?lines={lines}", role="sub")
+        if not results:
+            return {"logs": []}
+        return results[0]
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")

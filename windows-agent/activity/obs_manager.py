@@ -250,12 +250,12 @@ class OBSManager:
         else:
             self._main_activity_url = ""
 
-        # OBS WebSocket 接続設定
-        self._host = os.environ.get("OBS_WEBSOCKET_HOST", "localhost")
-        self._port = int(os.environ.get("OBS_WEBSOCKET_PORT", "4455"))
-        self._password = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
-        self._timeout = 5
-        self._retry_interval = 30
+        # OBS WebSocket 接続設定（config優先 → 環境変数フォールバック）
+        self._host = obs_cfg.get("host") or os.environ.get("OBS_WEBSOCKET_HOST", "localhost")
+        self._port = int(obs_cfg.get("port") or os.environ.get("OBS_WEBSOCKET_PORT", "4455"))
+        self._password = obs_cfg.get("password") or os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
+        self._timeout = obs_cfg.get("timeout", 5)
+        self._retry_interval = obs_cfg.get("connect_retry_interval_seconds", 30)
 
         # 状態
         self._connected = False
@@ -325,9 +325,9 @@ class OBSManager:
                     password=self._password, timeout=self._timeout,
                 )
                 self._ev.callback.register([
-                    self._on_record_state_changed,
-                    self._on_replay_buffer_saved,
-                    self._on_screenshot_saved,
+                    self.on_record_state_changed,
+                    self.on_replay_buffer_saved,
+                    self.on_screenshot_saved,
                 ])
                 log.info("OBS event handlers registered (file organizer enabled)")
 
@@ -380,7 +380,7 @@ class OBSManager:
 
     # --- OBS イベントハンドラ ---
 
-    def _on_record_state_changed(self, data) -> None:
+    def on_record_state_changed(self, data) -> None:
         if data.output_state != "OBS_WEBSOCKET_OUTPUT_STOPPED":
             return
         file_path = getattr(data, "output_path", None)
@@ -392,7 +392,7 @@ class OBSManager:
         log.info("Detected game: %s", game or "(unknown)")
         self._organize_video(file_path, game)
 
-    def _on_replay_buffer_saved(self, data) -> None:
+    def on_replay_buffer_saved(self, data) -> None:
         file_path = getattr(data, "saved_replay_path", None)
         if not file_path:
             log.warning("ReplayBufferSaved: no saved_replay_path")
@@ -402,7 +402,7 @@ class OBSManager:
         log.info("Detected game: %s", game or "(unknown)")
         self._organize_video(file_path, game)
 
-    def _on_screenshot_saved(self, data) -> None:
+    def on_screenshot_saved(self, data) -> None:
         file_path = getattr(data, "saved_screenshot_path", None)
         if not file_path:
             log.warning("ScreenshotSaved: no saved_screenshot_path")

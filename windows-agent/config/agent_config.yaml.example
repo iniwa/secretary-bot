@@ -4,6 +4,11 @@
 # OBSファイル整理（Sub PCのみ）
 obs_file_organizer:
   enabled: true
+  host: "localhost"
+  port: 4455
+  password: ""  # OBS WebSocket パスワード
+  timeout: 10
+  connect_retry_interval_seconds: 10
   output_base_dir: "V:/tdarr/incoming"
   encoded_base_dir: "V:/tdarr/encoded"
   unknown_folder: "Unknown"

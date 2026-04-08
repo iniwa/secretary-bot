@@ -231,6 +231,7 @@ nav.bottom-nav { display: none; }
   </div>
   <div class="nav-group">
     <div class="nav-group-label">Tools</div>
+    <button onclick="showPage('tools-obs')">OBS</button>
     <button onclick="showPage('tools-input-relay')">Input Relay</button>
     <button onclick="showPage('tools-stt')">STT</button>
   </div>
@@ -689,6 +690,61 @@ nav.bottom-nav { display: none; }
     </div>
   </div>
 
+  <!-- Tools: OBS -->
+  <div id="page-tools-obs" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>OBS Manager</h2>
+      <span id="obs-conn-badge" style="padding:0.2rem 0.6rem;border-radius:4px;font-size:0.8rem;background:#333">-</span>
+      <button onclick="loadObsPage()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+
+    <!-- ゲームプロセス管理 -->
+    <div style="display:flex;gap:1rem;flex:1;overflow:hidden;min-height:0">
+      <!-- サイドバー: グループ -->
+      <div id="obs-group-sidebar" style="width:160px;min-width:140px;background:var(--surface);border-radius:8px;border:1px solid var(--border);padding:0.5rem;overflow-y:auto;display:flex;flex-direction:column;gap:2px">
+        <div style="font-size:0.7rem;text-transform:uppercase;color:var(--text-dim);letter-spacing:0.05em;padding:0.3rem 0.4rem;border-bottom:1px solid var(--border);margin-bottom:0.2rem">グループ</div>
+        <div id="obs-group-list"></div>
+        <div style="display:flex;gap:4px;margin-top:0.4rem;padding-top:0.4rem;border-top:1px solid var(--border)">
+          <input type="text" id="obs-new-group" placeholder="グループ名" maxlength="20" style="flex:1;min-width:0;padding:0.3rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8rem" />
+          <button onclick="obsAddGroup()" style="padding:0.3rem 0.5rem;border-radius:4px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.8rem">+</button>
+        </div>
+      </div>
+
+      <!-- メイン: ゲームテーブル -->
+      <div style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+          <span id="obs-filter-label" style="font-size:0.85rem;color:var(--text-dim)">すべて表示</span>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            <span id="obs-save-status" style="font-size:0.8rem;color:var(--text-dim)"></span>
+            <button onclick="obsAddGame()" style="padding:0.3rem 0.8rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.85rem">＋ 追加</button>
+            <button onclick="obsSaveGames()" style="padding:0.3rem 0.8rem;border-radius:6px;border:none;background:#e94560;color:#fff;cursor:pointer;font-size:0.85rem">保存</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:36px;text-align:right">#</th>
+              <th style="width:35%">プロセス名 (.exe)</th>
+              <th style="width:30%">ゲーム名</th>
+              <th style="width:130px">グループ</th>
+              <th style="width:36px"></th>
+            </tr>
+          </thead>
+          <tbody id="obs-game-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ログ -->
+    <details style="margin-top:1rem">
+      <summary style="cursor:pointer;padding:0.5rem;font-size:0.9rem;color:var(--text-dim)">OBSログ</summary>
+      <div style="display:flex;justify-content:flex-end;margin:0.5rem 0">
+        <button onclick="loadObsLogs()" style="padding:0.3rem 0.8rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.85rem">ログ更新</button>
+      </div>
+      <pre id="obs-log-content" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:1rem;font-size:0.8rem;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all"></pre>
+    </details>
+  </div>
+
   <!-- Tools: Input Relay -->
   <div id="page-tools-input-relay" class="page">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
@@ -810,6 +866,7 @@ function showPage(name) {
   if (name === 'rakuten-debug') loadRakutenDebug();
   if (name === 'inner-mind') { loadMonologues(); loadIMStatus(); loadIMContext(); }
   if (name === 'inner-mind-settings') loadIMSettings();
+  if (name === 'tools-obs') loadObsPage();
   if (name === 'tools-input-relay') loadInputRelayStatus();
   if (name === 'tools-stt') loadSTTStatus();
 }
@@ -2623,6 +2680,203 @@ async function loadSTTTranscripts() {
     }).join('');
   } catch(e) {
     el.innerHTML = '<span style="color:#f44336">取得失敗: ' + esc(e.message) + '</span>';
+  }
+}
+// --- OBS Manager ---
+let obsState = { games: [], groups: [] };
+let obsFilter = null;
+let obsDirty = false;
+
+async function loadObsPage() {
+  await Promise.all([loadObsStatus(), loadObsGames()]);
+}
+
+async function loadObsStatus() {
+  try {
+    const res = await fetch('/api/obs/status', {});
+    const d = await res.json();
+    const badge = document.getElementById('obs-conn-badge');
+    if (d.obs_connected) {
+      let label = '接続中';
+      if (d.obs_streaming) label = '配信中';
+      else if (d.obs_recording) label = '録画中';
+      badge.textContent = label;
+      badge.style.background = d.obs_streaming || d.obs_recording ? '#e94560' : '#4ade80';
+      badge.style.color = '#000';
+    } else {
+      badge.textContent = '未接続';
+      badge.style.background = '#555';
+      badge.style.color = '#ccc';
+    }
+  } catch(e) {
+    const badge = document.getElementById('obs-conn-badge');
+    badge.textContent = 'エラー';
+    badge.style.background = '#f44336';
+  }
+}
+
+async function loadObsGames() {
+  try {
+    const res = await fetch('/api/obs/games', {});
+    const d = await res.json();
+    obsState.games = d.games || [];
+    obsState.groups = d.groups || [];
+    obsDirty = false;
+    obsRender();
+    obsSetStatus('saved');
+  } catch(e) {
+    document.getElementById('obs-game-tbody').innerHTML = '<tr><td colspan="5" style="color:#f44336">読み込み失敗</td></tr>';
+  }
+}
+
+function obsRender() {
+  obsRenderGroups();
+  obsRenderGames();
+}
+
+function obsGroupCount(name) {
+  return obsState.games.filter(g => g.group === name).length;
+}
+
+function obsRenderGroups() {
+  const list = document.getElementById('obs-group-list');
+  const allAct = obsFilter === null ? 'background:var(--primary);' : '';
+  let html = `<div style="display:flex;align-items:center;gap:4px;border-radius:6px;padding:0.4rem;cursor:pointer;${allAct}" onclick="obsSetFilter(null)">
+    <span style="flex:1;font-size:0.85rem">すべて</span>
+    <span style="font-size:0.75rem;color:rgba(255,255,255,0.4)">${obsState.games.length}</span>
+  </div>`;
+  for (const g of obsState.groups) {
+    const act = obsFilter === g ? 'background:var(--primary);' : '';
+    const cnt = obsGroupCount(g);
+    const escaped = JSON.stringify(g);
+    html += `<div style="display:flex;align-items:center;gap:4px;border-radius:6px;padding:0.4rem;cursor:pointer;${act}" onclick="obsSetFilter(${escaped})">
+      <span style="flex:1;font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(g)}</span>
+      <span style="font-size:0.75rem;color:rgba(255,255,255,0.4)">${cnt}</span>
+      <button onclick="event.stopPropagation();obsDeleteGroup(${escaped})" style="background:none;border:none;color:#555;cursor:pointer;font-size:0.7rem;padding:1px 3px;border-radius:3px" title="削除">&times;</button>
+    </div>`;
+  }
+  list.innerHTML = html;
+}
+
+function obsRenderGames() {
+  const tbody = document.getElementById('obs-game-tbody');
+  const label = document.getElementById('obs-filter-label');
+  const isFiltered = obsFilter !== null;
+  label.textContent = isFiltered ? `「${obsFilter}」でフィルター中` : `すべて表示 (${obsState.games.length} 件)`;
+
+  const visible = isFiltered
+    ? obsState.games.map((g, i) => ({g, i})).filter(({g}) => g.group === obsFilter)
+    : obsState.games.map((g, i) => ({g, i}));
+
+  if (visible.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-dim)">ゲームがありません</td></tr>';
+    return;
+  }
+
+  let rows = '';
+  for (const {g, i} of visible) {
+    const sel = g.group || '';
+    rows += `<tr>
+      <td style="text-align:right;color:var(--text-dim);font-size:0.8rem">${i + 1}</td>
+      <td><input type="text" value="${escapeHtml(g.process)}" onchange="obsUpdateField(${i},'process',this.value)" style="width:100%;padding:0.3rem 0.5rem;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--text);font-size:0.85rem" /></td>
+      <td><input type="text" value="${escapeHtml(g.name)}" onchange="obsUpdateField(${i},'name',this.value)" style="width:100%;padding:0.3rem 0.5rem;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--text);font-size:0.85rem" /></td>
+      <td><select onchange="obsUpdateField(${i},'group',this.value)" style="width:100%;padding:0.3rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8rem">
+        <option value="" ${!sel ? 'selected' : ''}>── なし ──</option>
+        ${obsState.groups.map(gr => `<option value="${escapeHtml(gr)}" ${sel === gr ? 'selected' : ''}>${escapeHtml(gr)}</option>`).join('')}
+      </select></td>
+      <td style="text-align:center"><button onclick="obsDeleteGame(${i})" style="background:none;border:none;color:#555;cursor:pointer;font-size:1rem;padding:2px 5px;border-radius:4px" title="削除">&times;</button></td>
+    </tr>`;
+  }
+  tbody.innerHTML = rows;
+}
+
+function obsUpdateField(i, field, value) {
+  obsState.games[i][field] = value;
+  if (field === 'group') obsRenderGroups();
+  obsSetDirty();
+}
+
+function obsDeleteGame(i) {
+  obsState.games.splice(i, 1);
+  obsRender();
+  obsSetDirty();
+}
+
+function obsAddGame() {
+  obsState.games.push({process: '', name: '', group: obsFilter || ''});
+  if (obsFilter !== null) obsFilter = null;
+  obsRender();
+  obsSetDirty();
+  // Focus last row's first input
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('#obs-game-tbody input[type="text"]');
+    if (inputs.length >= 2) inputs[inputs.length - 2].focus();
+  }, 50);
+}
+
+function obsSetFilter(group) {
+  obsFilter = group;
+  obsRender();
+}
+
+function obsAddGroup() {
+  const input = document.getElementById('obs-new-group');
+  const name = input.value.trim();
+  if (!name || obsState.groups.includes(name)) { input.focus(); return; }
+  obsState.groups.push(name);
+  input.value = '';
+  obsRender();
+  obsSetDirty();
+}
+
+function obsDeleteGroup(name) {
+  if (!confirm(`グループ「${name}」を削除しますか？`)) return;
+  obsState.groups = obsState.groups.filter(g => g !== name);
+  obsState.games.forEach(g => { if (g.group === name) g.group = ''; });
+  if (obsFilter === name) obsFilter = null;
+  obsRender();
+  obsSetDirty();
+}
+
+function obsSetDirty() {
+  obsDirty = true;
+  obsSetStatus('unsaved');
+}
+
+function obsSetStatus(type) {
+  const el = document.getElementById('obs-save-status');
+  if (type === 'saved') { el.textContent = '保存済み'; el.style.color = '#4ade80'; }
+  else if (type === 'saving') { el.textContent = '保存中...'; el.style.color = '#fbbf24'; }
+  else { el.textContent = '未保存 ●'; el.style.color = '#fbbf24'; }
+}
+
+async function obsSaveGames() {
+  obsSetStatus('saving');
+  try {
+    const res = await fetch('/api/obs/games', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(obsState),
+    });
+    if (!res.ok) throw new Error('save failed');
+    obsDirty = false;
+    obsSetStatus('saved');
+  } catch(e) {
+    alert('保存に失敗しました: ' + e.message);
+    obsSetStatus('unsaved');
+  }
+}
+
+async function loadObsLogs() {
+  const el = document.getElementById('obs-log-content');
+  el.textContent = '読み込み中...';
+  try {
+    const res = await fetch('/api/obs/logs?lines=200', {});
+    const d = await res.json();
+    el.textContent = (d.logs || []).join('\n') || '(ログなし)';
+    el.scrollTop = el.scrollHeight;
+  } catch(e) {
+    el.textContent = '取得失敗: ' + e.message;
   }
 }
 </script>
