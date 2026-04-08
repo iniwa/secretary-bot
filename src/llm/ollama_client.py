@@ -76,6 +76,8 @@ class OllamaClient:
     async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> tuple[str, dict]:
         """生成結果のテキストとOllamaメトリクスを返す。
 
+        /api/chat エンドポイントを使用（Ollama v0.20+ 対応）。
+
         Returns:
             (text, metrics) — metricsは eval_count, eval_duration, prompt_eval_count, prompt_eval_duration, tokens_per_sec を含む
         """
@@ -89,24 +91,27 @@ class OllamaClient:
             options["think"] = False
             options["stop"] = ["<|endoftext|>", "<|im_start|>", "<|im_end|>"]
 
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": use_model,
-            "prompt": prompt,
+            "messages": messages,
             "stream": False,
             "options": options,
         }
-        if system:
-            payload["system"] = system
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(
-                    f"{self._available_url}/api/generate",
+                    f"{self._available_url}/api/chat",
                     json=payload,
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                text = data.get("response", "")
+                text = data.get("message", {}).get("content", "")
                 # <think>...</think> タグが残っている場合は除去（qwen系）
                 if "<think>" in text:
                     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()

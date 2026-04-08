@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 11
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -213,6 +213,9 @@ class Database:
                     updated_at DATETIME NOT NULL
                 )""",
             ],
+            11: [
+                "ALTER TABLE conversation_log ADD COLUMN channel_name TEXT DEFAULT ''",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -262,11 +265,11 @@ class Database:
     async def log_conversation(
         self, channel: str, role: str, content: str,
         mode: str | None = None, unit: str | None = None,
-        user_id: str = "",
+        user_id: str = "", channel_name: str = "",
     ) -> None:
         await self.execute(
-            "INSERT INTO conversation_log (timestamp, channel, role, content, user_id, mode, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (jst_now(), channel, role, content, user_id, mode, unit),
+            "INSERT INTO conversation_log (timestamp, channel, role, content, user_id, mode, unit, channel_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), channel, role, content, user_id, mode, unit, channel_name),
         )
 
     async def get_conversation_logs(

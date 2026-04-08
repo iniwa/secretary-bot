@@ -132,10 +132,11 @@ class SecretaryBot(commands.Bot):
         user_id = str(message.author.id)
         is_dm = isinstance(message.channel, discord.DMChannel)
         channel_tag = "discord_dm" if is_dm else "discord"
+        channel_name = "" if is_dm else getattr(message.channel, "name", "")
 
         # DMでなく、メンションなしのメッセージは会話ログのみ保存して終了
         if not is_dm and self.user not in message.mentions:
-            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id, channel_name=channel_name)
             return
 
         # メンション部分をテキストから除去（DMではメンション不要だが念のため）
@@ -155,7 +156,7 @@ class SecretaryBot(commands.Bot):
             await ft.emit("LOCK", "done", {"user_id": user_id}, flow_id)
 
             # 会話ログ保存
-            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id)
+            await self.database.log_conversation(channel_tag, "user", content, user_id=user_id, channel_name=channel_name)
 
             # 直近の会話履歴を取得（ルーティング・ユニット実行の文脈として使う）
             history_minutes = self.config.get("units", {}).get("chat", {}).get("history_minutes", 60)
@@ -200,7 +201,7 @@ class SecretaryBot(commands.Bot):
             if response:
                 await message.channel.send(response)
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
-                await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id)
+                await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id, channel_name=channel_name)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
                 await ft.emit("REPLY", "done", {"channel": channel_tag}, flow_id)
             await ft.end_flow(flow_id)
