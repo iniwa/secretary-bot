@@ -2,7 +2,7 @@
 
 ## 概要
 
-`docs/autonomous_design.md` に基づき実装済み。
+`docs/design/autonomous_design.md` に基づき実装済み。
 思考サイクルで内的モノローグを生成し、条件を満たした時のみDiscordに自発発言する。
 
 **拡張性の核心:** コンテキストソースをプラグイン方式で管理し、

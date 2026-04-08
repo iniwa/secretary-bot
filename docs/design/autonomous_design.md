@@ -40,9 +40,9 @@
 
 ### ファイル
 
-> **注:** 実装計画（`docs/plan.md`）にて、拡張性のためパッケージ構成に変更済み。
+> **注:** 実装計画（`docs/design/plan.md`）にて、拡張性のためパッケージ構成に変更済み。
 > コンテキストソースのプラグイン設計により、RSS・STT等を無改修で追加可能。
-> 最新のファイル構成は `docs/plan.md` を参照。
+> 最新のファイル構成は `docs/design/plan.md` を参照。
 
 ```
 src/
@@ -88,7 +88,7 @@ context = {
 > **実装では ContextSource プラグイン方式を採用。**
 > 各情報源（会話・メモ・リマインダー・天気・記憶・RSS・STT等）を統一的な
 > `ContextSource` として扱い、InnerMind 本体を変更せずに追加可能。
-> 詳細は `docs/plan.md` を参照。
+> 詳細は `docs/design/plan.md` を参照。
 
 ---
 
