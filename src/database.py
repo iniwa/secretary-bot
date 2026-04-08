@@ -399,7 +399,7 @@ class Database:
         where = " AND ".join(conditions)
         params.append(limit)
         rows = await self.fetchall(
-            f"SELECT role, content FROM conversation_log "
+            f"SELECT role, content, channel_name FROM conversation_log "
             f"WHERE {where} ORDER BY timestamp DESC LIMIT ?",
             tuple(params),
         )

@@ -635,8 +635,21 @@ nav.bottom-nav { display: none; }
   <div id="page-inner-mind" class="page">
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
       <h2>Inner Mind — モノローグ</h2>
-      <button onclick="loadMonologues()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+      <button onclick="loadMonologues();loadIMStatus();loadIMContext()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
     </div>
+
+    <!-- ステータスカード -->
+    <div id="im-status-card" class="status-grid" style="margin-bottom:1rem">
+      <div class="status-card"><div class="skeleton" style="width:60%;height:0.95rem;margin-bottom:0.5rem"></div><div class="skeleton" style="width:40%;height:1.1rem"></div></div>
+    </div>
+
+    <!-- コンテキストプレビュー -->
+    <div id="im-context-section" style="margin-bottom:1rem;display:none">
+      <h3 style="margin-bottom:0.5rem">Current Context</h3>
+      <div id="im-context-list" style="display:flex;flex-direction:column;gap:0.3rem"></div>
+    </div>
+
+    <h3 style="margin-bottom:0.5rem">Monologue History</h3>
     <div id="monologue-list" style="display:flex;flex-direction:column;gap:0.5rem">
       <span style="color:var(--text-dim)">ページを開いた時に自動読み込みされます。</span>
     </div>
@@ -759,7 +772,7 @@ function showPage(name) {
   if (name === 'ollama-logs') loadOllamaLogs(0);
   if (name === 'heartbeat-debug') loadHeartbeatDebug();
   if (name === 'rakuten-debug') loadRakutenDebug();
-  if (name === 'inner-mind') loadMonologues();
+  if (name === 'inner-mind') { loadMonologues(); loadIMStatus(); loadIMContext(); }
   if (name === 'inner-mind-settings') loadIMSettings();
   if (name === 'tools-input-relay') loadInputRelayStatus();
 }
@@ -947,7 +960,8 @@ async function loadLogs(offset) {
     tbody.innerHTML = '';
     (data.logs || []).forEach(l => {
       const mode = l.mode === 'eco' ? ' <span style="color:var(--accent)">⚡省エネ</span>' : '';
-      tbody.innerHTML += `<tr><td>${fmtTime(l.timestamp)}</td><td>${l.channel}</td><td>${l.role}</td><td>${l.content}${mode}</td><td>${l.unit || ''}</td></tr>`;
+      const ch = l.channel_name ? '#' + l.channel_name : l.channel;
+      tbody.innerHTML += `<tr><td>${fmtTime(l.timestamp)}</td><td>${ch}</td><td>${l.role}</td><td>${l.content}${mode}</td><td>${l.unit || ''}</td></tr>`;
     });
   } catch (err) { console.error(err); }
 }
@@ -2298,6 +2312,75 @@ async function saveIMSettings() {
     });
   } catch(e) {
     console.error('Failed to save IM settings', e);
+  }
+}
+
+// --- Inner Mind Status & Context ---
+
+async function loadIMStatus() {
+  const el = document.getElementById('im-status-card');
+  try {
+    const res = await fetch('/api/inner-mind/status');
+    const data = await res.json();
+    let html = '';
+
+    // self_model card
+    const sm = data.self_model || {};
+    const smEntries = Object.entries(sm);
+    if (smEntries.length) {
+      html += '<div class="status-card"><h3>Self Model</h3>';
+      smEntries.forEach(([k, v]) => {
+        const color = k === 'mood' ? ({curious:'#f0c040',calm:'#6ecf6e',talkative:'#60b0f0',concerned:'#e07070',idle:'#999'}[v] || 'var(--text)') : 'var(--text)';
+        html += `<div style="display:flex;justify-content:space-between;padding:0.2rem 0"><span style="color:var(--text-dim)">${escapeHtml(k)}</span><span style="color:${color};font-weight:bold">${escapeHtml(v)}</span></div>`;
+      });
+      html += '</div>';
+    }
+
+    // enabled / last think
+    const enabledLabel = data.enabled ? '<span class="val ok">ON</span>' : '<span class="val ng">OFF</span>';
+    const lastThink = data.last_monologue ? fmtTime(data.last_monologue.created_at) : '-';
+    html += `<div class="status-card"><h3>InnerMind</h3><div style="padding:0.2rem 0"><span style="color:var(--text-dim)">有効: </span>${enabledLabel}</div><div style="padding:0.2rem 0"><span style="color:var(--text-dim)">最終思考: </span><strong>${lastThink}</strong></div></div>`;
+
+    // activity
+    const act = data.activity || {};
+    if (act.enabled !== undefined) {
+      html += '<div class="status-card"><h3>Activity</h3>';
+      const blocked = act.blocked ? `<span class="val ng">${escapeHtml(act.block_reason || 'Blocked')}</span>` : '<span class="val ok">Free</span>';
+      html += `<div style="padding:0.2rem 0"><span style="color:var(--text-dim)">状態: </span>${blocked}</div>`;
+      if (act.gaming) html += `<div style="padding:0.2rem 0"><span style="color:var(--text-dim)">ゲーム: </span>${act.gaming.active ? escapeHtml(act.gaming.game || 'プレイ中') : '-'}</div>`;
+      if (act.obs_connected !== undefined) html += `<div style="padding:0.2rem 0"><span style="color:var(--text-dim)">OBS: </span>${act.obs_streaming ? '配信中' : act.obs_recording ? '録画中' : act.obs_connected ? '接続中' : '-'}</div>`;
+      if (act.discord_vc) html += `<div style="padding:0.2rem 0"><span style="color:var(--text-dim)">Discord VC: </span>接続中</div>`;
+      html += '</div>';
+    }
+
+    el.innerHTML = html || '<div class="status-card"><span class="val ng">データなし</span></div>';
+  } catch(e) {
+    el.innerHTML = `<div class="status-card"><span style="color:var(--accent)">取得失敗: ${escapeHtml(e.message)}</span></div>`;
+  }
+}
+
+async function loadIMContext() {
+  const section = document.getElementById('im-context-section');
+  const list = document.getElementById('im-context-list');
+  try {
+    const res = await fetch('/api/inner-mind/context');
+    const data = await res.json();
+    const sources = data.sources || [];
+    if (!sources.length) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = 'block';
+    list.innerHTML = sources.map(s => {
+      const preview = s.text.length > 200 ? s.text.slice(0, 200) + '...' : s.text;
+      return `<details style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:0.6rem 1rem">
+        <summary style="cursor:pointer;font-weight:600;font-size:0.9rem">${escapeHtml(s.name)} <span style="color:var(--text-dim);font-weight:normal;font-size:0.8rem">(${s.text.length}文字)</span></summary>
+        <pre style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;margin-top:0.5rem;padding:0.6rem;background:var(--bg);border-radius:4px;border:1px solid var(--border);max-height:300px;overflow-y:auto">${escapeHtml(s.text)}</pre>
+      </details>`;
+    }).join('');
+  } catch(e) {
+    section.style.display = 'block';
+    list.innerHTML = `<span style="color:var(--accent)">取得失敗: ${escapeHtml(e.message)}</span>`;
   }
 }
 

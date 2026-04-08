@@ -54,6 +54,7 @@ _EXTRACT_PROMPT = """\
 - subscribe: 毎朝の天気通知を登録（location, hour, minute は任意。デフォルト: 朝7時）
 - unsubscribe: 天気通知の解除（id が必要）
 - list: 天気通知の登録一覧
+- ask_location: 地域が不明で特定できない場合に、ユーザーに地域を聞き返す
 
 ## 出力形式（厳守）
 {{"action": "アクション名", "location": "地名", "date": "YYYY-MM-DD", "hour": 7, "minute": 0, "id": 数値}}
@@ -61,6 +62,7 @@ _EXTRACT_PROMPT = """\
 - 不要なフィールドは省略してください。
 - 「今日」「明日」「明後日」等の相対日付は必ずYYYY-MM-DD形式に変換してください。
 - 地名が指定されていない場合は location を省略してください。
+- subscribe で地名が不明な場合は action を "ask_location" にしてください。
 - JSON1つだけを返してください。
 
 ## ユーザー入力
@@ -105,7 +107,9 @@ class WeatherUnit(BaseUnit):
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "get_weather")
 
-            if action == "subscribe":
+            if action == "ask_location":
+                return "どの地域の天気をお届けしますか？（例: 大阪、札幌、福岡 など）"
+            elif action == "subscribe":
                 result = await self._subscribe(extracted, user_id)
             elif action == "unsubscribe":
                 result = await self._unsubscribe(extracted, user_id)
@@ -141,8 +145,8 @@ class WeatherUnit(BaseUnit):
 
     # --- 地名解決 ---
 
-    async def _resolve_location(self, location: str | None, user_id: str) -> str:
-        """地名を解決する。未指定時はpeople_memoryから検索、それでもなければデフォルト。"""
+    async def _resolve_location(self, location: str | None, user_id: str) -> str | None:
+        """地名を解決する。未指定時はpeople_memoryから検索、それでもなければNoneを返す。"""
         if location:
             return location
 
@@ -159,7 +163,7 @@ class WeatherUnit(BaseUnit):
         except Exception:
             pass
 
-        return self._default_location
+        return None
 
     # --- API呼び出し ---
 
@@ -311,7 +315,7 @@ class WeatherUnit(BaseUnit):
 
     async def _get_weather(self, extracted: dict, user_id: str) -> str:
         location_input = extracted.get("location")
-        location = await self._resolve_location(location_input, user_id)
+        location = await self._resolve_location(location_input, user_id) or self._default_location
         target_date = extracted.get("date", datetime.now(JST).strftime("%Y-%m-%d"))
 
         geo = await self._geocode(location)
@@ -339,7 +343,7 @@ class WeatherUnit(BaseUnit):
 
     async def _get_weekly(self, extracted: dict, user_id: str) -> str:
         location_input = extracted.get("location")
-        location = await self._resolve_location(location_input, user_id)
+        location = await self._resolve_location(location_input, user_id) or self._default_location
 
         geo = await self._geocode(location)
         if not geo:
@@ -359,6 +363,9 @@ class WeatherUnit(BaseUnit):
         location = await self._resolve_location(location_input, user_id)
         hour = extracted.get("hour", 7)
         minute = extracted.get("minute", 0)
+
+        if not location:
+            return "どの地域の天気をお届けしますか？（例: 大阪、札幌、福岡 など）"
 
         geo = await self._geocode(location)
         if not geo:

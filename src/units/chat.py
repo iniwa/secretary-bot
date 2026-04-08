@@ -129,10 +129,15 @@ class ChatUnit(BaseUnit):
                 history_rows = history_rows[:-1]
 
         if history_rows:
-            history_text = "\n".join(
-                f"{r.get('name', 'ユーザー') if r['role'] == 'user' else 'アシスタント'}: {r['content']}"
-                for r in history_rows
-            )
+            lines = []
+            for r in history_rows:
+                prefix = r.get('name', 'ユーザー') if r['role'] == 'user' else 'アシスタント'
+                ch_name = r.get('channel_name', '')
+                if ch_name:
+                    lines.append(f"[#{ch_name}] {prefix}: {r['content']}")
+                else:
+                    lines.append(f"{prefix}: {r['content']}")
+            history_text = "\n".join(lines)
             prompt = f"【過去の会話履歴】\n{history_text}\n\n【現在のメッセージ】\n{message}"
         else:
             prompt = message

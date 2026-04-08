@@ -474,15 +474,32 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(404, "not found")
         notify_hour = body.get("notify_hour", row["notify_hour"])
         notify_minute = body.get("notify_minute", row["notify_minute"])
+        location = row["location"]
+        latitude = row["latitude"]
+        longitude = row["longitude"]
+
+        # 地域変更がリクエストされた場合、ジオコーディングして更新
+        new_location = body.get("location")
+        if new_location and new_location != location:
+            weather_unit = bot.unit_manager.get("weather")
+            if weather_unit:
+                actual = getattr(weather_unit, "unit", weather_unit)
+                geo = await actual._geocode(new_location)
+                if not geo:
+                    raise HTTPException(400, f"「{new_location}」の位置情報が見つかりません")
+                location = geo["name"]
+                latitude = geo["latitude"]
+                longitude = geo["longitude"]
+
         await bot.database.execute(
-            "UPDATE weather_subscriptions SET notify_hour = ?, notify_minute = ? WHERE id = ?",
-            (notify_hour, notify_minute, wid),
+            "UPDATE weather_subscriptions SET notify_hour = ?, notify_minute = ?, location = ?, latitude = ?, longitude = ? WHERE id = ?",
+            (notify_hour, notify_minute, location, latitude, longitude, wid),
         )
         # スケジューラ更新
         if row["active"]:
             bot.heartbeat.schedule_weather_daily(
                 wid, notify_hour, notify_minute,
-                row["user_id"], row["latitude"], row["longitude"], row["location"],
+                row["user_id"], latitude, longitude, location,
             )
         return {"ok": True}
 
@@ -839,6 +856,53 @@ def create_web_app(bot) -> FastAPI:
     async def get_monologues(limit: int = 50):
         rows = await bot.database.get_monologues(limit=limit)
         return {"monologues": rows}
+
+    @app.get("/api/inner-mind/status", dependencies=[Depends(_verify)])
+    async def get_inner_mind_status():
+        """InnerMindの現在状態（self_model, activity, 最終思考等）。"""
+        self_model = await bot.database.get_self_model()
+        last_mono = await bot.database.get_last_monologue()
+
+        # アクティビティ状態
+        activity = {}
+        if hasattr(bot, "activity_detector"):
+            try:
+                activity = await bot.activity_detector.get_status()
+            except Exception:
+                activity = {"error": "取得失敗"}
+
+        # InnerMind有効/無効
+        im = getattr(bot, "inner_mind", None)
+        enabled = False
+        if im:
+            enabled_val = await im._get_setting("enabled", False)
+            from src.inner_mind.core import _to_bool
+            enabled = _to_bool(enabled_val)
+
+        return {
+            "self_model": self_model,
+            "last_monologue": last_mono,
+            "activity": activity,
+            "enabled": enabled,
+        }
+
+    @app.get("/api/inner-mind/context", dependencies=[Depends(_verify)])
+    async def get_inner_mind_context():
+        """InnerMindの現在のコンテキストソース一覧を返す。"""
+        im = getattr(bot, "inner_mind", None)
+        if not im:
+            return {"sources": [], "error": "InnerMind not initialized"}
+        try:
+            results = await im.registry.collect_all({})
+            sources = []
+            for sr in results:
+                sources.append({
+                    "name": sr["name"],
+                    "text": sr["text"],
+                })
+            return {"sources": sources}
+        except Exception as e:
+            return {"sources": [], "error": str(e)}
 
     @app.get("/api/inner-mind/settings", dependencies=[Depends(_verify)])
     async def get_inner_mind_settings():
