@@ -66,7 +66,7 @@ def _verify_token(request: Request):
 def _get_commit_hash() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
+            ["git", "rev-parse", "HEAD"], text=True, errors="replace"
         ).strip()
     except Exception:
         return "unknown"
@@ -89,14 +89,14 @@ async def update(request: Request):
     _verify_token(request)
     try:
         result = subprocess.run(
-            ["git", "pull"], capture_output=True, text=True, timeout=30
+            ["git", "pull"], capture_output=True, text=True, errors="replace", timeout=30
         )
         pull_output = result.stdout.strip()
 
         # サブモジュール更新
         sub_result = subprocess.run(
             ["git", "submodule", "update", "--init", "--recursive"],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, errors="replace", timeout=60,
         )
         sub_output = sub_result.stdout.strip()
 
@@ -128,7 +128,7 @@ async def input_relay_update(request: Request):
     try:
         result = subprocess.run(
             ["git", "submodule", "update", "--remote", "windows-agent/tools/input-relay"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, errors="replace", timeout=30,
         )
         output = result.stdout.strip() or result.stderr.strip()
         return {"success": result.returncode == 0, "output": output}
@@ -213,7 +213,7 @@ async def restart_pc(request: Request):
 @app.post("/cancel-shutdown")
 async def cancel_shutdown(request: Request):
     _verify_token(request)
-    result = subprocess.run(["shutdown", "/a"], capture_output=True, text=True)
+    result = subprocess.run(["shutdown", "/a"], capture_output=True, text=True, errors="replace")
     return {"status": "cancelled" if result.returncode == 0 else "no_pending"}
 
 

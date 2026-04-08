@@ -2,6 +2,8 @@
 
 import asyncio
 import collections
+import ctypes
+import ctypes.wintypes
 import os
 import subprocess
 import sys
@@ -12,6 +14,87 @@ TOOLS_DIR = Path(__file__).parent
 
 # ログのリングバッファサイズ
 LOG_BUFFER_SIZE = 500
+
+# 死活監視: 連続失敗でリトライを停止する閾値
+MAX_CONSECUTIVE_FAILURES = 5
+
+# --- Windows Job Object ---
+# 親プロセス終了時に子プロセスも自動終了させる
+
+_kernel32 = ctypes.windll.kernel32
+
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JobObjectExtendedLimitInformation = 9
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.wintypes.LARGE_INTEGER),
+        ("PerJobUserTimeLimit", ctypes.wintypes.LARGE_INTEGER),
+        ("LimitFlags", ctypes.wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+        ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+        ("PriorityClass", ctypes.wintypes.DWORD),
+        ("SchedulingClass", ctypes.wintypes.DWORD),
+    ]
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_ulonglong),
+        ("WriteOperationCount", ctypes.c_ulonglong),
+        ("OtherOperationCount", ctypes.c_ulonglong),
+        ("ReadTransferCount", ctypes.c_ulonglong),
+        ("WriteTransferCount", ctypes.c_ulonglong),
+        ("OtherTransferCount", ctypes.c_ulonglong),
+    ]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", _IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _create_job_object() -> ctypes.wintypes.HANDLE | None:
+    """KILL_ON_JOB_CLOSE付きJob Objectを作成。"""
+    try:
+        job = _kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        _kernel32.SetInformationJobObject(
+            job,
+            _JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        return job
+    except Exception:
+        return None
+
+
+def _assign_to_job(job: ctypes.wintypes.HANDLE, pid: int):
+    """プロセスをJob Objectに割り当て。"""
+    try:
+        handle = _kernel32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
+        if handle:
+            _kernel32.AssignProcessToJobObject(job, handle)
+            _kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+
+
+# モジュール起動時にJob Object作成（Agent終了時に自動で子プロセスも終了）
+_job_object = _create_job_object()
 
 
 class ToolProcess:
@@ -28,6 +111,7 @@ class ToolProcess:
         self._reader_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._manually_stopped = False  # 手動停止フラグ（死活監視の自動再起動を抑制）
+        self._consecutive_failures = 0  # 連続失敗カウンタ
 
     @property
     def running(self) -> bool:
@@ -45,14 +129,14 @@ class ToolProcess:
             # ルールが存在するか確認
             check = subprocess.run(
                 ["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"],
-                capture_output=True, text=True,
+                capture_output=True, text=True, errors="replace",
             )
             if check.returncode != 0:
                 subprocess.run(
                     ["netsh", "advfirewall", "firewall", "add", "rule",
                      f"name={name}", "dir=in", "action=allow",
                      "protocol=TCP", f"localport={port}"],
-                    capture_output=True,
+                    capture_output=True, errors="replace",
                 )
                 self.logs.append(f"[firewall] Added rule: {name} (port {port})")
 
@@ -71,12 +155,50 @@ class ToolProcess:
         except Exception:
             pass
 
+    def _kill_port_holders(self):
+        """起動前に、使用予定ポートを占有しているプロセスをkill。"""
+        ports = {r["port"] for r in self.firewall_rules}
+        if not ports:
+            return
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True, errors="replace",
+            )
+        except Exception:
+            return
+        killed: set[int] = set()
+        my_pid = os.getpid()
+        for line in result.stdout.splitlines():
+            if "LISTENING" not in line:
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            # parts[-2] = address:port, parts[-1] = PID
+            try:
+                port = int(parts[-2].rsplit(":", 1)[1])
+                pid = int(parts[-1])
+            except (ValueError, IndexError):
+                continue
+            if port in ports and pid != my_pid and pid not in killed:
+                self.logs.append(f"[manager] Killing stale process PID {pid} on port {port}")
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    killed.add(pid)
+                except Exception:
+                    pass
+
     def start(self):
         """プロセスを起動。"""
         if self.running:
             return
 
         self._manually_stopped = False
+        self._consecutive_failures = 0
+        self._kill_port_holders()
         self._setup_firewall()
         self._stop_event.clear()
 
@@ -86,10 +208,15 @@ class ToolProcess:
             cwd=self.cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+
+        # Job Objectに登録（Agent終了時に自動kill）
+        if _job_object and self.process.pid:
+            _assign_to_job(_job_object, self.process.pid)
 
         self._reader_thread = threading.Thread(
             target=self._read_output, daemon=True,
@@ -150,15 +277,28 @@ class ToolManager:
             tool.stop()
 
     async def monitor(self, check_interval: float = 10.0):
-        """死活監視ループ。落ちたプロセスを自動再起動。"""
+        """死活監視ループ。落ちたプロセスを自動再起動（連続失敗時は停止）。"""
         while True:
             await asyncio.sleep(check_interval)
             for tool in self._tools.values():
                 if tool._manually_stopped:
                     continue
                 if tool.process is not None and not tool.running:
-                    tool.logs.append("[manager] Process died, restarting...")
+                    tool._consecutive_failures += 1
+                    if tool._consecutive_failures > MAX_CONSECUTIVE_FAILURES:
+                        if tool._consecutive_failures == MAX_CONSECUTIVE_FAILURES + 1:
+                            tool.logs.append(
+                                f"[manager] {tool.name}: {MAX_CONSECUTIVE_FAILURES} consecutive "
+                                "failures, giving up auto-restart. Use manual start to retry."
+                            )
+                        continue
+                    tool.logs.append(
+                        f"[manager] Process died, restarting... "
+                        f"(attempt {tool._consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})"
+                    )
                     tool.start()
+                elif tool.running:
+                    tool._consecutive_failures = 0
 
     def start_monitor(self):
         self._monitor_task = asyncio.create_task(self.monitor())
