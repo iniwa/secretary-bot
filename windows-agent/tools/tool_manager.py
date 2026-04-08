@@ -174,9 +174,10 @@ class ToolProcess:
             parts = line.split()
             if len(parts) < 5:
                 continue
-            # parts[-2] = address:port, parts[-1] = PID
+            # netstat -ano: Proto LocalAddr ForeignAddr State PID
+            # e.g.: TCP  0.0.0.0:8888  0.0.0.0:0  LISTENING  12345
             try:
-                port = int(parts[-2].rsplit(":", 1)[1])
+                port = int(parts[1].rsplit(":", 1)[1])
                 pid = int(parts[-1])
             except (ValueError, IndexError):
                 continue
