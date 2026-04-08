@@ -497,30 +497,25 @@ async def obs_status(request: Request):
     return {"obs_connected": False, "file_organizer_enabled": False}
 
 
+_LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "agent.log")
+
+
 @app.get("/obs/logs")
 async def obs_logs(request: Request, lines: int = 100):
     """OBSManager関連のログを返す。"""
     _verify_token(request)
     log_entries = []
     try:
-        import logging
-        # ルートロガーのハンドラからログファイルを探す
-        for handler in logging.root.handlers:
-            if isinstance(handler, logging.FileHandler):
-                log_path = handler.baseFilename
-                if os.path.exists(log_path):
-                    with open(log_path, encoding="utf-8", errors="replace") as f:
-                        all_lines = f.readlines()
-                    # OBS関連のログをフィルタ
-                    obs_lines = [
-                        l.rstrip() for l in all_lines
-                        if "obs" in l.lower() or "moved" in l.lower()
-                        or "recording" in l.lower() or "replay" in l.lower()
-                        or "screenshot" in l.lower() or "sweep" in l.lower()
-                        or "compress" in l.lower() or "organize" in l.lower()
-                    ]
-                    log_entries = obs_lines[-lines:]
-                break
+        if os.path.exists(_LOG_FILE):
+            with open(_LOG_FILE, encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            obs_keywords = {"obs", "moved", "recording", "replay", "screenshot",
+                            "sweep", "compress", "cleanup", "stray", "pngquant"}
+            obs_lines = [
+                l.rstrip() for l in all_lines
+                if any(kw in l.lower() for kw in obs_keywords)
+            ]
+            log_entries = obs_lines[-lines:]
     except Exception:
         pass
     return {"logs": log_entries}
@@ -560,6 +555,19 @@ async def cancel_shutdown(request: Request):
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+
+    log_dir = os.path.join(os.path.dirname(__file__), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(log_dir, "agent.log"), encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+
     port = int(os.environ.get("AGENT_PORT", "7777"))
     uvicorn.run(app, host="0.0.0.0", port=port)

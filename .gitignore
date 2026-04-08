@@ -11,6 +11,9 @@ windows-agent/config/agent_config.yaml
 # Data
 data/
 
+# Logs
+logs/
+
 # Keys
 *.key
 *.pem
