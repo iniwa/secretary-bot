@@ -20,6 +20,17 @@ class AgentPool:
         self._agent_token = os.environ.get("AGENT_SECRET_TOKEN", "")
         # 委託モード: per-agent override (WebGUIから動的変更される想定)
         self._modes: dict[str, str] = {}  # agent_id → "allow" | "deny" | "auto"
+        # 共有httpxクライアント（毎回生成しない）
+        self._http: httpx.AsyncClient | None = None
+
+    def _get_http(self) -> httpx.AsyncClient:
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=5)
+        return self._http
+
+    async def close(self) -> None:
+        if self._http and not self._http.is_closed:
+            await self._http.aclose()
 
     def set_mode(self, agent_id: str, mode: str) -> None:
         self._modes[agent_id] = mode
@@ -47,9 +58,8 @@ class AgentPool:
     async def _is_alive(self, agent: dict) -> bool:
         url = f"http://{agent['host']}:{agent['port']}/health"
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(url, headers={"X-Agent-Token": self._agent_token})
-                return resp.status_code == 200
+            resp = await self._get_http().get(url, headers={"X-Agent-Token": self._agent_token})
+            return resp.status_code == 200
         except Exception:
             return False
 
@@ -67,30 +77,30 @@ class AgentPool:
         mem_limit = thresholds.get("memory_percent", 85)
 
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                # CPU使用率
-                cpu_query = f'100 - (avg(rate(windows_cpu_time_total{{instance="{instance}",mode="idle"}}[5m])) * 100)'
-                resp = await client.get(
-                    f"{self._metrics_url}/api/v1/query",
-                    params={"query": cpu_query},
-                )
-                cpu_data = resp.json()
-                cpu_val = float(cpu_data["data"]["result"][0]["value"][1])
-                if cpu_val > cpu_limit:
-                    log.info("Agent %s CPU too high: %.1f%%", agent["id"], cpu_val)
-                    return False
+            http = self._get_http()
+            # CPU使用率
+            cpu_query = f'100 - (avg(rate(windows_cpu_time_total{{instance="{instance}",mode="idle"}}[5m])) * 100)'
+            resp = await http.get(
+                f"{self._metrics_url}/api/v1/query",
+                params={"query": cpu_query},
+            )
+            cpu_data = resp.json()
+            cpu_val = float(cpu_data["data"]["result"][0]["value"][1])
+            if cpu_val > cpu_limit:
+                log.info("Agent %s CPU too high: %.1f%%", agent["id"], cpu_val)
+                return False
 
-                # メモリ使用率
-                mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
-                resp = await client.get(
-                    f"{self._metrics_url}/api/v1/query",
-                    params={"query": mem_query},
-                )
-                mem_data = resp.json()
-                mem_val = float(mem_data["data"]["result"][0]["value"][1])
-                if mem_val > mem_limit:
-                    log.info("Agent %s memory too high: %.1f%%", agent["id"], mem_val)
-                    return False
+            # メモリ使用率
+            mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
+            resp = await http.get(
+                f"{self._metrics_url}/api/v1/query",
+                params={"query": mem_query},
+            )
+            mem_data = resp.json()
+            mem_val = float(mem_data["data"]["result"][0]["value"][1])
+            if mem_val > mem_limit:
+                log.info("Agent %s memory too high: %.1f%%", agent["id"], mem_val)
+                return False
 
             return True
         except Exception as e:
@@ -111,17 +121,17 @@ class AgentPool:
 
         url = f"http://{agent['host']}:{agent['port']}/version"
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(url, headers={"X-Agent-Token": self._agent_token})
-                remote_hash = resp.json().get("version", "")
+            http = self._get_http()
+            resp = await http.get(url, headers={"X-Agent-Token": self._agent_token})
+            remote_hash = resp.json().get("version", "")
 
             if remote_hash == local_hash:
                 return True
 
             log.info("Version mismatch for %s (%s != %s), updating", agent["id"], remote_hash[:8], local_hash[:8])
             update_url = f"http://{agent['host']}:{agent['port']}/update"
-            async with httpx.AsyncClient(timeout=30) as client:
-                await client.post(update_url, headers={"X-Agent-Token": self._agent_token})
+            # updateは時間がかかる可能性があるため個別タイムアウト
+            await http.post(update_url, headers={"X-Agent-Token": self._agent_token}, timeout=30)
             return True
         except Exception as e:
             log.warning("Version check failed for %s: %s", agent["id"], e)

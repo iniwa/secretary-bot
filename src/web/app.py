@@ -111,23 +111,7 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/status", )
     async def get_status():
-        from src.bot import get_commit_hash, get_uptime_seconds
-        agents_status = []
-        pool = bot.unit_manager.agent_pool
-        for agent in pool._agents:
-            alive = await pool._is_alive(agent)
-            agents_status.append({
-                "id": agent["id"],
-                "name": agent.get("name", agent["id"]),
-                "alive": alive,
-                "mode": pool.get_mode(agent["id"]),
-            })
-        return {
-            "version": get_commit_hash(),
-            "uptime": int(get_uptime_seconds()),
-            "ollama": bot.llm_router.ollama_available,
-            "agents": agents_status,
-        }
+        return await bot.status_collector.collect()
 
     @app.post("/api/ollama-recheck", )
     async def ollama_recheck():
