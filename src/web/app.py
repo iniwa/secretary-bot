@@ -909,6 +909,51 @@ def create_web_app(bot) -> FastAPI:
 
         return {"ok": True}
 
+    # --- Tools: input-relay ---
+
+    async def _agent_request(method: str, path: str, role: str | None = None) -> list[dict]:
+        """Windows Agent にリクエストを送る。role指定があればそのAgentのみ。"""
+        agents_pool = getattr(bot, "agent_pool", None)
+        if not agents_pool:
+            return []
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
+        results = []
+        for agent in agents_pool._agents:
+            if role and agent.get("role") != role:
+                continue
+            url = f"http://{agent['host']}:{agent['port']}{path}"
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    if method == "GET":
+                        resp = await client.get(url, headers=headers)
+                    else:
+                        resp = await client.post(url, headers=headers)
+                    data = resp.json()
+                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), **data})
+            except Exception as e:
+                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), "error": str(e)})
+        return results
+
+    @app.get("/api/tools/input-relay/status", )
+    async def tools_input_relay_status():
+        results = await _agent_request("GET", "/tools/input-relay/status")
+        return {"agents": results}
+
+    @app.get("/api/tools/input-relay/logs/{role}", )
+    async def tools_input_relay_logs(role: str, lines: int = 100):
+        results = await _agent_request("GET", f"/tools/input-relay/logs?lines={lines}", role=role)
+        if not results:
+            raise HTTPException(404, f"No agent with role '{role}'")
+        return results[0]
+
+    @app.post("/api/tools/input-relay/restart/{role}", )
+    async def tools_input_relay_restart(role: str):
+        results = await _agent_request("POST", "/tools/input-relay/restart", role=role)
+        if not results:
+            raise HTTPException(404, f"No agent with role '{role}'")
+        return results[0]
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")

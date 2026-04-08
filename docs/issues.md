@@ -22,6 +22,10 @@
   - エスカレーション間隔スヌーズ（30分→1時間→3時間→6時間）
   - LLMによる会話文脈解決 + 聞き返しフォールバック
 
+- [x] **Input Relay 統合** → `docs/design/input_relay_integration_design.md`
+  - git submodule + Windows Agent プロセス管理 + WebGUI統合
+  - 実装済み（ロール判定、自動起動、死活監視、ログ表示）
+
 ## 実装のみ（設計不要）
 
 - [ ] **WebGUI: モノローグログの追加**

@@ -230,6 +230,10 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('memory')">Memory</button>
   </div>
   <div class="nav-group">
+    <div class="nav-group-label">Tools</div>
+    <button onclick="showPage('tools-input-relay')">Input Relay</button>
+  </div>
+  <div class="nav-group">
     <div class="nav-group-label">Logs</div>
     <button onclick="showPage('logs')">会話ログ</button>
     <button onclick="showPage('ollama-logs')">LLM</button>
@@ -671,6 +675,38 @@ nav.bottom-nav { display: none; }
     </div>
   </div>
 
+  <!-- Tools: Input Relay -->
+  <div id="page-tools-input-relay" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>Input Relay</h2>
+      <button onclick="loadInputRelayStatus()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+
+    <div class="maint-section">
+      <h3>ステータス</h3>
+      <div id="ir-status" style="display:flex;gap:1.5rem;flex-wrap:wrap">
+        <span style="color:var(--text-dim)">読み込み中...</span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>管理GUI</h3>
+      <div style="display:flex;gap:1rem;flex-wrap:wrap">
+        <a href="http://192.168.1.210:8082/" target="_blank" rel="noopener" style="padding:0.5rem 1.2rem;border-radius:6px;background:var(--primary);color:var(--text);text-decoration:none;font-size:0.9rem">Sender 設定 (Main PC)</a>
+        <a href="http://192.168.1.211:8081/" target="_blank" rel="noopener" style="padding:0.5rem 1.2rem;border-radius:6px;background:var(--primary);color:var(--text);text-decoration:none;font-size:0.9rem">Receiver 設定 (Sub PC)</a>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>ログ</h3>
+      <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem">
+        <button onclick="loadInputRelayLogs('main')" class="ir-log-tab" data-role="main" style="padding:0.3rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--primary);color:var(--text);cursor:pointer;font-size:0.85rem">Sender (Main)</button>
+        <button onclick="loadInputRelayLogs('sub')" class="ir-log-tab" data-role="sub" style="padding:0.3rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.85rem">Receiver (Sub)</button>
+      </div>
+      <pre id="ir-logs" style="background:var(--bg);padding:1rem;border-radius:6px;max-height:400px;overflow-y:auto;font-size:0.8rem;white-space:pre-wrap;border:1px solid var(--border);color:var(--text-dim)">ログを読み込むにはタブをクリックしてください。</pre>
+    </div>
+  </div>
+
 </main>
 
 <nav class="bottom-nav">
@@ -717,6 +753,7 @@ function showPage(name) {
   if (name === 'rakuten-debug') loadRakutenDebug();
   if (name === 'inner-mind') loadMonologues();
   if (name === 'inner-mind-settings') loadIMSettings();
+  if (name === 'tools-input-relay') loadInputRelayStatus();
 }
 
 let chatBusy = false;
@@ -2253,6 +2290,58 @@ async function saveIMSettings() {
     });
   } catch(e) {
     console.error('Failed to save IM settings', e);
+  }
+}
+
+// --- Tools: Input Relay ---
+async function loadInputRelayStatus() {
+  const el = document.getElementById('ir-status');
+  try {
+    const resp = await fetch('/api/tools/input-relay/status');
+    const data = await resp.json();
+    if (!data.agents || data.agents.length === 0) {
+      el.innerHTML = '<span style="color:var(--text-dim)">Agent未接続</span>';
+      return;
+    }
+    el.innerHTML = data.agents.map(a => {
+      const label = a.role === 'main' ? 'Sender (Main)' : 'Receiver (Sub)';
+      const dot = a.running ? '\u25cf' : '\u25cb';
+      const color = a.running ? '#4caf50' : '#f44336';
+      const status = a.running ? 'Running' : (a.error ? 'Error' : 'Stopped');
+      const restartBtn = `<button onclick="restartInputRelay('${a.role}')" style="padding:0.2rem 0.6rem;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.8rem;margin-left:0.5rem">再起動</button>`;
+      return `<div style="padding:0.6rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);min-width:180px">
+        <div style="font-weight:600;margin-bottom:0.3rem">${label}</div>
+        <div><span style="color:${color}">${dot}</span> ${status}${a.pid ? ' (PID:'+a.pid+')' : ''}${restartBtn}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<span style="color:#f44336">取得失敗</span>';
+  }
+}
+
+async function loadInputRelayLogs(role) {
+  document.querySelectorAll('.ir-log-tab').forEach(btn => {
+    btn.style.background = btn.dataset.role === role ? 'var(--primary)' : 'var(--surface)';
+  });
+  const el = document.getElementById('ir-logs');
+  el.textContent = '読み込み中...';
+  try {
+    const resp = await fetch(`/api/tools/input-relay/logs/${role}?lines=200`);
+    const data = await resp.json();
+    el.textContent = (data.logs || []).join('\n') || '(ログなし)';
+    el.scrollTop = el.scrollHeight;
+  } catch(e) {
+    el.textContent = '取得失敗: ' + e.message;
+  }
+}
+
+async function restartInputRelay(role) {
+  if (!confirm(`Input Relay (${role}) を再起動しますか？`)) return;
+  try {
+    await fetch(`/api/tools/input-relay/restart/${role}`, {method:'POST'});
+    setTimeout(() => loadInputRelayStatus(), 1500);
+  } catch(e) {
+    alert('再起動失敗: ' + e.message);
   }
 }
 </script>

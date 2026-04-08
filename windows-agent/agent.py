@@ -1,14 +1,58 @@
 """Windows Agent — FastAPIサーバー（ポート7777）。"""
 
 import os
+import socket
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
-app = FastAPI(title="Windows Agent")
+from tools.tool_manager import ToolManager, create_tool_manager
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
+_tool_manager: ToolManager | None = None
+
+
+def _detect_role() -> str:
+    """環境変数 or IPアドレスからロールを判定。"""
+    role = os.environ.get("AGENT_ROLE")
+    if role:
+        return role
+
+    # IPベースの判定
+    try:
+        hostname = socket.gethostname()
+        local_ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        ip_set = {addr[4][0] for addr in local_ips}
+    except Exception:
+        ip_set = set()
+
+    role_map = {
+        "192.168.1.210": "main",
+        "192.168.1.211": "sub",
+    }
+    for ip, r in role_map.items():
+        if ip in ip_set:
+            return r
+
+    return "unknown"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _tool_manager
+    role = _detect_role()
+    print(f"[Agent] Role: {role}")
+    _tool_manager = create_tool_manager(role)
+    _tool_manager.start_all()
+    _tool_manager.start_monitor()
+    yield
+    _tool_manager.stop_monitor()
+    _tool_manager.stop_all()
+
+
+app = FastAPI(title="Windows Agent", lifespan=lifespan)
 
 
 def _verify_token(request: Request):
@@ -75,6 +119,38 @@ async def execute_unit(unit_name: str, request: Request):
     # 将来: ユニット名に応じた処理を実行
     return {"result": f"Unit '{unit_name}' executed (stub)", "parsed": body}
 
+
+# --- Tools: input-relay ---
+
+@app.get("/tools/input-relay/status")
+async def input_relay_status(request: Request):
+    _verify_token(request)
+    tool = _tool_manager.get("input-relay") if _tool_manager else None
+    if not tool:
+        return {"name": "input-relay", "running": False, "pid": None, "registered": False}
+    return {**tool.get_status(), "registered": True}
+
+
+@app.get("/tools/input-relay/logs")
+async def input_relay_logs(request: Request, lines: int = 100):
+    _verify_token(request)
+    tool = _tool_manager.get("input-relay") if _tool_manager else None
+    if not tool:
+        raise HTTPException(404, "input-relay not registered")
+    return {"logs": tool.get_logs(lines)}
+
+
+@app.post("/tools/input-relay/restart")
+async def input_relay_restart(request: Request):
+    _verify_token(request)
+    tool = _tool_manager.get("input-relay") if _tool_manager else None
+    if not tool:
+        raise HTTPException(404, "input-relay not registered")
+    tool.restart()
+    return {"restarted": True, **tool.get_status()}
+
+
+# --- PC制御 ---
 
 @app.post("/shutdown")
 async def shutdown_pc(request: Request):
