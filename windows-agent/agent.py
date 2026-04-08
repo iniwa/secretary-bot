@@ -47,7 +47,16 @@ async def update(request: Request):
         result = subprocess.run(
             ["git", "pull"], capture_output=True, text=True, timeout=30
         )
-        return {"success": True, "output": result.stdout.strip()}
+        pull_output = result.stdout.strip()
+
+        # サブモジュール更新
+        sub_result = subprocess.run(
+            ["git", "submodule", "update", "--init", "--recursive"],
+            capture_output=True, text=True, timeout=60,
+        )
+        sub_output = sub_result.stdout.strip()
+
+        return {"success": True, "output": pull_output, "submodule": sub_output}
     except Exception as e:
         raise HTTPException(500, f"Update failed: {e}")
 

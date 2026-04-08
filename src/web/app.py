@@ -200,6 +200,27 @@ def create_web_app(bot) -> FastAPI:
         await asyncio.sleep(delay_seconds)
         await _restart_container()
 
+    async def _update_all_agents(bot) -> list[dict]:
+        """全Windows Agentに /update を呼んでコード更新させる。"""
+        results = []
+        agents = getattr(bot, "agent_pool", None)
+        if not agents:
+            return results
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
+        for agent in agents._agents:
+            url = f"http://{agent['host']}:{agent['port']}/update"
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(url, headers=headers)
+                    data = resp.json()
+                results.append({"id": agent.get("id", agent["host"]), "success": True, **data})
+                log.info("Agent %s updated", agent.get("id", agent["host"]))
+            except Exception as e:
+                results.append({"id": agent.get("id", agent["host"]), "success": False, "error": str(e)})
+                log.warning("Agent %s update failed: %s", agent.get("id", agent["host"]), e)
+        return results
+
     @app.post("/api/update-code", )
     async def update_code(background_tasks: BackgroundTasks):
         try:
@@ -268,9 +289,20 @@ def create_web_app(bot) -> FastAPI:
             output = pull_result.stdout.strip()
             log.info("Code updated: %s -> %s", hash_before[:7], remote_hash[:7])
 
+            # サブモジュール更新
+            sub_result = subprocess.run(
+                ["git", "submodule", "update", "--init", "--recursive"], cwd=git_dir,
+                capture_output=True, text=True, timeout=60,
+            )
+            if sub_result.returncode != 0:
+                log.warning("submodule update failed: %s", sub_result.stderr.strip())
+
+            # 全Windows Agentに更新を通知
+            agent_update_results = await _update_all_agents(bot)
+
             # レスポンス送信後に再起動（遅延付き）
             background_tasks.add_task(_delayed_restart, 2)
-            return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…"}
+            return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…", "agents": agent_update_results}
         except Exception as e:
             log.error("Code update failed: %s", e)
             raise HTTPException(500, f"Update failed: {e}")

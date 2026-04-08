@@ -1,0 +1,3 @@
+[submodule "windows-agent/tools/input-relay"]
+	path = windows-agent/tools/input-relay
+	url = giteassh:iniwa/input-relay.git
