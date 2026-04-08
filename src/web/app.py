@@ -187,7 +187,7 @@ def create_web_app(bot) -> FastAPI:
     async def _update_all_agents(bot) -> list[dict]:
         """全Windows Agentに /update を呼んでコード更新させる。"""
         results = []
-        agents = getattr(bot, "agent_pool", None)
+        agents = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
         if not agents:
             return results
         token = os.environ.get("AGENT_SECRET_TOKEN", "")
@@ -961,7 +961,7 @@ def create_web_app(bot) -> FastAPI:
 
     async def _agent_request(method: str, path: str, role: str | None = None) -> list[dict]:
         """Windows Agent にリクエストを送る。role指定があればそのAgentのみ。"""
-        agents_pool = getattr(bot, "agent_pool", None)
+        agents_pool = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
         if not agents_pool:
             return []
         token = os.environ.get("AGENT_SECRET_TOKEN", "")
@@ -1025,7 +1025,7 @@ def create_web_app(bot) -> FastAPI:
 
     async def _agent_request_json(method: str, path: str, role: str | None = None, json_body: dict | None = None) -> list[dict]:
         """Windows Agent にJSONボディ付きリクエストを送る。"""
-        agents_pool = getattr(bot, "agent_pool", None)
+        agents_pool = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
         if not agents_pool:
             return []
         token = os.environ.get("AGENT_SECRET_TOKEN", "")
