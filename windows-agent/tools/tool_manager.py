@@ -27,6 +27,7 @@ class ToolProcess:
         self.logs: collections.deque[str] = collections.deque(maxlen=LOG_BUFFER_SIZE)
         self._reader_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._manually_stopped = False  # 手動停止フラグ（死活監視の自動再起動を抑制）
 
     @property
     def running(self) -> bool:
@@ -75,6 +76,7 @@ class ToolProcess:
         if self.running:
             return
 
+        self._manually_stopped = False
         self._setup_firewall()
         self._stop_event.clear()
 
@@ -96,6 +98,7 @@ class ToolProcess:
 
     def stop(self):
         """プロセスを停止。"""
+        self._manually_stopped = True
         self._stop_event.set()
         if self.process and self.process.poll() is None:
             self.logs.append("[manager] Stopping process...")
@@ -151,6 +154,8 @@ class ToolManager:
         while True:
             await asyncio.sleep(check_interval)
             for tool in self._tools.values():
+                if tool._manually_stopped:
+                    continue
                 if tool.process is not None and not tool.running:
                     tool.logs.append("[manager] Process died, restarting...")
                     tool.start()

@@ -947,6 +947,20 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(404, f"No agent with role '{role}'")
         return results[0]
 
+    @app.post("/api/tools/input-relay/start/{role}", )
+    async def tools_input_relay_start(role: str):
+        results = await _agent_request("POST", "/tools/input-relay/start", role=role)
+        if not results:
+            raise HTTPException(404, f"No agent with role '{role}'")
+        return results[0]
+
+    @app.post("/api/tools/input-relay/stop/{role}", )
+    async def tools_input_relay_stop(role: str):
+        results = await _agent_request("POST", "/tools/input-relay/stop", role=role)
+        if not results:
+            raise HTTPException(404, f"No agent with role '{role}'")
+        return results[0]
+
     @app.post("/api/tools/input-relay/restart/{role}", )
     async def tools_input_relay_restart(role: str):
         results = await _agent_request("POST", "/tools/input-relay/restart", role=role)

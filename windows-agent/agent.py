@@ -140,6 +140,26 @@ async def input_relay_logs(request: Request, lines: int = 100):
     return {"logs": tool.get_logs(lines)}
 
 
+@app.post("/tools/input-relay/start")
+async def input_relay_start(request: Request):
+    _verify_token(request)
+    tool = _tool_manager.get("input-relay") if _tool_manager else None
+    if not tool:
+        raise HTTPException(404, "input-relay not registered")
+    tool.start()
+    return {**tool.get_status()}
+
+
+@app.post("/tools/input-relay/stop")
+async def input_relay_stop(request: Request):
+    _verify_token(request)
+    tool = _tool_manager.get("input-relay") if _tool_manager else None
+    if not tool:
+        raise HTTPException(404, "input-relay not registered")
+    tool.stop()
+    return {**tool.get_status()}
+
+
 @app.post("/tools/input-relay/restart")
 async def input_relay_restart(request: Request):
     _verify_token(request)
@@ -147,7 +167,7 @@ async def input_relay_restart(request: Request):
     if not tool:
         raise HTTPException(404, "input-relay not registered")
     tool.restart()
-    return {"restarted": True, **tool.get_status()}
+    return {**tool.get_status()}
 
 
 # --- PC制御 ---

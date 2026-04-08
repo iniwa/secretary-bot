@@ -2308,10 +2308,19 @@ async function loadInputRelayStatus() {
       const dot = a.running ? '\u25cf' : '\u25cb';
       const color = a.running ? '#4caf50' : '#f44336';
       const status = a.running ? 'Running' : (a.error ? 'Error' : 'Stopped');
-      const restartBtn = `<button onclick="restartInputRelay('${a.role}')" style="padding:0.2rem 0.6rem;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.8rem;margin-left:0.5rem">再起動</button>`;
-      return `<div style="padding:0.6rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);min-width:180px">
+      const btnStyle = 'padding:0.2rem 0.6rem;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.8rem';
+      let buttons = '';
+      if (a.error) {
+        buttons = `<span style="color:var(--text-dim);font-size:0.8rem">Agent未接続</span>`;
+      } else if (a.running) {
+        buttons = `<button onclick="controlInputRelay('${a.role}','stop')" style="${btnStyle}">停止</button> <button onclick="controlInputRelay('${a.role}','restart')" style="${btnStyle}">再起動</button>`;
+      } else {
+        buttons = `<button onclick="controlInputRelay('${a.role}','start')" style="${btnStyle}">起動</button>`;
+      }
+      return `<div style="padding:0.6rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--bg);min-width:200px">
         <div style="font-weight:600;margin-bottom:0.3rem">${label}</div>
-        <div><span style="color:${color}">${dot}</span> ${status}${a.pid ? ' (PID:'+a.pid+')' : ''}${restartBtn}</div>
+        <div style="margin-bottom:0.4rem"><span style="color:${color}">${dot}</span> ${status}${a.pid ? ' (PID:'+a.pid+')' : ''}</div>
+        <div style="display:flex;gap:0.4rem">${buttons}</div>
       </div>`;
     }).join('');
   } catch(e) {
@@ -2335,13 +2344,15 @@ async function loadInputRelayLogs(role) {
   }
 }
 
-async function restartInputRelay(role) {
-  if (!confirm(`Input Relay (${role}) を再起動しますか？`)) return;
+async function controlInputRelay(role, action) {
+  const labels = {start: '起動', stop: '停止', restart: '再起動'};
+  const label = labels[action] || action;
+  if (!confirm(`Input Relay (${role}) を${label}しますか？`)) return;
   try {
-    await fetch(`/api/tools/input-relay/restart/${role}`, {method:'POST'});
+    await fetch(`/api/tools/input-relay/${action}/${role}`, {method:'POST'});
     setTimeout(() => loadInputRelayStatus(), 1500);
   } catch(e) {
-    alert('再起動失敗: ' + e.message);
+    alert(`${label}失敗: ` + e.message);
   }
 }
 </script>
