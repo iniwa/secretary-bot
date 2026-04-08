@@ -18,6 +18,7 @@ metrics:
 windows_agents:
   - id: "pc-main"
     name: "メインPC"
+    role: "main"         # Input Relay: sender側
     host: "192.168.1.101"
     port: 7777
     priority: 1
@@ -25,6 +26,7 @@ windows_agents:
     wol_device_id: ""    # WoLツールのデバイスID（curl http://<host>:8090/api/devices で確認）
   - id: "pc-sub"
     name: "サブPC"
+    role: "sub"          # Input Relay: receiver側
     host: "192.168.1.102"
     port: 7777
     priority: 2
