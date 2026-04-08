@@ -73,6 +73,9 @@ class Heartbeat:
             else:
                 tick_log["inner_mind"] = "disabled"
 
+            # スヌーズ済みリマインダーの再通知
+            await self._check_snooze_reminders()
+
             # 各ユニットの on_heartbeat 呼び出し
             for unit in self.bot.unit_manager.units.values():
                 name = getattr(getattr(unit, "unit", unit), "UNIT_NAME", "?")
@@ -97,6 +100,67 @@ class Heartbeat:
             self._reschedule()
             tick_log["next_minutes"] = self._get_interval_minutes()
             self.debug_logs.append(tick_log)
+
+    _SNOOZE_INTERVALS_MINUTES = [30, 60, 180, 360]
+
+    async def _check_snooze_reminders(self) -> None:
+        """通知済み未完了リマインダーのスヌーズ再通知を処理する。"""
+        rows = await self.bot.database.fetchall(
+            "SELECT * FROM reminders WHERE active = 1 AND notified = 1"
+        )
+        now = datetime.now(JST)
+        for r in rows:
+            try:
+                snoozed_until = r.get("snoozed_until")
+                if snoozed_until:
+                    until_dt = datetime.fromisoformat(snoozed_until)
+                    if until_dt.tzinfo is None:
+                        until_dt = until_dt.replace(tzinfo=JST)
+                    if now < until_dt:
+                        continue
+                    # 明示的スヌーズ期限到達 → 再通知してクリア
+                    await self._send_snooze_notification(r)
+                    await self.bot.database.execute(
+                        "UPDATE reminders SET snoozed_until = NULL WHERE id = ?",
+                        (r["id"],),
+                    )
+                    continue
+
+                # エスカレーション間隔によるスヌーズ
+                snooze_count = r.get("snooze_count", 0)
+                last_snoozed = r.get("last_snoozed_at")
+                if last_snoozed:
+                    last_dt = datetime.fromisoformat(last_snoozed)
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=JST)
+                else:
+                    # 初回スヌーズ: notified直後 → remind_at を基準に
+                    last_dt = datetime.fromisoformat(r["remind_at"])
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=JST)
+
+                idx = min(snooze_count, len(self._SNOOZE_INTERVALS_MINUTES) - 1)
+                interval_minutes = self._SNOOZE_INTERVALS_MINUTES[idx]
+                if (now - last_dt).total_seconds() < interval_minutes * 60:
+                    continue
+
+                await self._send_snooze_notification(r)
+                await self.bot.database.execute(
+                    "UPDATE reminders SET snooze_count = ?, last_snoozed_at = ? WHERE id = ?",
+                    (snooze_count + 1, now.isoformat(), r["id"]),
+                )
+            except Exception as e:
+                log.error("Snooze check failed for reminder #%d: %s", r["id"], e)
+
+    async def _send_snooze_notification(self, reminder: dict) -> None:
+        """スヌーズ再通知を送信する。"""
+        unit = self.bot.unit_manager.get("reminder")
+        if unit:
+            actual_unit = getattr(unit, "unit", unit)
+            await actual_unit.notify_user(
+                f"まだ未完了: {reminder['message']}\n終わったら教えてね！",
+                user_id=reminder.get("user_id", ""),
+            )
 
     async def _check_compact(self) -> dict:
         threshold = self._config.get("compact_threshold_messages", 20)
@@ -237,8 +301,7 @@ class Heartbeat:
             if unit:
                 actual_unit = getattr(unit, "unit", unit)
                 await actual_unit.notify_user(
-                    f"リマインド: {message}\n"
-                    f"完了したら「リマインダー{reminder_id}番を完了にして」と教えてください。",
+                    f"リマインド: {message}\n終わったら教えてね！",
                     user_id=user_id,
                 )
             await self.bot.database.execute(

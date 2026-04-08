@@ -24,6 +24,9 @@ _EXTRACT_PROMPT = """\
 - edit: リマインダー編集（id または message_query が必要、変更する message または time を含める）
 - delete: リマインダー削除（id または message_query が必要）
 - done: リマインダー完了（id または message_query が必要）
+- contextual_done: 会話文脈から対象リマインダーを推定して完了（「終わったよ」「できた」等）
+- contextual_snooze: 会話文脈から対象リマインダーを推定して延期（「明日やる」「1週間後に言って」等、time が必要）
+- ask_clarify: 対象リマインダーが特定できない場合（candidates に候補IDリストを含める）
 - todo_add: ToDo追加（title が必要、due_date は任意）
 - todo_list: ToDo一覧表示
 - todo_done: ToDo完了（id が必要）
@@ -31,7 +34,7 @@ _EXTRACT_PROMPT = """\
 - todo_delete: ToDo削除（id が必要）
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "due_date": "YYYY-MM-DD", "id": 数値, "ids": [数値], "message_query": "検索キーワード"}}
+{{"action": "アクション名", "message": "内容", "time": "YYYY-MM-DD HH:MM", "title": "ToDo内容", "due_date": "YYYY-MM-DD", "id": 数値, "ids": [数値], "message_query": "検索キーワード", "target_id": 数値, "candidates": [数値], "reason": "推定理由"}}
 
 - 不要なフィールドは省略してください。
 - 日時表現は必ずISO形式に変換してください。
@@ -39,6 +42,15 @@ _EXTRACT_PROMPT = """\
 - edit/delete/done で id が分からない場合は message_query にリマインダーの内容キーワードを指定してください。
 - JSON1つだけを返してください。複数のJSONを返さないでください。
 
+## 推定ルール（contextual_done / contextual_snooze / ask_clarify）
+- ユーザーの発言と会話履歴から、どのリマインダーについて話しているか推定してください
+- 直近に通知されたリマインダーを優先的に候補とする
+- 確信が持てる場合（1件に特定）→ target_id にそのIDを指定
+- 確信が持てない場合（複数候補）→ action: "ask_clarify"、candidates に候補IDリストを含める
+- 「終わったよ」「できた」等の完了表現 → action: "contextual_done"
+- 「明日やる」「〇日後に言って」等の延期表現 → action: "contextual_snooze"、time に延期先の日時を指定
+
+{reminders_context}
 ## ユーザー入力
 {user_input}
 """
@@ -85,7 +97,7 @@ class ReminderUnit(BaseUnit):
                     return result
                 # None = 確認応答と認識できなかった → 通常フローへ
 
-            extracted = await self._extract_params(message, channel)
+            extracted = await self._extract_params(message, channel, user_id)
             action = extracted.get("action", "add")
 
             # list系はセッション維持（後続のID指定操作に備える）、それ以外は完了
@@ -96,6 +108,15 @@ class ReminderUnit(BaseUnit):
                 result = await self._list_reminders(user_id)
             elif action in ("edit", "delete", "done"):
                 result = await self._handle_action_with_query(action, extracted, channel, user_id)
+            elif action == "contextual_done":
+                result = await self._contextual_done(extracted, user_id)
+                self.session_done = True
+            elif action == "contextual_snooze":
+                result = await self._contextual_snooze(extracted, user_id)
+                self.session_done = True
+            elif action == "ask_clarify":
+                result = await self._ask_clarify(extracted, user_id)
+                self.session_done = False
             elif action == "todo_add":
                 result = await self._add_todo(extracted, user_id)
                 self.session_done = True
@@ -125,18 +146,53 @@ class ReminderUnit(BaseUnit):
             await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
             raise
 
-    async def _extract_params(self, user_input: str, channel: str = "") -> dict:
+    async def _extract_params(self, user_input: str, channel: str = "", user_id: str = "") -> dict:
         """ユーザー入力からLLMでパラメータを抽出する。"""
         now = datetime.now(JST)
         context = self.get_context(channel) if channel else ""
+        reminders_context = await self._build_reminders_context(user_id)
         prompt = _EXTRACT_PROMPT.format(
             now=now.strftime("%Y-%m-%d %H:%M"),
             weekday=_WEEKDAYS[now.weekday()],
             user_input=user_input,
+            reminders_context=reminders_context,
         )
         if context:
             prompt = prompt + context
         return await self.llm.extract_json(prompt)
+
+    async def _build_reminders_context(self, user_id: str = "") -> str:
+        """LLMに渡すリマインダーコンテキストを構築する。"""
+        lines = []
+        # 通知済み未完了リマインダー
+        if user_id:
+            notified = await self.bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = 1 AND notified = 1 AND user_id = ? ORDER BY remind_at DESC",
+                (user_id,),
+            )
+            active = await self.bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = 1 AND user_id = ? ORDER BY remind_at",
+                (user_id,),
+            )
+        else:
+            notified = await self.bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = 1 AND notified = 1 ORDER BY remind_at DESC"
+            )
+            active = await self.bot.database.fetchall(
+                "SELECT * FROM reminders WHERE active = 1 ORDER BY remind_at"
+            )
+        if notified:
+            lines.append("## 通知済み未完了リマインダー（直近通知順）")
+            for r in notified:
+                lines.append(f"- #{r['id']} {_format_dt(r['remind_at'])} 「{r['message']}」")
+            lines.append("")
+        if active:
+            lines.append("## 全アクティブリマインダー")
+            for r in active:
+                status = "（通知済み）" if r.get("notified") else ""
+                lines.append(f"- #{r['id']} {_format_dt(r['remind_at'])} 「{r['message']}」{status}")
+            lines.append("")
+        return "\n".join(lines)
 
     # --- 確認フロー ---
 
@@ -224,6 +280,93 @@ class ReminderUnit(BaseUnit):
             dt_str = _format_dt(r["remind_at"])
             lines.append(f"  #{r['id']}  {dt_str}  {r['message']}")
         self.session_done = False
+        return "\n".join(lines)
+
+    # --- NLP文脈操作 ---
+
+    _SNOOZE_ESCALATION = [30, 60, 180, 360]
+
+    async def _contextual_done(self, extracted: dict, user_id: str) -> str:
+        """文脈から推定したリマインダーを完了にする。"""
+        target_id = extracted.get("target_id")
+        if not target_id:
+            return "どのリマインダーのことか分かりませんでした。もう少し詳しく教えてください。"
+        if user_id:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ? AND active = 1 AND user_id = ?", (target_id, user_id)
+            )
+        else:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ? AND active = 1", (target_id,)
+            )
+        if not row:
+            return f"リマインダー #{target_id} が見つかりません。"
+        await self.bot.database.execute(
+            "UPDATE reminders SET active = 0, done_at = ? WHERE id = ?",
+            (jst_now(), target_id),
+        )
+        self.bot.heartbeat.cancel_reminder(target_id)
+        return f"「{row['message']}」のリマインダー、完了にしました。"
+
+    async def _contextual_snooze(self, extracted: dict, user_id: str) -> str:
+        """文脈から推定したリマインダーをスヌーズする。"""
+        target_id = extracted.get("target_id")
+        if not target_id:
+            return "どのリマインダーのことか分かりませんでした。もう少し詳しく教えてください。"
+        if user_id:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ? AND active = 1 AND user_id = ?", (target_id, user_id)
+            )
+        else:
+            row = await self.bot.database.fetchone(
+                "SELECT * FROM reminders WHERE id = ? AND active = 1", (target_id,)
+            )
+        if not row:
+            return f"リマインダー #{target_id} が見つかりません。"
+
+        time_str = extracted.get("time")
+        if time_str:
+            # 明示的スヌーズ: ユーザー指定の日時に再通知
+            try:
+                snooze_dt = datetime.fromisoformat(time_str)
+            except ValueError:
+                return "日時の解析ができませんでした。"
+            await self.bot.database.execute(
+                "UPDATE reminders SET snoozed_until = ?, snooze_count = 0 WHERE id = ?",
+                (snooze_dt.isoformat(), target_id),
+            )
+            return f"「{row['message']}」のリマインダー、{snooze_dt.strftime('%m/%d %H:%M')} にまた通知するね。"
+        else:
+            # エスカレーションスヌーズ
+            snooze_count = row.get("snooze_count", 0)
+            idx = min(snooze_count, len(self._SNOOZE_ESCALATION) - 1)
+            interval = self._SNOOZE_ESCALATION[idx]
+            now = datetime.now(JST)
+            await self.bot.database.execute(
+                "UPDATE reminders SET snooze_count = ?, last_snoozed_at = ? WHERE id = ?",
+                (snooze_count + 1, now.isoformat(), target_id),
+            )
+            return f"「{row['message']}」のリマインダー、{interval}分後にまた通知するね。"
+
+    async def _ask_clarify(self, extracted: dict, user_id: str) -> str:
+        """候補が複数ある場合にユーザーに確認する。"""
+        candidates = extracted.get("candidates", [])
+        if not candidates:
+            return "どのリマインダーのことか分かりませんでした。もう少し詳しく教えてください。"
+        lines = ["どれのこと？"]
+        for cid in candidates:
+            if user_id:
+                row = await self.bot.database.fetchone(
+                    "SELECT * FROM reminders WHERE id = ? AND active = 1 AND user_id = ?", (cid, user_id)
+                )
+            else:
+                row = await self.bot.database.fetchone(
+                    "SELECT * FROM reminders WHERE id = ? AND active = 1", (cid,)
+                )
+            if row:
+                dt_str = _format_dt(row["remind_at"])
+                status = "（通知済み）" if row.get("notified") else ""
+                lines.append(f"  #{row['id']}  {dt_str}  {row['message']}{status}")
         return "\n".join(lines)
 
     async def _find_by_query(self, query: str, user_id: str = "") -> list[dict]:

@@ -1,2 +1,16 @@
 fastapi>=0.104,<1.0
 uvicorn[standard]>=0.24,<1.0
+pyyaml>=6.0
+psutil>=5.9
+obsws-python>=1.7
+pywin32>=306
+httpx>=0.25
+# STT: Main PC (マイクキャプチャ)
+sounddevice>=0.4
+webrtcvad>=2.0.10
+numpy>=1.24
+# STT: Sub PC (Whisperエンジン)
+transformers>=4.36
+torch>=2.1
+accelerate>=0.25
+soundfile>=0.12

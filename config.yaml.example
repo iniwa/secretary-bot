@@ -10,6 +10,16 @@ heartbeat:
   interval_without_ollama_minutes: 180
   compact_threshold_messages: 20
 
+# アクティビティ検出
+activity:
+  enabled: true
+  block_rules:
+    obs_streaming: true       # 配信中 → ブロック
+    obs_recording: true       # 録画中 → ブロック
+    obs_replay_buffer: false  # リプレイバッファ → 許可
+    gaming_on_main: false     # MainPCゲーム中 → 許可（Ollama on Subは動かしてOK）
+    discord_vc: false         # VC接続中 → 許可
+
 # VictoriaMetrics（Grafanaスタック流用）
 metrics:
   victoria_metrics_url: "http://localhost:8428"
@@ -65,9 +75,89 @@ units:
   calendar:
     enabled: true
     timezone: "Asia/Tokyo"
+  rss:
+    enabled: true
   power:
     enabled: true
     shutdown_delay: 60  # デフォルト遅延秒数
+
+# RSS フィーダー
+rss:
+  fetch_interval_minutes: 60        # フェッチ間隔（分）
+  digest_hour: 9                    # ダイジェスト通知時刻
+  article_retention_days: 30        # 記事保持日数
+  max_articles_per_category: 5      # カテゴリごとの表示件数上限
+  presets:
+    gaming:
+      label: "ゲーム"
+      feeds:
+        - url: "https://eaa-fps.com/feed/"
+          title: "EAA"
+        - url: "https://automaton-media.com/feed/"
+          title: "AUTOMATON"
+        - url: "https://news.denfaminicogamer.jp/feed"
+          title: "電ファミニコゲーマー"
+        - url: "https://www.4gamer.net/rss/index.xml"
+          title: "4Gamer"
+        - url: "https://www.gamespark.jp/rss/index.xml"
+          title: "Game*Spark"
+    tech:
+      label: "テック"
+      feeds:
+        - url: "https://note.com/rss"
+          title: "Note"
+        - url: "https://zenn.dev/feed"
+          title: "Zenn"
+        - url: "https://qiita.com/popular-items/feed"
+          title: "Qiita"
+        - url: "https://www.publickey1.jp/atom.xml"
+          title: "Publickey"
+        - url: "https://gigazine.net/news/rss_2.0/"
+          title: "GIGAZINE"
+    pc:
+      label: "PC"
+      feeds:
+        - url: "https://jisakuhibi.jp/feed"
+          title: "自作とゲームと趣味の日々"
+        - url: "https://chimolog.co/feed/"
+          title: "ちもろぐ"
+        - url: "https://pc.watch.impress.co.jp/data/rss/1.0/pcw/feed.rdf"
+          title: "PC Watch"
+    vr:
+      label: "VR・VTuber"
+      feeds:
+        - url: "https://panora.tokyo/feed"
+          title: "PANORA"
+        - url: "https://www.moguravr.com/feed/"
+          title: "MoguraVR"
+    news:
+      label: "ニュース"
+      feeds:
+        - url: "https://www.nhk.or.jp/rss/news/cat0.xml"
+          title: "NHK"
+        - url: "https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml"
+          title: "ITmedia"
+
+# STT（音声テキスト化）
+stt:
+  enabled: false
+  polling_interval_minutes: 5         # Pi→Main PC ポーリング間隔
+  capture:
+    device: null                      # null = デフォルトマイク
+    sample_rate: 16000
+    vad_aggressiveness: 2             # webrtcvad: 0-3（高いほど厳格）
+    volume_threshold_rms: 300         # 音量閾値（RMS値、これ以下は無視）
+    silence_threshold_seconds: 1.5    # 無音でutterance区切り
+    min_utterance_seconds: 1.0        # 短すぎるutteranceを無視
+  batch:
+    interval_minutes: 5               # バッチSTT間隔（Main PC→Sub PC）
+  processing:
+    summary_threshold_chars: 2000     # この文字数を超えたらLLM要約
+  model:
+    name: "kotoba-tech/kotoba-whisper-v2.0"
+    device: "cuda"
+    torch_dtype: "float16"
+    unload_after_minutes: 10          # 未使用時にモデルをVRAMから解放
 
 # WoLツールAPI（DockerブリッジからはlocalhostではなくホストのLAN IPを指定）
 wol:

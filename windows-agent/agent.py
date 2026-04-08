@@ -8,10 +8,26 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
+from activity.game_detector import get_activity as get_game_activity
+from activity.obs_manager import OBSManager, create_obs_manager
 from tools.tool_manager import ToolManager, create_tool_manager
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _tool_manager: ToolManager | None = None
+_obs_manager: OBSManager | None = None
+_stt_capture = None  # MicCapture (Main PC)
+_stt_client = None   # STTClient (Main PC)
+_whisper_engine = None  # WhisperEngine (Sub PC)
+
+
+def _load_agent_config() -> dict:
+    """windows-agent/config/agent_config.yaml があれば読み込む。なければ空 dict。"""
+    import yaml
+    config_path = os.path.join(os.path.dirname(__file__), "config", "agent_config.yaml")
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    return {}
 
 
 def _detect_role() -> str:
@@ -41,13 +57,49 @@ def _detect_role() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _tool_manager
+    global _tool_manager, _obs_manager, _stt_capture, _stt_client, _whisper_engine
     role = _detect_role()
+    config = _load_agent_config()
     print(f"[Agent] Role: {role}")
     _tool_manager = create_tool_manager(role)
     _tool_manager.start_all()
     _tool_manager.start_monitor()
+    # Sub PC: OBS監視 + ファイル整理を開始
+    if role == "sub":
+        _obs_manager = create_obs_manager(config)
+        _obs_manager.start()
+
+    # STT初期化
+    stt_cfg = config.get("stt", {})
+    if stt_cfg.get("enabled", False):
+        if role == "main":
+            from stt.mic_capture import MicCapture
+            from stt.stt_client import STTClient
+            _stt_capture = MicCapture(stt_cfg.get("capture", {}))
+            _stt_client = STTClient(_stt_capture, {
+                "sub_pc_url": stt_cfg.get("sub_pc_url", "http://192.168.1.211:7777"),
+                "interval_minutes": stt_cfg.get("batch", {}).get("interval_minutes", 5),
+                "agent_token": _SECRET_TOKEN,
+            })
+            _stt_capture.start()
+            _stt_client.start()
+            print("[Agent] STT capture started (Main PC)")
+        elif role == "sub":
+            from stt.whisper_engine import WhisperEngine
+            _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
+            print("[Agent] Whisper engine ready (Sub PC, lazy load)")
+
     yield
+
+    # STTシャットダウン
+    if _stt_client:
+        _stt_client.stop()
+    if _stt_capture:
+        _stt_capture.stop()
+    if _whisper_engine:
+        _whisper_engine.unload()
+    if _obs_manager:
+        _obs_manager.stop()
     _tool_manager.stop_monitor()
     _tool_manager.stop_all()
 
@@ -103,6 +155,26 @@ async def update(request: Request):
         return {"success": True, "output": pull_output, "submodule": sub_output}
     except Exception as e:
         raise HTTPException(500, f"Update failed: {e}")
+
+
+@app.get("/activity")
+async def activity(request: Request):
+    _verify_token(request)
+    role = _detect_role()
+    result: dict = {"role": role}
+    if role == "main":
+        result.update(get_game_activity())
+    elif role == "sub":
+        if _obs_manager:
+            result.update(_obs_manager.get_status())
+        else:
+            result.update({
+                "obs_connected": False,
+                "obs_streaming": False,
+                "obs_recording": False,
+                "obs_replay_buffer": False,
+            })
+    return result
 
 
 @app.get("/units")
@@ -182,6 +254,66 @@ async def input_relay_restart(request: Request):
         raise HTTPException(404, "input-relay not registered")
     tool.restart()
     return {**tool.get_status()}
+
+
+# --- STT: Main PC endpoints ---
+
+@app.get("/stt/status")
+async def stt_status(request: Request):
+    _verify_token(request)
+    if _stt_client:
+        return _stt_client.get_status()
+    return {"running": False, "error": "STT not enabled on this agent"}
+
+
+@app.get("/stt/transcripts")
+async def stt_transcripts(request: Request, since: str | None = None):
+    _verify_token(request)
+    if not _stt_client:
+        return {"transcripts": []}
+    return {"transcripts": _stt_client.get_transcripts(since=since)}
+
+
+@app.post("/stt/control")
+async def stt_control(request: Request):
+    _verify_token(request)
+    body = await request.json()
+    action = body.get("action", "")
+    if not _stt_capture:
+        raise HTTPException(400, "STT capture not available on this agent")
+    if action == "start":
+        _stt_capture.start()
+        if _stt_client and not _stt_client.running:
+            _stt_client.start()
+    elif action == "stop":
+        _stt_capture.stop()
+        if _stt_client:
+            _stt_client.stop()
+    else:
+        raise HTTPException(400, f"Unknown action: {action}")
+    return _stt_capture.get_status()
+
+
+# --- STT: Sub PC endpoints ---
+
+@app.post("/stt")
+async def stt_transcribe(request: Request):
+    _verify_token(request)
+    if not _whisper_engine:
+        raise HTTPException(400, "Whisper engine not available on this agent")
+    wav_data = await request.body()
+    if not wav_data:
+        raise HTTPException(400, "No audio data received")
+    text = _whisper_engine.transcribe(wav_data)
+    return {"text": text}
+
+
+@app.get("/stt/model/status")
+async def stt_model_status(request: Request):
+    _verify_token(request)
+    if not _whisper_engine:
+        return {"loaded": False, "error": "Whisper engine not available on this agent"}
+    return _whisper_engine.get_status()
 
 
 # --- PC制御 ---

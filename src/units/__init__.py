@@ -19,6 +19,7 @@ _UNIT_MODULES = {
     "weather": "src.units.weather",
     "calendar": "src.units.calendar",
     "power": "src.units.power",
+    "rss": "src.units.rss",
 }
 
 

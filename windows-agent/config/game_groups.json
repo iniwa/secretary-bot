@@ -1,0 +1,31 @@
+{
+  "groups": [
+    "高頻度",
+    "ソシャゲ",
+    "FPS",
+    "自動追加",
+    "ソロゲー"
+  ],
+  "assignments": {
+    "VALORANT-Win64-Shipping.exe": "高頻度",
+    "EscapeFromTarkov.exe": "高頻度",
+    "StreetFighter6.exe": "高頻度",
+    "ffxiv_dx11.exe": "高頻度",
+    "r5apex.exe": "FPS",
+    "RainbowSix.exe": "FPS",
+    "Fortnite.exe": "FPS",
+    "ZenlessZoneZero.exe": "ソシャゲ",
+    "Endfield.exe": "ソシャゲ",
+    "BlueArchive.exe": "ソシャゲ",
+    "GenshinImpact.exe": "ソシャゲ",
+    "cs2.exe": "FPS",
+    "overwatch.exe": "FPS",
+    "CyberPunk2077.exe": "ソロゲー",
+    "sekiro.exe": "ソロゲー",
+    "re2.exe": "自動追加",
+    "eldenring.exe": "自動追加",
+    "HorizonZeroDawn.exe": "自動追加",
+    "RDR2.exe": "自動追加",
+    "witcher3.exe": "自動追加"
+  }
+}

@@ -14,6 +14,8 @@ from src.inner_mind.context_sources.conversation import ConversationSource
 from src.inner_mind.context_sources.memo import MemoSource
 from src.inner_mind.context_sources.memory import MemorySource
 from src.inner_mind.context_sources.reminder import ReminderSource
+from src.inner_mind.context_sources.rss import RSSSource
+from src.inner_mind.context_sources.stt import STTSource
 from src.inner_mind.context_sources.weather import WeatherSource
 from src.inner_mind.prompts import SPEAK_PROMPT, SPEAK_SYSTEM, THINK_PROMPT, THINK_SYSTEM
 from src.logger import get_logger
@@ -34,6 +36,8 @@ class InnerMind:
         self.registry.register(ReminderSource(bot))
         self.registry.register(MemorySource(bot))
         self.registry.register(WeatherSource(bot))
+        self.registry.register(RSSSource(bot))
+        self.registry.register(STTSource(bot))
 
     def register_source(self, source) -> None:
         """外部からコンテキストソースを追加する。"""

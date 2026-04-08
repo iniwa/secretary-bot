@@ -1,0 +1,19 @@
+# Windows Agent ローカル設定
+# このファイルを agent_config.yaml にコピーして編集してください
+
+# OBSファイル整理（Sub PCのみ）
+obs_file_organizer:
+  enabled: true
+  output_base_dir: "V:/tdarr/incoming"
+  encoded_base_dir: "V:/tdarr/encoded"
+  unknown_folder: "Unknown"
+  screenshot_folder: "_screenshot"
+  file_move_retries: 3
+  file_move_retry_delay_seconds: 1
+  cleanup_interval_seconds: 3600
+
+# Main PC Agent 情報（Sub PCがゲーム名を問い合わせる先）
+windows_agents:
+  - host: "192.168.1.210"
+    port: 7777
+    role: main

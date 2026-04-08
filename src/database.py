@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 11
+_SCHEMA_VERSION = 14
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS reminders (
     active          BOOLEAN NOT NULL DEFAULT 1,
     notified        BOOLEAN NOT NULL DEFAULT 0,
     user_id         TEXT NOT NULL DEFAULT '',
-    done_at         DATETIME
+    done_at         DATETIME,
+    snooze_count    INTEGER NOT NULL DEFAULT 0,
+    last_snoozed_at TEXT,
+    snoozed_until   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_log (
@@ -216,6 +219,65 @@ class Database:
             11: [
                 "ALTER TABLE conversation_log ADD COLUMN channel_name TEXT DEFAULT ''",
             ],
+            12: [
+                "ALTER TABLE reminders ADD COLUMN snooze_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE reminders ADD COLUMN last_snoozed_at TEXT",
+                "ALTER TABLE reminders ADD COLUMN snoozed_until TEXT",
+            ],
+            13: [
+                """CREATE TABLE IF NOT EXISTS rss_feeds (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url        TEXT UNIQUE NOT NULL,
+                    title      TEXT NOT NULL,
+                    category   TEXT NOT NULL,
+                    is_preset  INTEGER DEFAULT 0,
+                    added_by   TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )""",
+                """CREATE TABLE IF NOT EXISTS rss_articles (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    feed_id      INTEGER NOT NULL REFERENCES rss_feeds(id),
+                    title        TEXT NOT NULL,
+                    url          TEXT UNIQUE NOT NULL,
+                    summary      TEXT,
+                    published_at TEXT,
+                    fetched_at   TEXT DEFAULT (datetime('now'))
+                )""",
+                """CREATE TABLE IF NOT EXISTS rss_user_prefs (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id  TEXT NOT NULL,
+                    feed_id  INTEGER REFERENCES rss_feeds(id),
+                    category TEXT,
+                    enabled  INTEGER DEFAULT 1,
+                    UNIQUE(user_id, feed_id),
+                    UNIQUE(user_id, category)
+                )""",
+                """CREATE TABLE IF NOT EXISTS rss_feedback (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    TEXT NOT NULL,
+                    article_id INTEGER NOT NULL REFERENCES rss_articles(id),
+                    rating     INTEGER NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    UNIQUE(user_id, article_id)
+                )""",
+            ],
+            14: [
+                """CREATE TABLE IF NOT EXISTS stt_transcripts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    raw_text TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT NOT NULL,
+                    duration_seconds REAL,
+                    collected_at TEXT DEFAULT (datetime('now')),
+                    summarized INTEGER DEFAULT 0
+                )""",
+                """CREATE TABLE IF NOT EXISTS stt_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    summary TEXT NOT NULL,
+                    transcript_ids TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )""",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -241,6 +303,11 @@ class Database:
         cursor = await self.db.execute(sql, params)
         await self.db.commit()
         return cursor
+
+    async def execute_returning_rowcount(self, sql: str, params: tuple = ()) -> int:
+        cursor = await self.db.execute(sql, params)
+        await self.db.commit()
+        return cursor.rowcount
 
     async def fetchone(self, sql: str, params: tuple = ()) -> dict | None:
         self.db.row_factory = aiosqlite.Row
