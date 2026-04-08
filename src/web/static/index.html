@@ -219,6 +219,7 @@ nav.bottom-nav { display: none; }
     <button onclick="showPage('unit-memo')">Memo</button>
     <button onclick="showPage('unit-timer')">Timer</button>
     <button onclick="showPage('unit-weather')">Weather</button>
+    <button onclick="showPage('unit-rss')">RSS</button>
   </div>
   <div class="nav-group">
     <div class="nav-group-label">Inner Mind</div>
@@ -524,6 +525,60 @@ nav.bottom-nav { display: none; }
         </table>
       </div>
     </div>
+  </div>
+
+  <!-- RSS -->
+  <div id="page-unit-rss" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>RSS フィード</h2>
+      <button onclick="loadRSSPage()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+      <button onclick="rssFetchNow()" id="rss-fetch-btn" style="padding:0.4rem 1rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:0.9rem">今すぐフェッチ</button>
+      <span id="rss-fetch-status" style="font-size:0.8rem;color:var(--text-dim)"></span>
+    </div>
+
+    <!-- フィード管理 -->
+    <div style="display:flex;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
+      <!-- カテゴリフィルタ -->
+      <div id="rss-cat-filter" style="display:flex;gap:0.3rem;flex-wrap:wrap"></div>
+    </div>
+
+    <!-- フィード追加 -->
+    <details style="margin-bottom:1rem">
+      <summary style="cursor:pointer;padding:0.5rem;font-size:0.9rem;color:var(--text-dim)">フィード追加</summary>
+      <div style="display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap;align-items:center">
+        <input type="text" id="rss-add-url" placeholder="https://example.com/feed" style="flex:2;min-width:200px;padding:0.4rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem" />
+        <input type="text" id="rss-add-title" placeholder="タイトル（任意）" style="flex:1;min-width:120px;padding:0.4rem 0.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem" />
+        <select id="rss-add-cat" style="padding:0.4rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          <option value="other">カテゴリ</option>
+        </select>
+        <button onclick="rssAddFeed()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:#4ade80;color:#000;cursor:pointer;font-size:0.85rem;font-weight:500">追加</button>
+      </div>
+    </details>
+
+    <!-- フィード一覧 -->
+    <div class="unit-section">
+      <h3 id="rss-feed-count" style="margin-bottom:0.5rem">フィード一覧</h3>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px">#</th>
+            <th style="width:30%">タイトル</th>
+            <th>URL</th>
+            <th style="width:100px">カテゴリ</th>
+            <th style="width:60px">種別</th>
+            <th style="width:40px"></th>
+          </tr>
+        </thead>
+        <tbody id="rss-feed-tbody"></tbody>
+      </table>
+    </div>
+
+    <!-- 最新記事 -->
+    <details style="margin-top:1rem">
+      <summary style="cursor:pointer;padding:0.5rem;font-size:0.9rem;color:var(--text-dim)">最新記事</summary>
+      <div style="display:flex;gap:0.3rem;margin:0.5rem 0;flex-wrap:wrap" id="rss-article-cat-filter"></div>
+      <div id="rss-articles-list" style="margin-top:0.5rem"></div>
+    </details>
   </div>
 
   <!-- Memory -->
@@ -860,6 +915,7 @@ function showPage(name) {
   if (name === 'unit-memo') loadMemos();
   if (name === 'unit-timer') loadTimers();
   if (name === 'unit-weather') loadWeather();
+  if (name === 'unit-rss') loadRSSPage();
   if (name === 'memory') loadMemory();
   if (name === 'ollama-logs') loadOllamaLogs(0);
   if (name === 'heartbeat-debug') loadHeartbeatDebug();
@@ -2877,6 +2933,175 @@ async function loadObsLogs() {
     el.scrollTop = el.scrollHeight;
   } catch(e) {
     el.textContent = '取得失敗: ' + e.message;
+  }
+}
+
+// --- RSS ---
+let rssFeeds = [];
+let rssCategories = {};
+let rssCatFilter = null;
+let rssArticleCatFilter = null;
+
+async function loadRSSPage() {
+  await loadRSSFeeds();
+  await loadRSSArticles();
+}
+
+async function loadRSSFeeds() {
+  try {
+    const res = await fetch('/api/rss/feeds');
+    const d = await res.json();
+    rssFeeds = d.feeds || [];
+    rssCategories = d.categories || {};
+    rssRenderCatFilter();
+    rssRenderFeeds();
+    rssRenderAddCatOptions();
+  } catch(e) {
+    document.getElementById('rss-feed-tbody').innerHTML = `<tr><td colspan="6" style="color:#f44336">読み込み失敗</td></tr>`;
+  }
+}
+
+function rssRenderCatFilter() {
+  const el = document.getElementById('rss-cat-filter');
+  const cats = [...new Set(rssFeeds.map(f => f.category))];
+  let html = `<button onclick="rssCatFilter=null;rssRenderFeeds();rssRenderCatFilter()" style="padding:0.3rem 0.6rem;border-radius:4px;border:none;cursor:pointer;font-size:0.8rem;${rssCatFilter === null ? 'background:var(--primary);color:var(--text)' : 'background:var(--surface);color:var(--text-dim);border:1px solid var(--border)'}">すべて</button>`;
+  for (const c of cats) {
+    const label = rssCategories[c] || c;
+    const active = rssCatFilter === c;
+    html += `<button onclick="rssCatFilter='${c}';rssRenderFeeds();rssRenderCatFilter()" style="padding:0.3rem 0.6rem;border-radius:4px;border:none;cursor:pointer;font-size:0.8rem;${active ? 'background:var(--primary);color:var(--text)' : 'background:var(--surface);color:var(--text-dim);border:1px solid var(--border)'}">${escapeHtml(label)}</button>`;
+  }
+  el.innerHTML = html;
+}
+
+function rssRenderFeeds() {
+  const tbody = document.getElementById('rss-feed-tbody');
+  const visible = rssCatFilter ? rssFeeds.filter(f => f.category === rssCatFilter) : rssFeeds;
+  document.getElementById('rss-feed-count').textContent = `フィード一覧（${visible.length}件）`;
+
+  if (visible.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-dim)">フィードがありません</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = visible.map(f => {
+    const catLabel = rssCategories[f.category] || f.category;
+    const preset = f.is_preset ? 'プリセット' : 'カスタム';
+    const presetStyle = f.is_preset ? 'color:var(--text-dim)' : 'color:#4ade80';
+    const delBtn = f.is_preset
+      ? ''
+      : `<button onclick="rssDeleteFeed(${f.id})" style="background:none;border:none;color:#555;cursor:pointer;font-size:1rem" title="削除">&times;</button>`;
+    return `<tr>
+      <td style="color:var(--text-dim);font-size:0.8rem">${f.id}</td>
+      <td>${escapeHtml(f.title)}</td>
+      <td style="font-size:0.8rem;word-break:break-all"><a href="${escapeHtml(f.url)}" target="_blank" style="color:var(--primary);text-decoration:none">${escapeHtml(f.url)}</a></td>
+      <td><span style="font-size:0.8rem">${escapeHtml(catLabel)}</span></td>
+      <td style="${presetStyle};font-size:0.75rem">${preset}</td>
+      <td style="text-align:center">${delBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function rssRenderAddCatOptions() {
+  const sel = document.getElementById('rss-add-cat');
+  const cats = Object.entries(rssCategories);
+  sel.innerHTML = cats.map(([k, v]) => `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`).join('')
+    + '<option value="other">その他</option>';
+}
+
+async function rssAddFeed() {
+  const url = document.getElementById('rss-add-url').value.trim();
+  const title = document.getElementById('rss-add-title').value.trim();
+  const category = document.getElementById('rss-add-cat').value;
+  if (!url) { alert('URLを入力してください'); return; }
+  try {
+    const res = await fetch('/api/rss/feeds', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url, title: title || undefined, category}),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.detail || '追加失敗');
+      return;
+    }
+    document.getElementById('rss-add-url').value = '';
+    document.getElementById('rss-add-title').value = '';
+    await loadRSSFeeds();
+  } catch(e) { alert('追加失敗: ' + e.message); }
+}
+
+async function rssDeleteFeed(id) {
+  if (!confirm(`フィード #${id} を削除しますか？`)) return;
+  try {
+    const res = await fetch(`/api/rss/feeds/${id}`, {method: 'DELETE'});
+    if (!res.ok) {
+      const d = await res.json();
+      alert(d.detail || '削除失敗');
+      return;
+    }
+    await loadRSSFeeds();
+  } catch(e) { alert('削除失敗: ' + e.message); }
+}
+
+async function rssFetchNow() {
+  const btn = document.getElementById('rss-fetch-btn');
+  const status = document.getElementById('rss-fetch-status');
+  btn.disabled = true;
+  status.textContent = 'フェッチ中...';
+  status.style.color = '#fbbf24';
+  try {
+    const res = await fetch('/api/rss/fetch', {method: 'POST'});
+    const d = await res.json();
+    status.textContent = `完了: ${d.new_articles || 0}件の新着記事`;
+    status.style.color = '#4ade80';
+    await loadRSSArticles();
+  } catch(e) {
+    status.textContent = '失敗: ' + e.message;
+    status.style.color = '#f44336';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadRSSArticles(category) {
+  const el = document.getElementById('rss-articles-list');
+  const catParam = category ? `?category=${category}` : '?limit=30';
+  try {
+    const res = await fetch(`/api/rss/articles${catParam}`);
+    const d = await res.json();
+    const articles = d.articles || [];
+
+    // カテゴリフィルタ
+    const filterEl = document.getElementById('rss-article-cat-filter');
+    const cats = [...new Set(articles.map(a => a.category))];
+    let filterHtml = `<button onclick="rssArticleCatFilter=null;loadRSSArticles()" style="padding:0.2rem 0.5rem;border-radius:4px;border:none;cursor:pointer;font-size:0.75rem;${!rssArticleCatFilter ? 'background:var(--primary);color:var(--text)' : 'background:var(--surface);color:var(--text-dim);border:1px solid var(--border)'}">すべて</button>`;
+    for (const c of cats) {
+      const label = rssCategories[c] || c;
+      filterHtml += `<button onclick="rssArticleCatFilter='${c}';loadRSSArticles('${c}')" style="padding:0.2rem 0.5rem;border-radius:4px;border:none;cursor:pointer;font-size:0.75rem;${rssArticleCatFilter === c ? 'background:var(--primary);color:var(--text)' : 'background:var(--surface);color:var(--text-dim);border:1px solid var(--border)'}">${escapeHtml(label)}</button>`;
+    }
+    filterEl.innerHTML = filterHtml;
+
+    if (articles.length === 0) {
+      el.innerHTML = '<div style="padding:1rem;color:var(--text-dim);text-align:center">記事がありません。「今すぐフェッチ」を押してください。</div>';
+      return;
+    }
+
+    el.innerHTML = articles.map(a => {
+      const date = (a.published_at || a.fetched_at || '').substring(0, 16);
+      const summary = a.summary ? `<div style="font-size:0.8rem;color:var(--text-dim);margin-top:0.2rem">${escapeHtml(a.summary).substring(0, 150)}</div>` : '';
+      const catLabel = rssCategories[a.category] || a.category;
+      return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:baseline;gap:0.5rem">
+          <span style="font-size:0.7rem;color:var(--text-dim);white-space:nowrap">${escapeHtml(date)}</span>
+          <span style="font-size:0.7rem;padding:0.1rem 0.4rem;background:var(--surface);border-radius:3px;color:var(--text-dim)">${escapeHtml(catLabel)}</span>
+          <a href="${escapeHtml(a.url)}" target="_blank" style="color:var(--text);text-decoration:none;font-size:0.9rem">${escapeHtml(a.title)}</a>
+        </div>
+        ${summary}
+        <div style="font-size:0.7rem;color:var(--text-dim);margin-top:0.1rem">${escapeHtml(a.feed_title)}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:#f44336">取得失敗: ${escapeHtml(e.message)}</div>`;
   }
 }
 </script>

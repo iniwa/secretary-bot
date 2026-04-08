@@ -1118,6 +1118,78 @@ def create_web_app(bot) -> FastAPI:
             return {"logs": []}
         return results[0]
 
+    # --- RSS フィード管理 ---
+
+    @app.get("/api/rss/feeds", dependencies=[Depends(_verify)])
+    async def rss_feeds():
+        feeds = await bot.database.fetchall(
+            "SELECT * FROM rss_feeds ORDER BY category, title"
+        )
+        presets = bot.config.get("rss", {}).get("presets", {})
+        categories = {k: v.get("label", k) for k, v in presets.items()}
+        return {"feeds": feeds, "categories": categories}
+
+    @app.post("/api/rss/feeds", dependencies=[Depends(_verify)])
+    async def rss_feed_add(request: Request):
+        body = await request.json()
+        url = (body.get("url") or "").strip()
+        title = (body.get("title") or url[:50]).strip()
+        category = (body.get("category") or "other").strip()
+        if not url:
+            raise HTTPException(400, "URL is required")
+        existing = await bot.database.fetchone(
+            "SELECT id FROM rss_feeds WHERE url = ?", (url,)
+        )
+        if existing:
+            raise HTTPException(409, f"Already exists (#{existing['id']})")
+        from src.database import jst_now
+        await bot.database.execute(
+            """INSERT INTO rss_feeds (url, title, category, is_preset, added_by, created_at)
+               VALUES (?, ?, ?, 0, ?, ?)""",
+            (url, title, category, "webgui", jst_now()),
+        )
+        return {"ok": True}
+
+    @app.delete("/api/rss/feeds/{feed_id}", dependencies=[Depends(_verify)])
+    async def rss_feed_delete(feed_id: int):
+        feed = await bot.database.fetchone(
+            "SELECT * FROM rss_feeds WHERE id = ?", (feed_id,)
+        )
+        if not feed:
+            raise HTTPException(404, "Feed not found")
+        if feed["is_preset"]:
+            raise HTTPException(400, "Cannot delete preset feed")
+        await bot.database.execute("DELETE FROM rss_articles WHERE feed_id = ?", (feed_id,))
+        await bot.database.execute("DELETE FROM rss_feeds WHERE id = ?", (feed_id,))
+        return {"ok": True}
+
+    @app.get("/api/rss/articles", dependencies=[Depends(_verify)])
+    async def rss_articles(category: str | None = None, limit: int = 50):
+        if category:
+            rows = await bot.database.fetchall(
+                """SELECT a.*, f.title AS feed_title, f.category
+                   FROM rss_articles a JOIN rss_feeds f ON a.feed_id = f.id
+                   WHERE f.category = ?
+                   ORDER BY a.published_at DESC LIMIT ?""",
+                (category, limit),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                """SELECT a.*, f.title AS feed_title, f.category
+                   FROM rss_articles a JOIN rss_feeds f ON a.feed_id = f.id
+                   ORDER BY a.published_at DESC LIMIT ?""",
+                (limit,),
+            )
+        return {"articles": rows}
+
+    @app.post("/api/rss/fetch", dependencies=[Depends(_verify)])
+    async def rss_fetch_now():
+        """手動で全フィードをフェッチ。"""
+        from src.rss.fetcher import RSSFetcher
+        fetcher = RSSFetcher(bot)
+        result = await fetcher.fetch_all_feeds()
+        return result
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
