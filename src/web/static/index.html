@@ -1398,15 +1398,17 @@ async function loadWeather() {
       const active = w.active ? 'Active' : 'Inactive';
       const cls = w.active ? 'ok' : 'ng';
       const time = `${w.notify_hour}:${String(w.notify_minute).padStart(2, '0')}`;
-      const actions = `<td class="actions"><button class="act-btn" title="時刻変更" onclick="editWeather(${w.id}, ${w.notify_hour}, ${w.notify_minute})">✏️</button><button class="act-btn" title="${w.active ? '停止' : '再開'}" onclick="toggleWeather(${w.id})">${w.active ? '⏸️' : '▶️'}</button><button class="act-btn" title="削除" onclick="deleteWeather(${w.id})">🗑️</button></td>`;
+      const actions = `<td class="actions"><button class="act-btn" title="編集" onclick="editWeather(${w.id}, ${w.notify_hour}, ${w.notify_minute}, '${esc(w.location)}')">✏️</button><button class="act-btn" title="${w.active ? '停止' : '再開'}" onclick="toggleWeather(${w.id})">${w.active ? '⏸️' : '▶️'}</button><button class="act-btn" title="削除" onclick="deleteWeather(${w.id})">🗑️</button></td>`;
       tbody.innerHTML += `<tr><td>${w.id}</td><td>${w.location}</td><td>${time}</td><td><span class="val ${cls}">${active}</span></td><td>${fmtTime(w.created_at)}</td>${actions}</tr>`;
     });
   } catch (err) { console.error(err); }
 }
 
-async function editWeather(id, hour, minute) {
+async function editWeather(id, hour, minute, location) {
   const modal = showModal(`
-    <h3>通知時刻の変更</h3>
+    <h3>天気通知の編集</h3>
+    <label>地域</label>
+    <input type="text" id="edit-weather-location" value="${location}" placeholder="例: 大阪、札幌">
     <label>時</label>
     <input type="number" id="edit-weather-hour" min="0" max="23" value="${hour}">
     <label>分</label>
@@ -1421,8 +1423,11 @@ async function editWeather(id, hour, minute) {
 async function saveWeatherEdit(id) {
   const hour = parseInt(document.getElementById('edit-weather-hour').value);
   const minute = parseInt(document.getElementById('edit-weather-minute').value);
+  const location = document.getElementById('edit-weather-location').value.trim();
   document.querySelector('.edit-modal').remove();
-  await apiCall('PUT', `/api/units/weather/${id}`, { notify_hour: hour, notify_minute: minute });
+  const body = { notify_hour: hour, notify_minute: minute };
+  if (location) body.location = location;
+  await apiCall('PUT', `/api/units/weather/${id}`, body);
   loadWeather();
 }
 
