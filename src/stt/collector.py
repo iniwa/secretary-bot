@@ -55,10 +55,18 @@ class STTCollector:
             text = t.get("text", "").strip()
             if not text:
                 continue
+            started = t.get("started_at", "")
+            # 重複チェック（同じ started_at が既にあればスキップ）
+            if started:
+                existing = await self.bot.database.fetchone(
+                    "SELECT id FROM stt_transcripts WHERE started_at = ?", (started,)
+                )
+                if existing:
+                    continue
             await self.bot.database.execute(
                 "INSERT INTO stt_transcripts (raw_text, started_at, ended_at, duration_seconds, collected_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (text, t.get("started_at", ""), t.get("ended_at", ""),
+                (text, started, t.get("ended_at", ""),
                  t.get("duration_seconds"), jst_now()),
             )
             saved += 1

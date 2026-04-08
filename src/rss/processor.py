@@ -22,7 +22,9 @@ class RSSProcessor:
 
     async def summarize_unsummarized(self, limit: int = 20) -> int:
         """未要約記事をLLMで要約。処理件数を返す。"""
-        # TODO: activity_detector.is_blocked() — 非アクティブ時のみ実行
+        if self.bot.activity_detector.is_blocked():
+            log.debug("RSS summarization skipped: activity blocked")
+            return 0
         articles = await self.bot.database.fetchall(
             """SELECT a.id, a.title, a.url FROM rss_articles a
                WHERE a.summary IS NULL

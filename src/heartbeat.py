@@ -27,6 +27,7 @@ class Heartbeat:
         self._think_running = False
         self._rss_last_fetch: datetime | None = None
         self._rss_digest_sent_today: str | None = None
+        self._stt_collector = None  # 遅延初期化（_last_tsを保持するため）
 
     @property
     def _config(self) -> dict:
@@ -120,9 +121,10 @@ class Heartbeat:
         if not stt_cfg.get("enabled", False):
             return result
         try:
-            from src.stt.collector import STTCollector
-            collector = STTCollector(self.bot)
-            count = await collector.collect()
+            if self._stt_collector is None:
+                from src.stt.collector import STTCollector
+                self._stt_collector = STTCollector(self.bot)
+            count = await self._stt_collector.collect()
             result["collected"] = count
         except Exception as e:
             log.warning("STT collection failed: %s", e)
