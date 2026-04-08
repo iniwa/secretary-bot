@@ -55,16 +55,21 @@ class ChatUnit(BaseUnit):
             raise
 
     async def _extract_memories_bg(self, conversation: str, user_id: str, flow_id: str | None) -> None:
-        """記憶抽出をバックグラウンドで実行する。失敗しても無視。"""
+        """記憶抽出をバックグラウンドで実行する。各抽出は独立して失敗しても他に影響しない。"""
         ft = get_flow_tracker()
         await ft.emit("MEM_WRITE", "active", {}, flow_id)
+        ok = True
         try:
             await self.ai_memory.extract_and_save(conversation)
-            await self.people_memory.extract_and_save(conversation, user_id=user_id)
-            await ft.emit("MEM_WRITE", "done", {}, flow_id)
         except Exception as e:
-            log.warning("Background memory extraction failed: %s", e)
-            await ft.emit("MEM_WRITE", "error", {}, flow_id)
+            log.warning("ai_memory extraction failed: %s", e)
+            ok = False
+        try:
+            await self.people_memory.extract_and_save(conversation, user_id=user_id)
+        except Exception as e:
+            log.warning("people_memory extraction failed: %s", e)
+            ok = False
+        await ft.emit("MEM_WRITE", "done" if ok else "error", {}, flow_id)
 
     async def _generate_response(self, message: str, flow_id: str | None = None, user_id: str = "", conversation_context: list[dict] | None = None) -> str:
         ft = get_flow_tracker()

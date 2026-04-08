@@ -24,11 +24,10 @@ class ChromaMemory:
 
     def add(self, collection_name: str, doc_id: str, text: str, metadata: dict | None = None) -> None:
         col = self.get_collection(collection_name)
-        col.upsert(
-            ids=[doc_id],
-            documents=[text],
-            metadatas=[metadata or {}],
-        )
+        kwargs = {"ids": [doc_id], "documents": [text]}
+        if metadata:
+            kwargs["metadatas"] = [metadata]
+        col.upsert(**kwargs)
 
     def search(self, collection_name: str, query: str, n_results: int = 5, where: dict | None = None) -> list[dict]:
         col = self.get_collection(collection_name)

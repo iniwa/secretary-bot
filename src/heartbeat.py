@@ -160,6 +160,22 @@ class Heartbeat:
                 log.debug("ai_memory extraction during compact skipped: %s", e)
                 result["ai_memory"] = False
                 result["ai_memory_error"] = str(e)
+
+            # people_memory抽出（全ユニットの会話から人物情報を収集）
+            try:
+                from src.memory.people_memory import PeopleMemory
+                people_mem = PeopleMemory(self.bot)
+                # ユーザー発言からuser_idを取得して抽出
+                user_messages = [m for m in messages if m["role"] == "user"]
+                user_ids = {m.get("user_id", "") for m in user_messages if m.get("user_id")}
+                for uid in user_ids:
+                    user_texts = [f"user: {m['content']}" for m in user_messages if m.get("user_id") == uid]
+                    if user_texts:
+                        await people_mem.extract_and_save("\n".join(user_texts), user_id=uid)
+                result["people_memory"] = True
+            except Exception as e:
+                log.debug("people_memory extraction during compact skipped: %s", e)
+                result["people_memory"] = False
         except Exception as e:
             log.warning("Context compaction failed: %s", e)
             result["error"] = str(e)
