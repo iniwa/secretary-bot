@@ -11,10 +11,10 @@ class ActivityDetector:
     """複数ソースからアクティビティ状態を統合判定する。
 
     利用側:
-        if await bot.activity.is_blocked():
+        if await bot.activity_detector.is_blocked():
             return  # 重い処理をスキップ
 
-        game = await bot.activity.get_current_game()
+        game = await bot.activity_detector.get_current_game()
     """
 
     def __init__(self, bot, config: dict):

@@ -76,7 +76,7 @@ class SecretaryBot(commands.Bot):
         self.unit_router = UnitRouter(self)
         self.heartbeat = Heartbeat(self)
         self.unit_manager = UnitManager(self)
-        self.activity = ActivityDetector(self, config)
+        self.activity_detector = ActivityDetector(self, config)
         from src.status_collector import StatusCollector
         self.status_collector = StatusCollector(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
@@ -219,7 +219,7 @@ class SecretaryBot(commands.Bot):
     async def graceful_shutdown(self) -> None:
         log.info("シャットダウン開始...")
         self.heartbeat.shutdown()
-        await self.activity.close()
+        await self.activity_detector.close()
         await self.unit_manager.agent_pool.close()
         await self.database.close()
         await self.close()
