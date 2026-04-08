@@ -690,6 +690,14 @@ nav.bottom-nav { display: none; }
     </div>
 
     <div class="maint-section" style="margin-top:1rem">
+      <h3>コード更新</h3>
+      <div style="display:flex;align-items:center;gap:1rem">
+        <button onclick="updateInputRelay()" style="padding:0.5rem 1.2rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">サブモジュールを更新</button>
+        <span id="ir-update-result" style="font-size:0.85rem;color:var(--text-dim)"></span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
       <h3>管理GUI</h3>
       <div style="display:flex;gap:1rem;flex-wrap:wrap">
         <a href="http://192.168.1.210:8082/" target="_blank" rel="noopener" style="padding:0.5rem 1.2rem;border-radius:6px;background:var(--primary);color:var(--text);text-decoration:none;font-size:0.9rem">Sender 設定 (Main PC)</a>
@@ -2341,6 +2349,26 @@ async function loadInputRelayLogs(role) {
     el.scrollTop = el.scrollHeight;
   } catch(e) {
     el.textContent = '取得失敗: ' + e.message;
+  }
+}
+
+async function updateInputRelay() {
+  const el = document.getElementById('ir-update-result');
+  el.textContent = '更新中...';
+  el.style.color = 'var(--text-dim)';
+  try {
+    const resp = await fetch('/api/tools/input-relay/update', {method:'POST'});
+    const data = await resp.json();
+    const results = (data.agents || []).map(a => {
+      const label = a.role === 'main' ? 'Main' : 'Sub';
+      if (a.error) return `${label}: 接続失敗`;
+      return `${label}: ${a.success ? 'OK' : 'Failed'} ${a.output || ''}`;
+    }).join(' / ');
+    el.textContent = results || '完了';
+    el.style.color = '#4caf50';
+  } catch(e) {
+    el.textContent = '失敗: ' + e.message;
+    el.style.color = '#f44336';
   }
 }
 

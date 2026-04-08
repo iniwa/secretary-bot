@@ -935,6 +935,11 @@ def create_web_app(bot) -> FastAPI:
                 results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), "error": str(e)})
         return results
 
+    @app.post("/api/tools/input-relay/update", )
+    async def tools_input_relay_update():
+        results = await _agent_request("POST", "/tools/input-relay/update")
+        return {"agents": results}
+
     @app.get("/api/tools/input-relay/status", )
     async def tools_input_relay_status():
         results = await _agent_request("GET", "/tools/input-relay/status")

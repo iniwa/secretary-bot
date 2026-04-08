@@ -122,6 +122,20 @@ async def execute_unit(unit_name: str, request: Request):
 
 # --- Tools: input-relay ---
 
+@app.post("/tools/input-relay/update")
+async def input_relay_update(request: Request):
+    _verify_token(request)
+    try:
+        result = subprocess.run(
+            ["git", "submodule", "update", "--remote", "windows-agent/tools/input-relay"],
+            capture_output=True, text=True, timeout=30,
+        )
+        output = result.stdout.strip() or result.stderr.strip()
+        return {"success": result.returncode == 0, "output": output}
+    except Exception as e:
+        raise HTTPException(500, f"Submodule update failed: {e}")
+
+
 @app.get("/tools/input-relay/status")
 async def input_relay_status(request: Request):
     _verify_token(request)
