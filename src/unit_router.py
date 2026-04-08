@@ -18,6 +18,10 @@ _ROUTE_PROMPT_TEMPLATE = """\
 重要: ユーザーの入力が短い場合や指示的な場合（例:「調べて」「検索して」「詳しく」など）は、
 直前の会話履歴を参考にして、ユーザーが何を求めているかを判断してください。
 
+重要: 「終わったよ」「できた」「おわった」等の完了報告や、「まだ」「あとで」等の延期表現は、
+通知済みリマインダーに対する応答である可能性が高いです。通知済み未完了リマインダーがある場合は
+reminder ユニットを選んでください。
+
 ## ユニット一覧
 {units_text}
 
@@ -25,7 +29,7 @@ _ROUTE_PROMPT_TEMPLATE = """\
 {{"unit": "ユニット名"}}
 
 JSON以外は返さないでください。
-{context_block}
+{pending_reminders}{context_block}
 ## ユーザー入力
 {user_input}
 """
@@ -94,9 +98,30 @@ class UnitRouter:
             return ""
         lines = []
         for row in conversation_context:
-            role = "ユーザー" if row["role"] == "user" else "アシスタント"
+            role = "ユーザー" if row["role"] == "user" else "ボット"
             lines.append(f"{role}: {row['content']}")
         return "\n## 直前の会話履歴\n" + "\n".join(lines) + "\n\n"
+
+    async def _build_pending_reminders(self, user_id: str) -> str:
+        """通知済み未完了リマインダーをルーティングプロンプトに追加する。"""
+        if not user_id:
+            return ""
+        try:
+            rows = await self.bot.database.fetchall(
+                "SELECT id, message, remind_at FROM reminders "
+                "WHERE active = 1 AND notified = 1 AND user_id = ? "
+                "ORDER BY remind_at DESC LIMIT 5",
+                (user_id,),
+            )
+            if not rows:
+                return ""
+            lines = ["\n## 通知済み未完了リマインダー（ユーザーがまだ完了報告していない）"]
+            for r in rows:
+                lines.append(f"- #{r['id']} 「{r['message']}」")
+            lines.append("")
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     async def route(self, user_input: str, channel: str = "discord", user_id: str = "", flow_id: str | None = None, conversation_context: list[dict] | None = None) -> dict:
         trace_id = new_trace_id()
@@ -119,12 +144,13 @@ class UnitRouter:
         await ft.emit("SESSION", "done", {"continued": False}, flow_id)
         await ft.emit("ROUTE_LLM", "active", {}, flow_id)
 
-        user_only = [r for r in (conversation_context or []) if r["role"] == "user"]
-        context_block = self._format_context(user_only)
+        context_block = self._format_context(conversation_context or [])
+        pending_reminders = await self._build_pending_reminders(user_id)
         prompt = _ROUTE_PROMPT_TEMPLATE.format(
             units_text=self._build_units_text(),
             user_input=user_input,
             context_block=context_block,
+            pending_reminders=pending_reminders,
         )
 
         try:
