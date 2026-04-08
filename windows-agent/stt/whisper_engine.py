@@ -4,6 +4,7 @@ import io
 import threading
 import time
 
+import numpy as np
 import soundfile as sf
 
 
@@ -16,18 +17,19 @@ class WhisperEngine:
         self._torch_dtype = config.get("torch_dtype", "float16")
         self._unload_minutes = config.get("unload_after_minutes", 10)
 
-        self._pipe = None
+        self._model = None
+        self._processor = None
         self._lock = threading.Lock()
         self._last_used: float = 0
         self._unload_timer: threading.Timer | None = None
 
     @property
     def loaded(self) -> bool:
-        return self._pipe is not None
+        return self._model is not None
 
     def get_status(self) -> dict:
         idle_seconds = None
-        if self._pipe and self._last_used:
+        if self._model and self._last_used:
             idle_seconds = round(time.time() - self._last_used, 1)
         return {
             "loaded": self.loaded,
@@ -42,26 +44,43 @@ class WhisperEngine:
             self._ensure_loaded()
             self._last_used = time.time()
 
+        # soundfileでデコード
         audio, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
         if sr != 16000:
-            import librosa
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+            # リサンプル（簡易線形補間）
+            ratio = 16000 / sr
+            n = int(len(audio) * ratio)
+            indices = np.arange(n) / ratio
+            audio = np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
 
-        result = self._pipe(
-            audio,
-            generate_kwargs={"language": "ja", "task": "transcribe"},
+        # プロセッサでトークン化 → モデル推論
+        import torch
+        inputs = self._processor(
+            audio, sampling_rate=16000, return_tensors="pt"
         )
-        text = result.get("text", "") if isinstance(result, dict) else ""
+        input_features = inputs.input_features.to(device=self._device, dtype=self._model.dtype)
+
+        with torch.no_grad():
+            predicted_ids = self._model.generate(
+                input_features,
+                language="ja",
+                task="transcribe",
+            )
+
+        text = self._processor.batch_decode(predicted_ids, skip_special_tokens=True)
+        result = text[0] if text else ""
 
         self._reset_unload_timer()
-        return text.strip()
+        return result.strip()
 
     def unload(self) -> None:
         """モデルをVRAMから解放する。"""
         with self._lock:
-            if self._pipe is not None:
-                del self._pipe
-                self._pipe = None
+            if self._model is not None:
+                del self._model
+                del self._processor
+                self._model = None
+                self._processor = None
                 try:
                     import torch
                     if torch.cuda.is_available():
@@ -70,20 +89,21 @@ class WhisperEngine:
                     pass
 
     def _ensure_loaded(self) -> None:
-        if self._pipe is not None:
+        if self._model is not None:
             return
         import torch
-        from transformers import pipeline
+        from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
         dtype_map = {"float16": torch.float16, "float32": torch.float32}
         torch_dtype = dtype_map.get(self._torch_dtype, torch.float16)
 
-        self._pipe = pipeline(
-            "automatic-speech-recognition",
-            model=self._model_name,
+        print(f"[WhisperEngine] Loading {self._model_name} on {self._device} ({self._torch_dtype})...")
+        self._processor = WhisperProcessor.from_pretrained(self._model_name)
+        self._model = WhisperForConditionalGeneration.from_pretrained(
+            self._model_name,
             torch_dtype=torch_dtype,
-            device=self._device,
-        )
+        ).to(self._device)
+        print(f"[WhisperEngine] Model loaded.")
 
     def _reset_unload_timer(self) -> None:
         if self._unload_timer:

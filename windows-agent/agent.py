@@ -18,6 +18,8 @@ _obs_manager: OBSManager | None = None
 _stt_capture = None  # MicCapture (Main PC)
 _stt_client = None   # STTClient (Main PC)
 _whisper_engine = None  # WhisperEngine (Sub PC)
+_agent_role: str = "unknown"
+_agent_config: dict = {}
 
 
 def _load_agent_config() -> dict:
@@ -58,8 +60,11 @@ def _detect_role() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _tool_manager, _obs_manager, _stt_capture, _stt_client, _whisper_engine
+    global _agent_role, _agent_config
     role = _detect_role()
     config = _load_agent_config()
+    _agent_role = role
+    _agent_config = config
     print(f"[Agent] Role: {role}")
     _tool_manager = create_tool_manager(role)
     _tool_manager.start_all()
@@ -258,12 +263,44 @@ async def input_relay_restart(request: Request):
 
 # --- STT: Main PC endpoints ---
 
+@app.get("/stt/devices")
+async def stt_devices(request: Request):
+    """利用可能なマイクデバイス一覧を返す。"""
+    _verify_token(request)
+    try:
+        import sounddevice as sd
+        devices = sd.query_devices()
+        input_devices = []
+        for i, d in enumerate(devices):
+            if d["max_input_channels"] > 0:
+                input_devices.append({
+                    "id": i,
+                    "name": d["name"],
+                    "channels": d["max_input_channels"],
+                    "sample_rate": d["default_samplerate"],
+                })
+        default_input = sd.default.device[0]
+        return {"devices": input_devices, "default": default_input}
+    except Exception as e:
+        return {"devices": [], "default": None, "error": str(e)}
+
+
 @app.get("/stt/status")
 async def stt_status(request: Request):
     _verify_token(request)
+    result: dict = {"role": _agent_role, "enabled": _stt_capture is not None or _whisper_engine is not None}
+    if _stt_capture:
+        result["capture"] = _stt_capture.get_status()
+        result["capture"]["device"] = _stt_capture._device
     if _stt_client:
-        return _stt_client.get_status()
-    return {"running": False, "error": "STT not enabled on this agent"}
+        result["client"] = {
+            "running": _stt_client.running,
+            "transcript_count": len(_stt_client._transcripts),
+            "last_error": _stt_client._last_error,
+        }
+    if _whisper_engine:
+        result["whisper"] = _whisper_engine.get_status()
+    return result
 
 
 @app.get("/stt/transcripts")
@@ -276,22 +313,65 @@ async def stt_transcripts(request: Request, since: str | None = None):
 
 @app.post("/stt/control")
 async def stt_control(request: Request):
+    """STTの開始/停止/デバイス変更。Main PCのみ。"""
     _verify_token(request)
+    global _stt_capture, _stt_client
     body = await request.json()
     action = body.get("action", "")
-    if not _stt_capture:
-        raise HTTPException(400, "STT capture not available on this agent")
+
+    if action == "init":
+        # WebGUIから動的に初期化（configなしでも起動可能）
+        if _stt_capture and _stt_capture.running:
+            _stt_capture.stop()
+        if _stt_client and _stt_client.running:
+            _stt_client.stop()
+
+        from stt.mic_capture import MicCapture
+        from stt.stt_client import STTClient
+        device_id = body.get("device")
+        capture_cfg = {
+            "device": device_id,
+            "vad_aggressiveness": body.get("vad_aggressiveness", 2),
+            "volume_threshold_rms": body.get("volume_threshold_rms", 300),
+            "silence_threshold_seconds": body.get("silence_threshold_seconds", 1.5),
+            "min_utterance_seconds": body.get("min_utterance_seconds", 1.0),
+        }
+        _stt_capture = MicCapture(capture_cfg)
+        _stt_client = STTClient(_stt_capture, {
+            "sub_pc_url": body.get("sub_pc_url", "http://192.168.1.211:7777"),
+            "interval_minutes": body.get("interval_minutes", 5),
+            "agent_token": _SECRET_TOKEN,
+        })
+        _stt_capture.start()
+        _stt_client.start()
+        return {"status": "initialized", "capture": _stt_capture.get_status()}
+
     if action == "start":
+        if not _stt_capture:
+            raise HTTPException(400, "STT not initialized. Use action='init' first.")
         _stt_capture.start()
         if _stt_client and not _stt_client.running:
             _stt_client.start()
     elif action == "stop":
-        _stt_capture.stop()
+        if _stt_capture:
+            _stt_capture.stop()
         if _stt_client:
             _stt_client.stop()
+    elif action == "set_device":
+        device_id = body.get("device")
+        if _stt_capture:
+            was_running = _stt_capture.running
+            if was_running:
+                _stt_capture.stop()
+            _stt_capture._device = device_id
+            if was_running:
+                _stt_capture.start()
+            return {"status": "device_changed", "device": device_id, "capture": _stt_capture.get_status()}
+        raise HTTPException(400, "STT not initialized")
     else:
         raise HTTPException(400, f"Unknown action: {action}")
-    return _stt_capture.get_status()
+
+    return _stt_capture.get_status() if _stt_capture else {"running": False}
 
 
 # --- STT: Sub PC endpoints ---
@@ -304,8 +384,13 @@ async def stt_transcribe(request: Request):
     wav_data = await request.body()
     if not wav_data:
         raise HTTPException(400, "No audio data received")
-    text = _whisper_engine.transcribe(wav_data)
-    return {"text": text}
+    try:
+        text = _whisper_engine.transcribe(wav_data)
+        return {"text": text}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Transcription failed: {e}")
 
 
 @app.get("/stt/model/status")

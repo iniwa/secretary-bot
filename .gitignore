@@ -5,6 +5,9 @@
 config.yaml
 !config.yaml.example
 
+# Agent local config
+windows-agent/config/agent_config.yaml
+
 # Data
 data/
 

@@ -1021,6 +1021,71 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(404, f"No agent with role '{role}'")
         return results[0]
 
+    # --- STT管理 ---
+
+    async def _agent_request_json(method: str, path: str, role: str | None = None, json_body: dict | None = None) -> list[dict]:
+        """Windows Agent にJSONボディ付きリクエストを送る。"""
+        agents_pool = getattr(bot, "agent_pool", None)
+        if not agents_pool:
+            return []
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
+        results = []
+        for agent in agents_pool._agents:
+            if role and agent.get("role") != role:
+                continue
+            url = f"http://{agent['host']}:{agent['port']}{path}"
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    if method == "GET":
+                        resp = await client.get(url, headers=headers)
+                    else:
+                        resp = await client.post(url, headers=headers, json=json_body)
+                    data = resp.json()
+                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), **data})
+            except Exception as e:
+                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), "error": str(e)})
+        return results
+
+    @app.get("/api/stt/status", )
+    async def stt_status():
+        """両PCのSTT状態を返す。"""
+        results = await _agent_request("GET", "/stt/status")
+        return {"agents": results}
+
+    @app.get("/api/stt/devices", )
+    async def stt_devices():
+        """Main PCのマイクデバイス一覧を返す。"""
+        results = await _agent_request("GET", "/stt/devices", role="main")
+        if not results:
+            return {"devices": [], "error": "Main PC agent not reachable"}
+        return results[0]
+
+    @app.post("/api/stt/control", )
+    async def stt_control(request: Request):
+        """Main PCのSTT制御（init/start/stop/set_device）。"""
+        body = await request.json()
+        results = await _agent_request_json("POST", "/stt/control", role="main", json_body=body)
+        if not results:
+            raise HTTPException(503, "Main PC agent not reachable")
+        return results[0]
+
+    @app.get("/api/stt/model/status", )
+    async def stt_model_status():
+        """Sub PCのWhisperモデル状態を返す。"""
+        results = await _agent_request("GET", "/stt/model/status", role="sub")
+        if not results:
+            return {"loaded": False, "error": "Sub PC agent not reachable"}
+        return results[0]
+
+    @app.get("/api/stt/transcripts", )
+    async def stt_transcripts():
+        """Main PCの最新transcriptを返す。"""
+        results = await _agent_request("GET", "/stt/transcripts", role="main")
+        if not results:
+            return {"transcripts": []}
+        return results[0]
+
     # --- 静的ファイル & フロントエンド ---
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -232,6 +232,7 @@ nav.bottom-nav { display: none; }
   <div class="nav-group">
     <div class="nav-group-label">Tools</div>
     <button onclick="showPage('tools-input-relay')">Input Relay</button>
+    <button onclick="showPage('tools-stt')">STT</button>
   </div>
   <div class="nav-group">
     <div class="nav-group-label">Logs</div>
@@ -728,6 +729,48 @@ nav.bottom-nav { display: none; }
     </div>
   </div>
 
+  <!-- Tools: STT -->
+  <div id="page-tools-stt" class="page">
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+      <h2>STT（音声テキスト化）</h2>
+      <button onclick="loadSTTStatus()" style="padding:0.4rem 1rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">更新</button>
+    </div>
+
+    <div class="maint-section">
+      <h3>Main PC — マイクキャプチャ</h3>
+      <div id="stt-main-status" style="margin-bottom:0.8rem">
+        <span style="color:var(--text-dim)">読み込み中...</span>
+      </div>
+      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.8rem">
+        <label style="font-size:0.85rem">マイクデバイス:</label>
+        <select id="stt-device-select" style="padding:0.3rem 0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:0.85rem;max-width:400px">
+          <option value="">読み込み中...</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button onclick="sttInit()" style="padding:0.5rem 1.2rem;border-radius:6px;border:none;background:#4caf50;color:#fff;cursor:pointer;font-size:0.9rem">初期化＆開始</button>
+        <button onclick="sttControl('start')" style="padding:0.5rem 1.2rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.9rem">再開</button>
+        <button onclick="sttControl('stop')" style="padding:0.5rem 1.2rem;border-radius:6px;border:none;background:#f44336;color:#fff;cursor:pointer;font-size:0.9rem">停止</button>
+      </div>
+      <span id="stt-control-result" style="font-size:0.85rem;color:var(--text-dim);margin-top:0.5rem;display:block"></span>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>Sub PC — Whisperモデル</h3>
+      <div id="stt-sub-status">
+        <span style="color:var(--text-dim)">読み込み中...</span>
+      </div>
+    </div>
+
+    <div class="maint-section" style="margin-top:1rem">
+      <h3>最近のTranscript</h3>
+      <button onclick="loadSTTTranscripts()" style="padding:0.3rem 0.8rem;border-radius:6px;border:none;background:var(--primary);color:var(--text);cursor:pointer;font-size:0.85rem;margin-bottom:0.5rem">取得</button>
+      <div id="stt-transcripts" style="max-height:300px;overflow-y:auto;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.8rem;font-size:0.85rem;color:var(--text-dim)">
+        取得ボタンを押してください。
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <nav class="bottom-nav">
@@ -775,6 +818,7 @@ function showPage(name) {
   if (name === 'inner-mind') { loadMonologues(); loadIMStatus(); loadIMContext(); }
   if (name === 'inner-mind-settings') loadIMSettings();
   if (name === 'tools-input-relay') loadInputRelayStatus();
+  if (name === 'tools-stt') loadSTTStatus();
 }
 
 let chatBusy = false;
@@ -2469,6 +2513,132 @@ async function controlInputRelay(role, action) {
     setTimeout(() => loadInputRelayStatus(), 1500);
   } catch(e) {
     alert(`${label}失敗: ` + e.message);
+  }
+}
+
+// --- STT ---
+async function loadSTTStatus() {
+  // Main PC status
+  const mainEl = document.getElementById('stt-main-status');
+  const subEl = document.getElementById('stt-sub-status');
+  try {
+    const resp = await fetch('/api/stt/status');
+    const data = await resp.json();
+    const agents = data.agents || [];
+    const mainAgent = agents.find(a => a.role === 'main');
+    const subAgent = agents.find(a => a.role === 'sub');
+    if (mainAgent && !mainAgent.error) {
+      const cap = mainAgent.capture || {};
+      const cli = mainAgent.client || {};
+      const running = cap.running || false;
+      const dot = running ? '🟢' : '🔴';
+      const deviceText = cap.device != null ? `デバイスID: ${cap.device}` : '未設定';
+      mainEl.innerHTML = `<span>${dot} ${running ? 'キャプチャ中' : '停止中'}</span>` +
+        `<span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${deviceText} / バッファ: ${cap.buffer_utterances || 0} / 総キャプチャ: ${cap.total_captured || 0}</span>` +
+        (cli.last_error ? `<div style="color:#f44336;font-size:0.8rem;margin-top:0.3rem">送信エラー: ${esc(cli.last_error)}</div>` : '');
+    } else {
+      const err = mainAgent?.error || 'Main PC agent接続失敗';
+      mainEl.innerHTML = `<span>🔴 未接続</span><span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${esc(err)}</span>`;
+    }
+    if (subAgent && !subAgent.error) {
+      const w = subAgent.whisper || subAgent;
+      const loaded = w.loaded || false;
+      const dot = loaded ? '🟢' : '⚪';
+      subEl.innerHTML = `<span>${dot} ${loaded ? 'ロード済み' : '未ロード（初回推論時にロード）'}</span>` +
+        `<div style="font-size:0.85rem;color:var(--text-dim);margin-top:0.3rem">モデル: ${esc(w.model || '?')} / デバイス: ${w.device || '?'}` +
+        (w.idle_seconds != null ? ` / アイドル: ${w.idle_seconds}s` : '') + '</div>';
+    } else {
+      const err = subAgent?.error || 'Sub PC agent接続失敗';
+      subEl.innerHTML = `<span>🔴 未接続</span><span style="margin-left:1rem;font-size:0.85rem;color:var(--text-dim)">${esc(err)}</span>`;
+    }
+  } catch(e) {
+    mainEl.innerHTML = '<span style="color:#f44336">取得失敗</span>';
+    subEl.innerHTML = '<span style="color:#f44336">取得失敗</span>';
+  }
+  // Load devices
+  loadSTTDevices();
+}
+
+async function loadSTTDevices() {
+  const sel = document.getElementById('stt-device-select');
+  try {
+    const resp = await fetch('/api/stt/devices');
+    const data = await resp.json();
+    const devices = data.devices || [];
+    const defaultDev = data.default;
+    if (devices.length === 0) {
+      sel.innerHTML = '<option value="">デバイスが見つかりません</option>';
+      return;
+    }
+    sel.innerHTML = devices.map(d =>
+      `<option value="${d.id}" ${d.id === defaultDev ? 'selected' : ''}>${esc(d.name)} (ID:${d.id}, ${d.channels}ch)</option>`
+    ).join('');
+  } catch(e) {
+    sel.innerHTML = `<option value="">取得失敗: ${e.message}</option>`;
+  }
+}
+
+async function sttInit() {
+  const sel = document.getElementById('stt-device-select');
+  const device = parseInt(sel.value, 10);
+  const el = document.getElementById('stt-control-result');
+  el.textContent = '初期化中...';
+  el.style.color = 'var(--text-dim)';
+  try {
+    const resp = await fetch('/api/stt/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'init', device: isNaN(device) ? null : device})
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    el.textContent = '初期化完了・キャプチャ開始';
+    el.style.color = '#4caf50';
+    setTimeout(() => loadSTTStatus(), 1000);
+  } catch(e) {
+    el.textContent = '初期化失敗: ' + e.message;
+    el.style.color = '#f44336';
+  }
+}
+
+async function sttControl(action) {
+  const el = document.getElementById('stt-control-result');
+  el.textContent = '処理中...';
+  try {
+    const resp = await fetch('/api/stt/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action})
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    el.textContent = action === 'start' ? 'キャプチャ再開' : 'キャプチャ停止';
+    el.style.color = action === 'start' ? '#4caf50' : 'var(--text-dim)';
+    setTimeout(() => loadSTTStatus(), 1000);
+  } catch(e) {
+    el.textContent = '失敗: ' + e.message;
+    el.style.color = '#f44336';
+  }
+}
+
+async function loadSTTTranscripts() {
+  const el = document.getElementById('stt-transcripts');
+  el.innerHTML = '読み込み中...';
+  try {
+    const resp = await fetch('/api/stt/transcripts');
+    const data = await resp.json();
+    const items = data.transcripts || [];
+    if (items.length === 0) {
+      el.innerHTML = '(まだtranscriptがありません)';
+      return;
+    }
+    el.innerHTML = items.map(t => {
+      const time = (t.started_at || '').substring(11, 19);
+      const dur = t.duration_seconds ? `(${t.duration_seconds.toFixed(1)}s)` : '';
+      return `<div style="margin-bottom:0.4rem"><span style="color:var(--primary)">[${time}]</span> ${esc(t.text)} <span style="color:var(--text-dim);font-size:0.8rem">${dur}</span></div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<span style="color:#f44336">取得失敗: ' + esc(e.message) + '</span>';
   }
 }
 </script>

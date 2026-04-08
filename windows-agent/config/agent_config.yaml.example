@@ -17,3 +17,25 @@ windows_agents:
   - host: "192.168.1.210"
     port: 7777
     role: main
+
+# STT（音声テキスト化）
+# Main PC: マイクキャプチャ + Sub PCへバッチ送信
+# Sub PC: Whisperモデルで推論
+stt:
+  enabled: false
+  # Main PC用設定
+  capture:
+    device: null  # マイクデバイスID（nullでデフォルト、WebGUIから変更可能）
+    vad_aggressiveness: 2  # 0-3（3が最も厳しい）
+    volume_threshold_rms: 300
+    silence_threshold_seconds: 1.5
+    min_utterance_seconds: 1.0
+  sub_pc_url: "http://192.168.1.211:7777"
+  batch:
+    interval_minutes: 5
+  # Sub PC用設定
+  model:
+    name: "kotoba-tech/kotoba-whisper-v2.0"
+    device: "cuda"
+    torch_dtype: "float16"
+    unload_after_minutes: 10
