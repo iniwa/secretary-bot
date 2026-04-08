@@ -1,4 +1,11 @@
 @echo off
+:: 管理者権限チェック・昇格
+net session >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    powershell -Command "Start-Process '%~f0' -Verb RunAs"
+    exit /b
+)
+
 cd /d "%~dp0.."
 echo Pulling latest code...
 git pull
