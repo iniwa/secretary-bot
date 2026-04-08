@@ -25,6 +25,8 @@ class Heartbeat:
         self.inner_mind = InnerMind(bot)
         self._think_tick = 0
         self._think_running = False
+        self._rss_last_fetch: datetime | None = None
+        self._rss_digest_sent_today: str | None = None
 
     @property
     def _config(self) -> dict:
@@ -86,6 +88,14 @@ class Heartbeat:
                     log.error("Heartbeat error in %s: %s", name, e)
                     tick_log["units"].append({"name": name, "ok": False, "error": str(e)})
 
+            # STT収集・要約
+            stt_result = await self._run_stt()
+            tick_log["stt"] = stt_result
+
+            # RSS定期フェッチ・要約・ダイジェスト通知
+            rss_result = await self._run_rss()
+            tick_log["rss"] = rss_result
+
             # コンテキスト圧縮チェック
             compact_result = await self._check_compact()
             tick_log["compact"] = compact_result
@@ -100,6 +110,94 @@ class Heartbeat:
             self._reschedule()
             tick_log["next_minutes"] = self._get_interval_minutes()
             self.debug_logs.append(tick_log)
+
+    # --- STT 収集・要約 ---
+
+    async def _run_stt(self) -> dict:
+        """Sub PC から transcript を収集し、閾値を超えたら LLM 要約する。"""
+        result = {"collected": 0, "summarized": False}
+        stt_cfg = self.bot.config.get("stt", {})
+        if not stt_cfg.get("enabled", False):
+            return result
+        try:
+            from src.stt.collector import STTCollector
+            collector = STTCollector(self.bot)
+            count = await collector.collect()
+            result["collected"] = count
+        except Exception as e:
+            log.warning("STT collection failed: %s", e)
+            result["error"] = str(e)
+            return result
+
+        try:
+            from src.stt.processor import STTProcessor
+            processor = STTProcessor(self.bot)
+            did_process = await processor.process()
+            result["summarized"] = did_process
+        except Exception as e:
+            log.warning("STT processing failed: %s", e)
+            result["summary_error"] = str(e)
+        return result
+
+    # --- RSS 定期フェッチ・要約・ダイジェスト通知 ---
+
+    async def _run_rss(self) -> dict:
+        """RSS フェッチ（間隔制御）、記事要約、ダイジェスト通知を実行する。"""
+        result = {}
+        rss_cfg = self.bot.config.get("rss", {})
+        if not rss_cfg:
+            return result
+
+        now = datetime.now(JST)
+
+        # 定期フェッチ（fetch_interval_minutes ごと）
+        interval = rss_cfg.get("fetch_interval_minutes", 60)
+        should_fetch = (
+            self._rss_last_fetch is None
+            or (now - self._rss_last_fetch).total_seconds() >= interval * 60
+        )
+        if should_fetch:
+            try:
+                from src.rss.fetcher import RSSFetcher
+                fetcher = RSSFetcher(self.bot)
+                fetch_result = await fetcher.fetch_all_feeds()
+                result["fetch"] = fetch_result
+                self._rss_last_fetch = now
+            except Exception as e:
+                log.warning("RSS fetch failed: %s", e)
+                result["fetch_error"] = str(e)
+
+        # 記事要約（Ollama利用可能時のみ）
+        if self.bot.llm_router.ollama_available:
+            try:
+                from src.rss.processor import RSSProcessor
+                processor = RSSProcessor(self.bot)
+                count = await processor.summarize_unsummarized(limit=10)
+                if count:
+                    result["summarized"] = count
+            except Exception as e:
+                log.warning("RSS summarize failed: %s", e)
+
+        # ダイジェスト通知（毎日 digest_hour 時に1回）
+        digest_hour = rss_cfg.get("digest_hour", 9)
+        today_str = now.strftime("%Y-%m-%d")
+        if now.hour == digest_hour and self._rss_digest_sent_today != today_str:
+            try:
+                from src.rss.recommender import RSSRecommender
+                from src.rss.notify import RSSNotifier
+                recommender = RSSRecommender(self.bot)
+                digest = await recommender.get_digest()
+                if digest and any(b["articles"] for b in digest):
+                    notifier = RSSNotifier(self.bot)
+                    sent = await notifier.send_digest(digest)
+                    result["digest_sent"] = sent
+                    if sent:
+                        self._rss_digest_sent_today = today_str
+            except Exception as e:
+                log.warning("RSS digest failed: %s", e)
+                result["digest_error"] = str(e)
+
+        return result
 
     _SNOOZE_INTERVALS_MINUTES = [30, 60, 180, 360]
 

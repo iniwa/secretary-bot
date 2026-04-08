@@ -1,15 +1,17 @@
-"""Main PC Agent から transcript を定期収集する。"""
+"""Sub PC Agent から transcript を定期収集する。"""
 
-from datetime import datetime
+import os
 
-from src.database import JST, jst_now
+import httpx
+
+from src.database import jst_now
 from src.logger import get_logger
 
 log = get_logger(__name__)
 
 
 class STTCollector:
-    """Main PC の /stt/transcripts から新規テキストを収集し、DBに保存する。"""
+    """Sub PC の /stt/transcripts から新規テキストを収集し、DBに保存する。"""
 
     def __init__(self, bot):
         self.bot = bot
@@ -17,18 +19,29 @@ class STTCollector:
 
     async def collect(self) -> int:
         """新規 transcript を収集し保存する。保存件数を返す。"""
-        pool = self.bot.agent_pool
-        # STTパイプラインはSub PCで稼働
-        agent = pool.get_agent_by_role("sub") if pool else None
+        pool = getattr(getattr(self.bot, "unit_manager", None), "agent_pool", None)
+        if not pool:
+            return 0
+
+        # Sub PC エージェントを探す
+        agent = None
+        for a in pool._agents:
+            if a.get("role") == "sub":
+                agent = a
+                break
         if not agent:
             return 0
 
-        params = {}
+        url = f"http://{agent['host']}:{agent['port']}/stt/transcripts"
         if self._last_ts:
-            params["since"] = self._last_ts
+            url += f"?since={self._last_ts}"
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
 
         try:
-            data = await agent.get("/stt/transcripts", params=params)
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=headers)
+                data = resp.json()
         except Exception as e:
             log.warning("STT transcript collection failed: %s", e)
             return 0
