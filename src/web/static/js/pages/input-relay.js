@@ -263,9 +263,12 @@ function renderAgentCard(agent) {
   const statusLabel = isOnline ? (isRunning ? 'Online' : 'Stopped') : 'Offline';
   const role = agent.role || 'unknown';
 
+  // Input Relay の設定 GUI はロールごとに別ポートで動作
+  // main (sender) → 8082, sub (receiver) → 8081
+  const guiPort = role === 'main' ? 8082 : role === 'sub' ? 8081 : null;
   let settingsHtml = '';
-  if (agent.host && agent.port) {
-    const settingsUrl = `http://${agent.host}:${agent.port}/input-relay`;
+  if (agent.host && guiPort) {
+    const settingsUrl = `http://${agent.host}:${guiPort}/`;
     settingsHtml = `
       <div class="ir-settings-link">
         <a href="${esc(settingsUrl)}" target="_blank" rel="noopener" class="btn btn-sm" style="width:100%;text-align:center">Open Settings</a>
