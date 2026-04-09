@@ -37,7 +37,7 @@ function memoryCardHtml(item) {
   return `
   <div class="card mem-card" data-doc-id="${esc(item.id)}">
     <div class="mem-card-body">
-      <pre class="mem-document">${esc(item.document || '')}</pre>
+      <pre class="mem-document">${esc(item.text || '')}</pre>
       ${renderMetadata(item.metadata)}
     </div>
     <div class="mem-card-footer">
