@@ -222,6 +222,35 @@ function breakerBadge(state) {
   return `<span class="badge ${cls}">${esc(state || 'unknown')}</span>`;
 }
 
+/**
+ * 再起動完了を /health ポーリングで待つ。
+ * - 一度でも接続失敗 → 復帰成功を検知したらOK
+ * - あるいは version (commit hash) が変わったらOK
+ */
+async function waitForRestart(previousVersion, { timeoutMs = 60000, intervalMs = 1500 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let wentDown = false;
+  // 最初に少し待つ（background_tasks の 2 秒遅延再起動に被らないように）
+  await new Promise(r => setTimeout(r, 2000));
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch('/health', { cache: 'no-store' });
+      if (!res.ok) {
+        wentDown = true;
+      } else {
+        const data = await res.json().catch(() => null);
+        const version = data?.version || null;
+        if (previousVersion && version && version !== previousVersion) return true;
+        if (wentDown) return true;
+      }
+    } catch (e) {
+      wentDown = true;
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
 function delegateBadge(delegateTo) {
   if (!delegateTo) return '<span style="color:var(--text-muted)">-</span>';
   return `<span class="badge badge-info">${esc(delegateTo)}</span>`;
@@ -308,6 +337,12 @@ export async function mount() {
   $('m-update-code').addEventListener('click', async () => {
     const btn = $('m-update-code');
     setLoading(btn, true);
+    // 再起動後のリロード判定用に現在の version を事前取得
+    let previousVersion = null;
+    try {
+      const h = await fetch('/health', { cache: 'no-store' });
+      if (h.ok) previousVersion = (await h.json())?.version || null;
+    } catch (_) { /* noop */ }
     try {
       const res = await api('/api/update-code', { method: 'POST' });
       let html = '';
@@ -327,6 +362,20 @@ export async function mount() {
       }
       showResult('m-update-result', html);
       toast(res.updated ? 'Code updated successfully' : 'Already up to date', res.updated ? 'success' : 'info');
+
+      // 再起動が走る場合は /health を監視してリロード
+      if (res.restarted) {
+        btn.innerHTML = '<span class="spinner"></span> Waiting for restart...';
+        toast('再起動を待機中…', 'info');
+        const ok = await waitForRestart(previousVersion);
+        if (ok) {
+          btn.innerHTML = '<span class="spinner"></span> Reloading...';
+          toast('再起動完了 — ページを再読み込みします', 'success');
+          setTimeout(() => location.reload(), 500);
+          return; // finally の setLoading(false) はスキップ（遷移するため）
+        }
+        toast('再起動確認タイムアウト — 手動で再読み込みしてください', 'warning');
+      }
     } catch (err) {
       console.error('Update code:', err);
       showResult('m-update-result', resultItem('Error', err.message));
