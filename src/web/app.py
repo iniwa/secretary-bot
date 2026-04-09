@@ -1275,6 +1275,15 @@ def create_web_app(bot) -> FastAPI:
 
     # --- 静的ファイル & フロントエンド ---
 
+    # Cloudflare / ブラウザの ES モジュールキャッシュ対策
+    # JS/CSS は常にオリジンに再検証させる
+    @app.middleware("http")
+    async def static_cache_control(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/") and request.url.path.rsplit(".", 1)[-1] in ("js", "css"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
