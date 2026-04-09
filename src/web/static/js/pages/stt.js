@@ -163,11 +163,52 @@ export function render() {
     margin-bottom: 0.75rem;
   }
 
+  /* Summaries card */
+  .stt-summaries {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  .stt-summary-item {
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    transition: border-color var(--ease);
+  }
+  .stt-summary-item:hover {
+    border-color: var(--border-hover);
+  }
+  .stt-summary-text {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0 0 0.5rem 0;
+  }
+  .stt-summary-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  .stt-summary-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
   @media (max-width: 600px) {
     .stt-controls-grid {
       grid-template-columns: 1fr;
     }
-    .stt-transcripts {
+    .stt-transcripts,
+    .stt-summaries {
       max-height: 400px;
     }
   }
@@ -231,6 +272,17 @@ export function render() {
     </div>
   </div>
 
+  <!-- Summaries Card -->
+  <div class="card">
+    <div class="card-header"><h3>Summaries</h3></div>
+    <div class="stt-header-actions">
+      <button class="btn btn-sm" id="stt-btn-refresh-summaries">Refresh</button>
+    </div>
+    <div class="stt-summaries" id="stt-summaries">
+      <div class="stt-empty">Loading...</div>
+    </div>
+  </div>
+
 </div>`;
 }
 
@@ -266,13 +318,38 @@ function renderTranscripts(transcripts) {
 
     return `
     <div class="stt-transcript-item">
-      <p class="stt-transcript-text">${esc(t.raw_text)}</p>
+      <p class="stt-transcript-text">${esc(t.text)}</p>
       <div class="stt-transcript-meta">
         ${summarizedBadge}
         <span title="Start">${esc(startTime)}</span>
         <span>&rarr;</span>
         <span title="End">${esc(endTime)}</span>
         <span title="Duration">(${esc(duration)})</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderSummaries(summaries) {
+  if (!summaries || !summaries.length) {
+    return '<div class="stt-empty">No summaries available.</div>';
+  }
+  return summaries.map(s => {
+    let transcriptIds = '';
+    try {
+      const ids = JSON.parse(s.transcript_ids || '[]');
+      transcriptIds = ids.join(', ');
+    } catch {
+      transcriptIds = s.transcript_ids || '';
+    }
+    const created = fullDatetime(s.created_at);
+
+    return `
+    <div class="stt-summary-item">
+      <p class="stt-summary-text">${esc(s.summary)}</p>
+      <div class="stt-summary-meta">
+        <span title="Created">${esc(created)}</span>
+        <span title="Transcript IDs">IDs: ${esc(transcriptIds)}</span>
       </div>
     </div>`;
   }).join('');
@@ -358,6 +435,22 @@ async function loadTranscripts() {
   }
 }
 
+async function loadSummaries() {
+  const container = $('stt-summaries');
+  if (!container) return;
+
+  container.innerHTML = '<div class="stt-empty">Loading...</div>';
+
+  try {
+    const data = await api('/api/stt/summaries');
+    container.innerHTML = renderSummaries(data?.summaries || []);
+  } catch (err) {
+    console.error('Load STT summaries:', err);
+    container.innerHTML = '<div class="stt-empty">Failed to load summaries.</div>';
+    toast('Failed to load summaries', 'error');
+  }
+}
+
 // ============================================================
 // Control actions
 // ============================================================
@@ -437,7 +530,8 @@ export async function mount() {
   // Refresh buttons
   $('stt-btn-refresh-devices')?.addEventListener('click', loadDevices);
   $('stt-btn-refresh-transcripts')?.addEventListener('click', loadTranscripts);
+  $('stt-btn-refresh-summaries')?.addEventListener('click', loadSummaries);
 
   // Load all data in parallel
-  await Promise.all([loadStatus(), loadDevices(), loadTranscripts()]);
+  await Promise.all([loadStatus(), loadDevices(), loadTranscripts(), loadSummaries()]);
 }

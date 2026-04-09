@@ -157,7 +157,7 @@ class InnerMind:
                 return
 
             # 保存
-            monologue_id = await self._save_thought(thought)
+            monologue_id = await self._save_thought(thought, context)
 
             # 発言フェーズ
             await self._speak_phase(thought, monologue_id, context)
@@ -359,7 +359,7 @@ class InnerMind:
 
     # --- 思考保存 ---
 
-    async def _save_thought(self, thought: dict) -> int:
+    async def _save_thought(self, thought: dict, context: dict | None = None) -> int:
         """モノローグ・自己モデル・記憶をDBに保存。"""
         monologue = thought.get("monologue", "")
         mood = thought.get("mood", "unknown")
@@ -368,7 +368,15 @@ class InnerMind:
         monologue = self._sanitize_monologue(monologue)
         thought["monologue"] = monologue
 
-        monologue_id = await self.bot.database.save_monologue(monologue, mood)
+        # コンテキストソースをJSON化（name と text のみ）
+        context_json = ""
+        if context and context.get("sources"):
+            context_json = json.dumps(
+                [{"name": s["name"], "text": s["text"]} for s in context["sources"]],
+                ensure_ascii=False,
+            )
+
+        monologue_id = await self.bot.database.save_monologue(monologue, mood, context_json=context_json)
 
         # 自己モデル更新（mood）
         if mood and mood != "unknown":

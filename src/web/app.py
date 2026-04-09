@@ -1155,6 +1155,16 @@ def create_web_app(bot) -> FastAPI:
             return {"transcripts": []}
         return results[0]
 
+    @app.get("/api/stt/summaries")
+    async def stt_summaries(limit: int = 20):
+        """ローカルDBからSTT要約一覧を返す。"""
+        rows = await bot.database.fetchall(
+            "SELECT id, summary, transcript_ids, created_at "
+            "FROM stt_summaries ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return {"summaries": [dict(r) for r in rows]}
+
     # --- OBS: ゲームプロセス管理 ---
 
     @app.get("/api/obs/games", )

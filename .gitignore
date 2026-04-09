@@ -51,3 +51,7 @@ Thumbs.db
 # Claude
 .claude/
 temp/
+
+# Playwright
+.playwright-mcp/
+*.png

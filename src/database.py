@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 14
+_SCHEMA_VERSION = 15
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -278,6 +278,9 @@ class Database:
                     created_at TEXT DEFAULT (datetime('now'))
                 )""",
             ],
+            15: [
+                "ALTER TABLE mimi_monologue ADD COLUMN context_json TEXT DEFAULT ''",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -468,12 +471,13 @@ class Database:
     async def save_monologue(
         self, monologue: str, mood: str | None = None,
         did_notify: bool = False, notified_message: str | None = None,
+        context_json: str = "",
     ) -> int:
         """モノローグを保存し、挿入されたIDを返す。"""
         cursor = await self.execute(
-            "INSERT INTO mimi_monologue (monologue, mood, did_notify, notified_message, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (monologue, mood, 1 if did_notify else 0, notified_message, jst_now()),
+            "INSERT INTO mimi_monologue (monologue, mood, did_notify, notified_message, created_at, context_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (monologue, mood, 1 if did_notify else 0, notified_message, jst_now(), context_json),
         )
         return cursor.lastrowid
 

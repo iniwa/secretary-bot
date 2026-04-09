@@ -88,6 +88,30 @@ export function render() {
     color: var(--text-secondary);
     border: 1px solid var(--border);
   }
+  .obs-row-actions {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+  .obs-row-actions button {
+    padding: 0.2rem 0.4rem;
+    min-width: unset;
+  }
+  .btn-icon-sm {
+    padding: 0.15rem 0.35rem;
+    font-size: 0.75rem;
+    line-height: 1;
+    min-width: unset;
+  }
+  .btn-danger-sm {
+    background: transparent;
+    color: var(--error, #ef4444);
+    border: 1px solid var(--error, #ef4444);
+  }
+  .btn-danger-sm:hover {
+    background: var(--error, #ef4444);
+    color: #fff;
+  }
 
   /* Edit modal overlay */
   .obs-edit-overlay {
@@ -221,7 +245,10 @@ export function render() {
   <div class="card">
     <div class="card-header">
       <h3>Games Configuration</h3>
-      <button class="btn btn-sm" id="obs-games-refresh">Refresh</button>
+      <div style="display:flex;gap:0.5rem">
+        <button class="btn btn-sm btn-primary" id="obs-games-add">+ Add</button>
+        <button class="btn btn-sm" id="obs-games-refresh">Refresh</button>
+      </div>
     </div>
     <div class="obs-groups-wrap" id="obs-groups-wrap"></div>
     <div class="table-wrap">
@@ -231,12 +258,11 @@ export function render() {
             <th>Name</th>
             <th>Process</th>
             <th>Group</th>
-            <th>Scene</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="obs-games-tbody">
-          <tr><td colspan="5" class="obs-log-empty">Loading...</td></tr>
+          <tr><td colspan="4" class="obs-log-empty">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -326,23 +352,31 @@ function renderGamesTable() {
   if (!tbody) return;
 
   if (games.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="obs-log-empty">No games configured</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="obs-log-empty">No games configured</td></tr>';
     return;
   }
 
+  const last = games.length - 1;
   tbody.innerHTML = games.map((g, idx) => {
-    const name = esc(g.name || g.title || '---');
-    const proc = esc(g.process || g.process_name || '---');
+    const name = esc(g.name || '---');
+    const proc = esc(g.process || '---');
     const group = g.group
       ? `<span class="obs-group-badge">${esc(String(g.group))}</span>`
       : '<span class="text-muted">---</span>';
-    const scene = esc(g.scene || g.scene_name || '---');
+    const upDisabled = idx === 0 ? ' disabled' : '';
+    const downDisabled = idx === last ? ' disabled' : '';
     return `<tr>
       <td>${name}</td>
       <td class="mono text-xs">${proc}</td>
       <td>${group}</td>
-      <td>${scene}</td>
-      <td><button class="btn btn-sm" data-edit-game="${idx}">Edit</button></td>
+      <td>
+        <div class="obs-row-actions">
+          <button class="btn btn-sm btn-icon-sm" data-move-up="${idx}" title="Move up"${upDisabled}>&uarr;</button>
+          <button class="btn btn-sm btn-icon-sm" data-move-down="${idx}" title="Move down"${downDisabled}>&darr;</button>
+          <button class="btn btn-sm" data-edit-game="${idx}">Edit</button>
+          <button class="btn btn-sm btn-icon-sm btn-danger-sm" data-delete-game="${idx}" title="Delete">&times;</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -353,7 +387,12 @@ function renderGamesTable() {
 function openEditModal(idx) {
   const game = games[idx];
   if (!game) return;
-  editingGame = { ...game, _index: idx };
+  editingGame = { ...game, _index: idx, _isNew: false };
+  renderEditModal();
+}
+
+function openAddModal() {
+  editingGame = { name: '', process: '', group: '', _index: -1, _isNew: true };
   renderEditModal();
 }
 
@@ -362,23 +401,26 @@ function renderEditModal() {
   if (!root || !editingGame) { if (root) root.innerHTML = ''; return; }
 
   const g = editingGame;
+  const isNew = g._isNew;
   const groupOptions = groups.map(gr => {
     const gName = typeof gr === 'string' ? gr : (gr.name || gr.id || '');
     const sel = String(g.group) === String(gName) ? ' selected' : '';
     return `<option value="${esc(String(gName))}"${sel}>${esc(String(gName))}</option>`;
   }).join('');
 
+  const deleteBtn = isNew ? '' : '<button class="btn btn-sm btn-danger-sm" id="edit-game-delete">Delete</button>';
+
   root.innerHTML = `
     <div class="obs-edit-overlay" id="obs-edit-overlay">
       <div class="obs-edit-panel">
-        <h3>Edit Game</h3>
+        <h3>${isNew ? 'Add Game' : 'Edit Game'}</h3>
         <div class="obs-edit-field">
           <label>Name</label>
-          <input type="text" class="form-input" id="edit-game-name" value="${esc(g.name || g.title || '')}">
+          <input type="text" class="form-input" id="edit-game-name" value="${esc(g.name || '')}" placeholder="e.g. Minecraft">
         </div>
         <div class="obs-edit-field">
           <label>Process</label>
-          <input type="text" class="form-input" id="edit-game-process" value="${esc(g.process || g.process_name || '')}">
+          <input type="text" class="form-input" id="edit-game-process" value="${esc(g.process || '')}" placeholder="e.g. javaw.exe">
         </div>
         <div class="obs-edit-field">
           <label>Group</label>
@@ -387,13 +429,11 @@ function renderEditModal() {
             ${groupOptions}
           </select>
         </div>
-        <div class="obs-edit-field">
-          <label>Scene</label>
-          <input type="text" class="form-input" id="edit-game-scene" value="${esc(g.scene || g.scene_name || '')}">
-        </div>
         <div class="obs-edit-buttons">
-          <button class="btn btn-primary btn-sm" id="edit-game-save">Save</button>
+          ${deleteBtn}
+          <span style="flex:1"></span>
           <button class="btn btn-sm" id="edit-game-cancel">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="edit-game-save">Save</button>
         </div>
       </div>
     </div>`;
@@ -401,9 +441,19 @@ function renderEditModal() {
   // Attach modal events
   $('edit-game-save')?.addEventListener('click', saveGame);
   $('edit-game-cancel')?.addEventListener('click', closeEditModal);
+  $('edit-game-delete')?.addEventListener('click', () => deleteGameFromModal());
   $('obs-edit-overlay')?.addEventListener('click', (e) => {
     if (e.target.id === 'obs-edit-overlay') closeEditModal();
   });
+}
+
+/** POST the full {games, groups} payload to the backend. */
+async function postFullPayload() {
+  const payload = {
+    games: games.map(g => ({ process: g.process, name: g.name, group: g.group || '' })),
+    groups: groups.map(g => (typeof g === 'string' ? g : (g.name || g.id || ''))),
+  };
+  await api('/api/obs/games', { method: 'POST', body: payload });
 }
 
 async function saveGame() {
@@ -412,30 +462,78 @@ async function saveGame() {
   const name = $('edit-game-name')?.value?.trim();
   const process = $('edit-game-process')?.value?.trim();
   const group = $('edit-game-group')?.value || '';
-  const scene = $('edit-game-scene')?.value?.trim();
 
   if (!name) {
     toast('Name is required', 'info');
     return;
   }
+  if (!process) {
+    toast('Process is required', 'info');
+    return;
+  }
 
-  // Build the updated game object — preserve original fields, override edited ones
-  const updated = { ...games[editingGame._index] };
-  updated.name = name;
-  if ('title' in updated) updated.title = name;
-  updated.process = process || '';
-  if ('process_name' in updated) updated.process_name = process || '';
-  updated.group = group || '';
-  updated.scene = scene || '';
-  if ('scene_name' in updated) updated.scene_name = scene || '';
+  if (editingGame._isNew) {
+    // Check for duplicate process name
+    if (games.some(g => g.process === process)) {
+      toast('A game with this process already exists', 'error');
+      return;
+    }
+    games.push({ process, name, group });
+  } else {
+    // Update existing game in-place
+    const idx = editingGame._index;
+    if (idx >= 0 && idx < games.length) {
+      games[idx] = { process, name, group };
+    }
+  }
 
   try {
-    await api('/api/obs/games', { method: 'POST', body: updated });
-    toast('Game configuration saved', 'success');
+    await postFullPayload();
+    toast(editingGame._isNew ? 'Game added' : 'Game updated', 'success');
     closeEditModal();
-    await loadGames();
+    renderGroups();
+    renderGamesTable();
   } catch (err) {
-    toast('Failed to save game configuration: ' + err.message, 'error');
+    // Revert on failure — reload from backend
+    toast('Failed to save: ' + err.message, 'error');
+    await loadGames();
+  }
+}
+
+async function deleteGame(idx) {
+  if (idx < 0 || idx >= games.length) return;
+  const g = games[idx];
+  if (!confirm(`Delete "${g.name || g.process}"?`)) return;
+
+  games.splice(idx, 1);
+  try {
+    await postFullPayload();
+    toast('Game deleted', 'success');
+    renderGamesTable();
+  } catch (err) {
+    toast('Failed to delete: ' + err.message, 'error');
+    await loadGames();
+  }
+}
+
+async function deleteGameFromModal() {
+  if (!editingGame || editingGame._isNew) return;
+  const idx = editingGame._index;
+  closeEditModal();
+  await deleteGame(idx);
+}
+
+async function moveGame(idx, direction) {
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= games.length) return;
+  // Swap
+  [games[idx], games[newIdx]] = [games[newIdx], games[idx]];
+  try {
+    await postFullPayload();
+    renderGamesTable();
+  } catch (err) {
+    toast('Failed to reorder: ' + err.message, 'error');
+    await loadGames();
   }
 }
 
@@ -500,12 +598,31 @@ export async function mount() {
     toast('Games refreshed', 'info');
   });
 
-  // Games table — delegated edit handler
+  // Add game
+  $('obs-games-add')?.addEventListener('click', () => openAddModal());
+
+  // Games table — delegated click handler for edit, delete, move
   $('obs-games-tbody')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-edit-game]');
-    if (!btn) return;
-    const idx = parseInt(btn.dataset.editGame, 10);
-    openEditModal(idx);
+    const editBtn = e.target.closest('[data-edit-game]');
+    if (editBtn) {
+      openEditModal(parseInt(editBtn.dataset.editGame, 10));
+      return;
+    }
+    const delBtn = e.target.closest('[data-delete-game]');
+    if (delBtn) {
+      deleteGame(parseInt(delBtn.dataset.deleteGame, 10));
+      return;
+    }
+    const upBtn = e.target.closest('[data-move-up]');
+    if (upBtn) {
+      moveGame(parseInt(upBtn.dataset.moveUp, 10), -1);
+      return;
+    }
+    const downBtn = e.target.closest('[data-move-down]');
+    if (downBtn) {
+      moveGame(parseInt(downBtn.dataset.moveDown, 10), 1);
+      return;
+    }
   });
 
   // Logs refresh

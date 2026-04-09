@@ -188,6 +188,55 @@ export function render() {
     font-size: 0.9rem;
   }
 
+  .mono-context {
+    margin-top: 0.625rem;
+  }
+
+  .mono-context summary {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+  }
+
+  .mono-context summary:hover {
+    color: var(--text-secondary);
+  }
+
+  .mono-context-list {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-raised);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+  }
+
+  .mono-context-source {
+    margin-bottom: 0.5rem;
+  }
+
+  .mono-context-source:last-child {
+    margin-bottom: 0;
+  }
+
+  .mono-context-source-name {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    margin-bottom: 0.15rem;
+  }
+
+  .mono-context-source-text {
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
   @media (max-width: 600px) {
     .mono-timeline {
       padding-left: 1.25rem;
@@ -214,6 +263,29 @@ export function render() {
 // ============================================================
 // Rendering helpers
 // ============================================================
+function renderContextBlock(contextJson) {
+  if (!contextJson) return '';
+  let sources;
+  try {
+    sources = JSON.parse(contextJson);
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(sources) || sources.length === 0) return '';
+
+  const items = sources.map(s =>
+    `<div class="mono-context-source">
+      <div class="mono-context-source-name">${esc(s.name)}</div>
+      <div class="mono-context-source-text">${esc(s.text)}</div>
+    </div>`
+  ).join('');
+
+  return `<details class="mono-context">
+    <summary>コンテキスト</summary>
+    <div class="mono-context-list">${items}</div>
+  </details>`;
+}
+
 function renderEntry(m) {
   const moodClass = MOOD_BADGE[m.mood] || 'badge-muted';
   const spokeClass = m.did_notify ? ' spoke' : '';
@@ -226,6 +298,7 @@ function renderEntry(m) {
         ${esc(m.notified_message)}
       </div>`
     : '';
+  const contextBlock = renderContextBlock(m.context_json);
 
   return `<div class="mono-entry${spokeClass}">
     <div class="mono-card">
@@ -236,6 +309,7 @@ function renderEntry(m) {
       </div>
       <p class="mono-text">${esc(m.monologue)}</p>
       ${notifiedBlock}
+      ${contextBlock}
     </div>
   </div>`;
 }
