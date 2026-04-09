@@ -1,4 +1,4 @@
-/** Memory page — tabbed interface for AI Memory and People Memory. */
+/** Memory page — tabbed interface for AI Memory, People Memory, Conversation Log. */
 import { api } from '../api.js';
 import { toast } from '../app.js';
 
@@ -6,13 +6,24 @@ import { toast } from '../app.js';
 // State
 // ============================================================
 let activeTab = 'ai_memory';
-let items = [];
-let total = 0;
-let offset = 0;
-let hasMore = true;
-let loading = false;
+
+const TABS = ['ai_memory', 'people_memory', 'conversation_log'];
+const TAB_LABELS = {
+  ai_memory: 'AI Memory',
+  people_memory: 'People Memory',
+  conversation_log: 'Conversation Log',
+};
 
 const PAGE_LIMIT = 20;
+
+const tabState = {};
+function resetTabState(tab) {
+  tabState[tab] = {
+    items: [], total: 0, offset: 0, hasMore: true, loading: false,
+    searchQuery: '', searchMode: false, filterSource: '',
+  };
+}
+TABS.forEach(t => resetTabState(t));
 
 // ============================================================
 // Helpers
@@ -24,14 +35,26 @@ function esc(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function renderMetadata(metadata) {
+function formatDate(str) {
+  if (!str) return '';
+  try {
+    const d = new Date(str.replace(' ', 'T'));
+    return d.toLocaleDateString('ja-JP') + ' ' + d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  } catch { return str; }
+}
+
+function renderMetadata(metadata, collection) {
   if (!metadata || typeof metadata !== 'object') return '';
-  // user_name があれば user_id を非表示にし、user_name を「User」ラベルで表示
   const display = { ...metadata };
+  // user_name があれば user_id を非表示にし、user_name を「User」ラベルで表示
   if (display.user_name) {
     delete display.user_id;
     display.user = display.user_name;
     delete display.user_name;
+  }
+  // created_at を読みやすい形式に
+  if (display.created_at) {
+    display.created_at = formatDate(display.created_at);
   }
   const entries = Object.entries(display).filter(([, v]) => v != null && v !== '');
   if (!entries.length) return '';
@@ -40,30 +63,77 @@ function renderMetadata(metadata) {
   ).join('')}</div>`;
 }
 
-function memoryCardHtml(item) {
+function memoryCardHtml(item, collection) {
+  const distHtml = item.distance != null
+    ? `<span class="mem-distance" title="類似度スコア（低いほど近い）">score: ${item.distance.toFixed(3)}</span>`
+    : '';
   return `
   <div class="card mem-card" data-doc-id="${esc(item.id)}">
     <div class="mem-card-body">
       <pre class="mem-document">${esc(item.text || '')}</pre>
-      ${renderMetadata(item.metadata)}
+      ${renderMetadata(item.metadata, collection)}
     </div>
     <div class="mem-card-footer">
-      <span class="mem-doc-id">${esc(item.id)}</span>
+      <span class="mem-doc-id">${esc(item.id)}${distHtml ? ' · ' + distHtml : ''}</span>
       <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
     </div>
   </div>`;
 }
 
 // ============================================================
+// Source options per collection
+// ============================================================
+function getSourceOptions(collection) {
+  if (collection === 'ai_memory') return ['inner_mind', 'conversation'];
+  if (collection === 'conversation_log') return ['sqlite_sync', 'inner_mind'];
+  return [];
+}
+
+// ============================================================
 // Render
 // ============================================================
 export function render() {
+  const tabsHtml = TABS.map(t =>
+    `<button class="mem-tab${t === activeTab ? ' active' : ''}" data-tab="${t}">${TAB_LABELS[t]}</button>`
+  ).join('');
+
+  const panelsHtml = TABS.map(t => {
+    const sourceOpts = getSourceOptions(t);
+    const filterHtml = sourceOpts.length > 0
+      ? `<select class="mem-filter-source" id="mem-filter-source-${t}">
+           <option value="">All sources</option>
+           ${sourceOpts.map(s => `<option value="${s}">${s}</option>`).join('')}
+         </select>`
+      : '';
+
+    return `
+    <div class="mem-tab-panel${t === activeTab ? ' active' : ''}" id="panel-${t}">
+      <div class="mem-toolbar">
+        <div class="mem-search-wrap">
+          <input type="text" class="mem-search" id="mem-search-${t}"
+                 placeholder="セマンティック検索..." />
+          <button class="btn btn-sm" id="mem-search-btn-${t}">検索</button>
+          <button class="btn btn-sm btn-muted mem-search-clear" id="mem-clear-${t}" style="display:none">クリア</button>
+        </div>
+        ${filterHtml}
+      </div>
+      <div class="mem-stats" id="mem-stats-${t}"></div>
+      <div class="mem-list" id="mem-list-${t}">
+        <div class="mem-empty">Loading...</div>
+      </div>
+      <div class="load-more-wrap" id="mem-more-wrap-${t}" style="display:none">
+        <button class="btn btn-sm" id="mem-more-${t}">Load more</button>
+      </div>
+    </div>`;
+  }).join('');
+
   return `
 <style>
   .mem-tabs {
     display: flex;
     gap: 0.5rem;
     margin-bottom: 1rem;
+    flex-wrap: wrap;
   }
   .mem-tab {
     padding: 0.4rem 1rem;
@@ -90,6 +160,41 @@ export function render() {
   }
   .mem-tab-panel.active {
     display: block;
+  }
+  .mem-toolbar {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .mem-search-wrap {
+    display: flex;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 200px;
+  }
+  .mem-search {
+    flex: 1;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    color: var(--text);
+    font-size: 0.8125rem;
+  }
+  .mem-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .mem-filter-source {
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    color: var(--text);
+    font-size: 0.8125rem;
+    cursor: pointer;
   }
   .mem-stats {
     font-size: 0.8125rem;
@@ -151,7 +256,11 @@ export function render() {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 60%;
+    max-width: 70%;
+  }
+  .mem-distance {
+    color: var(--accent);
+    font-weight: 500;
   }
   .mem-empty {
     text-align: center;
@@ -163,54 +272,30 @@ export function render() {
     text-align: center;
     padding: 1rem 0;
   }
+  .btn-muted {
+    opacity: 0.6;
+  }
+  .btn-muted:hover {
+    opacity: 1;
+  }
 
   @media (max-width: 600px) {
     .mem-card {
       padding: 0.75rem;
     }
+    .mem-toolbar {
+      flex-direction: column;
+    }
+    .mem-search-wrap {
+      width: 100%;
+    }
   }
 </style>
 
 <div class="mem-page">
-  <div class="mem-tabs">
-    <button class="mem-tab active" data-tab="ai_memory">AI Memory</button>
-    <button class="mem-tab" data-tab="people_memory">People Memory</button>
-  </div>
-
-  <!-- AI Memory Tab -->
-  <div class="mem-tab-panel active" id="panel-ai_memory">
-    <div class="mem-stats" id="mem-stats-ai_memory"></div>
-    <div class="mem-list" id="mem-list-ai_memory">
-      <div class="mem-empty">Loading...</div>
-    </div>
-    <div class="load-more-wrap" id="mem-more-wrap-ai_memory" style="display:none">
-      <button class="btn btn-sm" id="mem-more-ai_memory">Load more</button>
-    </div>
-  </div>
-
-  <!-- People Memory Tab -->
-  <div class="mem-tab-panel" id="panel-people_memory">
-    <div class="mem-stats" id="mem-stats-people_memory"></div>
-    <div class="mem-list" id="mem-list-people_memory">
-      <div class="mem-empty">Loading...</div>
-    </div>
-    <div class="load-more-wrap" id="mem-more-wrap-people_memory" style="display:none">
-      <button class="btn btn-sm" id="mem-more-people_memory">Load more</button>
-    </div>
-  </div>
+  <div class="mem-tabs">${tabsHtml}</div>
+  ${panelsHtml}
 </div>`;
-}
-
-// ============================================================
-// Per-tab state
-// ============================================================
-const tabState = {
-  ai_memory:     { items: [], total: 0, offset: 0, hasMore: true, loading: false },
-  people_memory: { items: [], total: 0, offset: 0, hasMore: true, loading: false },
-};
-
-function getState() {
-  return tabState[activeTab];
 }
 
 // ============================================================
@@ -228,14 +313,33 @@ async function loadMemories(collection, reset = false) {
 
   st.loading = true;
   try {
-    const params = { limit: PAGE_LIMIT, offset: st.offset };
-    const data = await api(`/api/memory/${collection}`, { params });
-    const list = data?.items || [];
-    st.total = data?.total ?? 0;
-
-    st.items = reset ? list : st.items.concat(list);
-    st.offset += list.length;
-    st.hasMore = st.offset < st.total;
+    if (st.searchMode && st.searchQuery) {
+      // Semantic search
+      const data = await api(`/api/memory/${collection}/search`, {
+        params: { q: st.searchQuery, n: 50 },
+      });
+      let items = data?.items || [];
+      // Client-side source filter
+      if (st.filterSource) {
+        items = items.filter(it => (it.metadata?.source) === st.filterSource);
+      }
+      st.items = items;
+      st.total = items.length;
+      st.hasMore = false;
+    } else {
+      // Normal listing
+      const params = { limit: PAGE_LIMIT, offset: st.offset };
+      const data = await api(`/api/memory/${collection}`, { params });
+      let list = data?.items || [];
+      // Client-side source filter
+      if (st.filterSource) {
+        list = list.filter(it => (it.metadata?.source) === st.filterSource);
+      }
+      st.total = data?.total ?? 0;
+      st.items = reset ? list : st.items.concat(list);
+      st.offset += (data?.items || []).length; // use unfiltered count for offset
+      st.hasMore = st.offset < st.total;
+    }
 
     renderTab(collection);
   } catch (err) {
@@ -255,24 +359,57 @@ function renderTab(collection) {
   // Stats
   const statsEl = $(`mem-stats-${collection}`);
   if (statsEl) {
-    statsEl.textContent = `${st.total} memories`;
+    const mode = st.searchMode ? `"${st.searchQuery}" の検索結果: ` : '';
+    const filterInfo = st.filterSource ? ` (source: ${st.filterSource})` : '';
+    statsEl.textContent = `${mode}${st.items.length}${st.searchMode ? '' : ' / ' + st.total} memories${filterInfo}`;
   }
 
   // List
   const listEl = $(`mem-list-${collection}`);
   if (listEl) {
     if (!st.items.length) {
-      listEl.innerHTML = '<div class="mem-empty">No memories found.</div>';
+      listEl.innerHTML = `<div class="mem-empty">${st.searchMode ? '検索結果がありません。' : 'No memories found.'}</div>`;
     } else {
-      listEl.innerHTML = st.items.map(memoryCardHtml).join('');
+      listEl.innerHTML = st.items.map(it => memoryCardHtml(it, collection)).join('');
     }
   }
 
   // Load more button
   const moreWrap = $(`mem-more-wrap-${collection}`);
   if (moreWrap) {
-    moreWrap.style.display = st.hasMore ? '' : 'none';
+    moreWrap.style.display = (st.hasMore && !st.searchMode) ? '' : 'none';
   }
+
+  // Clear button visibility
+  const clearBtn = $(`mem-clear-${collection}`);
+  if (clearBtn) {
+    clearBtn.style.display = st.searchMode ? '' : 'none';
+  }
+}
+
+// ============================================================
+// Search
+// ============================================================
+function doSearch(collection) {
+  const input = $(`mem-search-${collection}`);
+  const query = input?.value?.trim() || '';
+  const st = tabState[collection];
+  if (!query) {
+    clearSearch(collection);
+    return;
+  }
+  st.searchQuery = query;
+  st.searchMode = true;
+  loadMemories(collection, true);
+}
+
+function clearSearch(collection) {
+  const input = $(`mem-search-${collection}`);
+  if (input) input.value = '';
+  const st = tabState[collection];
+  st.searchQuery = '';
+  st.searchMode = false;
+  loadMemories(collection, true);
 }
 
 // ============================================================
@@ -283,7 +420,14 @@ async function deleteMemory(collection, docId) {
   try {
     await api(`/api/memory/${collection}/${docId}`, { method: 'DELETE' });
     toast('Memory deleted', 'success');
-    await loadMemories(collection, true);
+    const st = tabState[collection];
+    if (st.searchMode) {
+      st.items = st.items.filter(it => it.id !== docId);
+      st.total = st.items.length;
+      renderTab(collection);
+    } else {
+      await loadMemories(collection, true);
+    }
   } catch (err) {
     toast('Failed to delete memory: ' + err.message, 'error');
   }
@@ -318,8 +462,8 @@ export async function mount() {
     el.addEventListener('click', () => switchTab(el.dataset.tab));
   });
 
-  // Delegated delete handler for both lists
-  for (const collection of ['ai_memory', 'people_memory']) {
+  for (const collection of TABS) {
+    // Delete handler
     $(`mem-list-${collection}`)?.addEventListener('click', e => {
       const btn = e.target.closest('[data-action="delete"]');
       if (!btn) return;
@@ -332,6 +476,28 @@ export async function mount() {
     $(`mem-more-${collection}`)?.addEventListener('click', () => {
       loadMemories(collection, false);
     });
+
+    // Search button
+    $(`mem-search-btn-${collection}`)?.addEventListener('click', () => {
+      doSearch(collection);
+    });
+
+    // Search on Enter
+    $(`mem-search-${collection}`)?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doSearch(collection);
+    });
+
+    // Clear button
+    $(`mem-clear-${collection}`)?.addEventListener('click', () => {
+      clearSearch(collection);
+    });
+
+    // Source filter
+    $(`mem-filter-source-${collection}`)?.addEventListener('change', e => {
+      const st = tabState[collection];
+      st.filterSource = e.target.value;
+      loadMemories(collection, true);
+    });
   }
 
   // Initial load for active tab
@@ -340,7 +506,5 @@ export async function mount() {
 
 export function unmount() {
   activeTab = 'ai_memory';
-  for (const key of Object.keys(tabState)) {
-    tabState[key] = { items: [], total: 0, offset: 0, hasMore: true, loading: false };
-  }
+  TABS.forEach(t => resetTabState(t));
 }
