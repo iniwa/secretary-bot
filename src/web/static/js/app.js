@@ -2,6 +2,9 @@
 import { api } from './api.js';
 import * as dashboard from './pages/dashboard.js';
 import * as chat from './pages/chat.js';
+import * as settings from './pages/settings.js';
+import * as logs from './pages/logs.js';
+import * as maintenance from './pages/maintenance.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -21,9 +24,9 @@ const pages = {
   obs:          { title: 'OBS',              module: null },
   'input-relay':{ title: 'Input Relay',      module: null },
   stt:          { title: 'STT',              module: null },
-  settings:     { title: 'Settings',         module: null },
-  logs:         { title: 'Logs',             module: null },
-  maintenance:  { title: 'Maintenance',      module: null },
+  settings:     { title: 'Settings',         module: settings },
+  logs:         { title: 'Logs',             module: logs },
+  maintenance:  { title: 'Maintenance',      module: maintenance },
 };
 
 let currentPage = null;
