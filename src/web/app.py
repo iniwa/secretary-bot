@@ -1038,6 +1038,14 @@ def create_web_app(bot) -> FastAPI:
         for agent in agents_pool._agents:
             if role and agent.get("role") != role:
                 continue
+            base = {
+                "agent": agent.get("id", agent["host"]),
+                "agent_id": agent.get("id"),
+                "agent_name": agent.get("name"),
+                "role": agent.get("role", "unknown"),
+                "host": agent.get("host"),
+                "port": agent.get("port"),
+            }
             url = f"http://{agent['host']}:{agent['port']}{path}"
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
@@ -1046,9 +1054,9 @@ def create_web_app(bot) -> FastAPI:
                     else:
                         resp = await client.post(url, headers=headers)
                     data = resp.json()
-                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), **data})
+                results.append({**base, "alive": True, **data})
             except Exception as e:
-                results.append({"agent": agent.get("id", agent["host"]), "role": agent.get("role", "unknown"), "error": str(e)})
+                results.append({**base, "alive": False, "error": str(e)})
         return results
 
     @app.post("/api/tools/input-relay/update", )

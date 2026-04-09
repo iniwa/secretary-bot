@@ -257,9 +257,10 @@ export function render() {
 // Agent cards
 // ============================================================
 function renderAgentCard(agent) {
-  const isOnline = agent.status === 'online' || agent.alive;
-  const dotClass = isOnline ? 'online' : 'error';
-  const statusLabel = isOnline ? 'Online' : 'Offline';
+  const isOnline = agent.alive === true;
+  const isRunning = agent.running === true;
+  const dotClass = isOnline ? (isRunning ? 'online' : 'warning') : 'error';
+  const statusLabel = isOnline ? (isRunning ? 'Online' : 'Stopped') : 'Offline';
   const role = agent.role || 'unknown';
 
   let settingsHtml = '';
