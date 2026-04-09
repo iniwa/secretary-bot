@@ -70,7 +70,7 @@ def create_web_app(bot) -> FastAPI:
                     ][-4:]
 
                     # 返信ルーティング: reply_unit指定時はLLMルーティングをバイパス
-                    if reply_unit and bot.unit_manager.get(reply_unit):
+                    if reply_unit and reply_unit != "chat" and bot.unit_manager.get(reply_unit):
                         unit_name = reply_unit
                         user_message = message
                         log.info("WebGUI reply-based routing to: %s", unit_name)

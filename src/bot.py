@@ -188,8 +188,8 @@ class SecretaryBot(commands.Bot):
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                # ボット通知への返信 → LLMルーティングをバイパス
-                if reply_unit:
+                # ボットメッセージへの返信 → chatを除く機能ユニットはLLMルーティングをバイパス
+                if reply_unit and reply_unit != "chat":
                     unit_name = reply_unit
                     user_message = content
                     log.info("Reply-based routing to: %s", unit_name)
@@ -228,7 +228,9 @@ class SecretaryBot(commands.Bot):
 
             if response:
                 sent = await message.channel.send(response)
-                self._reply_units[sent.id] = unit_name
+                # chatは汎用フォールバックなのでバイパス対象外、記録しない
+                if unit_name != "chat":
+                    self._reply_units[sent.id] = unit_name
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
                 await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id, channel_name=channel_name)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)
