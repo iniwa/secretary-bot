@@ -26,7 +26,14 @@ function esc(str) {
 
 function renderMetadata(metadata) {
   if (!metadata || typeof metadata !== 'object') return '';
-  const entries = Object.entries(metadata).filter(([, v]) => v != null && v !== '');
+  // user_name があれば user_id を非表示にし、user_name を「User」ラベルで表示
+  const display = { ...metadata };
+  if (display.user_name) {
+    delete display.user_id;
+    display.user = display.user_name;
+    delete display.user_name;
+  }
+  const entries = Object.entries(display).filter(([, v]) => v != null && v !== '');
   if (!entries.length) return '';
   return `<div class="mem-meta">${entries.map(([k, v]) =>
     `<span class="mem-meta-pair"><span class="mem-meta-key">${esc(k)}:</span> <span class="mem-meta-val">${esc(String(v))}</span></span>`

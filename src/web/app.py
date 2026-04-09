@@ -582,6 +582,17 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(400, f"unknown collection: {collection}")
         items = bot.chroma.get_all(collection, limit=limit, offset=offset)
         total = bot.chroma.count(collection)
+        # Resolve user_id → display name for people_memory
+        if collection == "people_memory":
+            for item in items:
+                uid = (item.get("metadata") or {}).get("user_id")
+                if uid:
+                    try:
+                        user = bot.get_user(int(uid))
+                        if user:
+                            item["metadata"]["user_name"] = user.display_name
+                    except (ValueError, TypeError):
+                        pass
         return {"items": items, "total": total}
 
     @app.delete("/api/memory/{collection}/{doc_id}", dependencies=[Depends(_verify)])
