@@ -32,7 +32,13 @@ _ERROR_PATTERNS = [
 # Docker API のログで無視するノイズ（デフォルト除外）
 _DEFAULT_IGNORES = [
     "Migration stmt skipped",  # DB マイグレーション既適用時のログ
+    "chromadb.telemetry",       # ChromaDB テレメトリ送信失敗（無害）
+    "posthog",                  # ChromaDB 内部のPostHog関連エラー
+    "node_filesystem_device_error",  # node-exporter のファイルシステムメトリクス収集エラー
 ]
+
+# Docker ログ行頭のタイムスタンプを除去する正規表現
+_TIMESTAMP_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s*')
 
 _EXTRACT_PROMPT = """\
 以下のユーザー入力を分析し、JSON形式で返してください。
@@ -347,7 +353,10 @@ class DockerLogMonitorUnit(BaseUnit):
 
     def _should_notify(self, container: str, message: str) -> bool:
         """同一エラーのクールダウン判定。"""
-        key = hashlib.md5(f"{container}:{message[:200]}".encode()).hexdigest()
+        # タイムスタンプと JSON の "time" フィールドを除去して正規化
+        normalized = _TIMESTAMP_RE.sub("", message)
+        normalized = re.sub(r'"time"\s*:\s*"[^"]*",?\s*', "", normalized)
+        key = hashlib.md5(f"{container}:{normalized[:200]}".encode()).hexdigest()
         now = time.time()
         last = self._notified_cache.get(key, 0)
         if now - last < self._cooldown:
