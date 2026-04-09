@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 17
+_SCHEMA_VERSION = 18
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -318,6 +318,9 @@ class Database:
                     count          INTEGER NOT NULL DEFAULT 1,
                     dismissed      BOOLEAN NOT NULL DEFAULT 0
                 )""",
+            ],
+            18: [
+                "ALTER TABLE rss_articles ADD COLUMN description TEXT",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

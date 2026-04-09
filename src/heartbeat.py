@@ -185,13 +185,15 @@ class Heartbeat:
         today_str = now.strftime("%Y-%m-%d")
         if now.hour == digest_hour and self._rss_digest_sent_today != today_str:
             try:
+                import os
                 from src.rss.recommender import RSSRecommender
                 from src.rss.notify import RSSNotifier
+                admin_user_id = os.environ.get("WEBGUI_USER_ID", "")
                 recommender = RSSRecommender(self.bot)
-                digest = await recommender.get_digest()
+                digest = await recommender.get_digest(admin_user_id)
                 if digest and any(b["articles"] for b in digest):
                     notifier = RSSNotifier(self.bot)
-                    sent = await notifier.send_digest(digest)
+                    sent = await notifier.send_digest(digest, admin_user_id)
                     result["digest_sent"] = sent
                     if sent:
                         self._rss_digest_sent_today = today_str

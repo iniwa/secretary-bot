@@ -1,5 +1,8 @@
 """RSSレコメンダー — フィードバック履歴ベースのスコアリング・ランキング。"""
 
+from datetime import datetime, timedelta
+
+from src.database import JST
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -27,14 +30,16 @@ class RSSRecommender:
         presets = self.bot.config.get("rss", {}).get("presets", {})
         cat_labels = {k: v.get("label", k) for k, v in presets.items()}
 
-        # 直近24時間 + 要約済みの記事を取得
+        # 直近24時間 + 要約済みの記事を取得（JST基準でカットオフを計算）
+        cutoff = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
         articles = await self.bot.database.fetchall(
             """SELECT a.*, f.category, f.title AS feed_title, f.id AS feed_id
                FROM rss_articles a
                JOIN rss_feeds f ON a.feed_id = f.id
                WHERE a.summary IS NOT NULL
-                 AND a.fetched_at >= datetime('now', '-1 day')
+                 AND a.fetched_at >= ?
                ORDER BY a.published_at DESC""",
+            (cutoff,),
         )
 
         # カテゴリ別に分類 + スコアソート
@@ -52,9 +57,9 @@ class RSSRecommender:
         result = []
         for cat in sorted(buckets.keys()):
             items = buckets[cat]
-            # スコア降順 → 日時降順
-            items.sort(key=lambda x: (-x["_score"], x.get("published_at", "") or ""), reverse=False)
-            items.sort(key=lambda x: -x["_score"])
+            # Pythonの安定ソートを利用: 第二キー(published_at降順) → 第一キー(score降順)
+            items.sort(key=lambda x: x.get("published_at") or "", reverse=True)
+            items.sort(key=lambda x: x["_score"], reverse=True)
             result.append({
                 "category": cat,
                 "label": cat_labels.get(cat, cat),

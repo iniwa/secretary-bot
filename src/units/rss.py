@@ -16,6 +16,8 @@ _EXTRACT_PROMPT = """\
 - remove: RSSフィードを削除（url または feed_id が必要）
 - enable_category: カテゴリの購読を有効化（category が必要）
 - disable_category: カテゴリの購読を無効化（category が必要）
+- enable_feed: 個別フィードの購読を有効化（feed_id または url が必要）
+- disable_feed: 個別フィードの購読を無効化（feed_id または url が必要）
 
 ## カテゴリ
 gaming, tech, pc, vr, news
@@ -59,6 +61,10 @@ class RSSUnit(BaseUnit):
                 result = await self._toggle_category(extracted, user_id, enable=True)
             elif action == "disable_category":
                 result = await self._toggle_category(extracted, user_id, enable=False)
+            elif action == "enable_feed":
+                result = await self._toggle_feed(extracted, user_id, enable=True)
+            elif action == "disable_feed":
+                result = await self._toggle_feed(extracted, user_id, enable=False)
             else:
                 result = await self._show_digest(user_id)
 
@@ -85,10 +91,41 @@ class RSSUnit(BaseUnit):
     async def _show_digest(self, user_id: str) -> str:
         recommender = RSSRecommender(self.bot)
         digest = await recommender.get_digest(user_id)
-        if not digest or not any(b["articles"] for b in digest):
-            return "まだおすすめできる記事がないよ。フィードが登録されているか確認してみて。"
-        notifier = RSSNotifier(self.bot)
-        return notifier.format_digest(digest)
+        if digest and any(b["articles"] for b in digest):
+            notifier = RSSNotifier(self.bot)
+            return notifier.format_digest(digest)
+
+        # 空の場合は原因を切り分けて返す
+        feed_count_row = await self.bot.database.fetchone(
+            "SELECT COUNT(*) AS c FROM rss_feeds",
+        )
+        feed_count = feed_count_row["c"] if feed_count_row else 0
+        if feed_count == 0:
+            return "まだRSSフィードが1件も登録されてないよ。WebGUIかDiscordで `このRSS追加して <URL>` と教えて。"
+
+        unsummarized_row = await self.bot.database.fetchone(
+            "SELECT COUNT(*) AS c FROM rss_articles WHERE summary IS NULL",
+        )
+        total_row = await self.bot.database.fetchone(
+            "SELECT COUNT(*) AS c FROM rss_articles",
+        )
+        total = total_row["c"] if total_row else 0
+        unsummarized = unsummarized_row["c"] if unsummarized_row else 0
+
+        if total == 0:
+            return (
+                f"フィードは {feed_count} 件あるけど、まだ記事が取得できてないよ。"
+                "WebGUIの「Fetch Now」かハートビート待ちをどうぞ。"
+            )
+        if unsummarized == total:
+            return (
+                f"記事は {total} 件あるけど、まだ1件も要約できてないね。"
+                "Ollamaが動いているか確認してみて。"
+            )
+        return (
+            f"直近24時間の要約済み記事が無いみたい。"
+            f"（フィード:{feed_count}件 / 記事:{total}件 / 未要約:{unsummarized}件）"
+        )
 
     async def _list_feeds(self, user_id: str) -> str:
         feeds = await self.bot.database.fetchall(
@@ -197,6 +234,46 @@ class RSSUnit(BaseUnit):
                 (user_id, category),
             )
             return f"カテゴリ「{category}」の購読を無効にしました。"
+
+    async def _toggle_feed(self, extracted: dict, user_id: str, enable: bool) -> str:
+        if not user_id:
+            return "ユーザー情報が必要です。"
+
+        feed_id = extracted.get("feed_id")
+        url = (extracted.get("url") or "").strip()
+
+        feed = None
+        if feed_id:
+            try:
+                fid = int(feed_id)
+            except ValueError:
+                return f"#{feed_id} はIDとして不正です。"
+            feed = await self.bot.database.fetchone(
+                "SELECT * FROM rss_feeds WHERE id = ?", (fid,),
+            )
+        elif url:
+            feed = await self.bot.database.fetchone(
+                "SELECT * FROM rss_feeds WHERE url = ?", (url,),
+            )
+        else:
+            return "対象フィードのIDかURLを指定してください。"
+
+        if not feed:
+            return "そのフィードは見つかりません。"
+
+        if enable:
+            await self.bot.database.execute(
+                "DELETE FROM rss_user_prefs WHERE user_id = ? AND feed_id = ?",
+                (user_id, feed["id"]),
+            )
+            return f"フィード「{feed['title']}」の購読を有効にしました。"
+        else:
+            await self.bot.database.execute(
+                """INSERT OR REPLACE INTO rss_user_prefs (user_id, feed_id, enabled)
+                   VALUES (?, ?, 0)""",
+                (user_id, feed["id"]),
+            )
+            return f"フィード「{feed['title']}」の購読を無効にしました。"
 
 
 async def setup(bot) -> None:

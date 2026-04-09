@@ -4,16 +4,28 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-_SUMMARY_SYSTEM = "あなたは記事要約係です。日本語で簡潔に要約してください。"
+_SUMMARY_SYSTEM = (
+    "あなたは記事要約係です。日本語で簡潔に2文以内で要約してください。"
+    "主観や感想は書かず、事実ベースで書いてください。"
+)
 
-_SUMMARY_PROMPT = """\
-以下の記事タイトルとURLから、1-2行で要約してください。
-タイトルだけで内容が十分わかる場合はタイトルの言い換えで構いません。
+_SUMMARY_PROMPT_WITH_DESC = """\
+以下の記事タイトルと本文抜粋から、日本語2文以内で要約してください。
 
 タイトル: {title}
-URL: {url}
+本文抜粋: {description}
 
 要約:"""
+
+_SUMMARY_PROMPT_TITLE_ONLY = """\
+以下の記事タイトルから、日本語1文で内容を推測した要約を書いてください。
+タイトルの言い換えで構いません。
+
+タイトル: {title}
+
+要約:"""
+
+_MIN_DESC_LEN = 40
 
 
 class RSSProcessor:
@@ -22,11 +34,11 @@ class RSSProcessor:
 
     async def summarize_unsummarized(self, limit: int = 20) -> int:
         """未要約記事をLLMで要約。処理件数を返す。"""
-        if self.bot.activity_detector.is_blocked():
+        if await self.bot.activity_detector.is_blocked():
             log.debug("RSS summarization skipped: activity blocked")
             return 0
         articles = await self.bot.database.fetchall(
-            """SELECT a.id, a.title, a.url FROM rss_articles a
+            """SELECT a.id, a.title, a.url, a.description FROM rss_articles a
                WHERE a.summary IS NULL
                ORDER BY a.fetched_at DESC LIMIT ?""",
             (limit,),
@@ -40,14 +52,19 @@ class RSSProcessor:
             if summary:
                 await self.bot.database.execute(
                     "UPDATE rss_articles SET summary = ? WHERE id = ?",
-                    (summary, article["id"]),
+                    (summary.strip(), article["id"]),
                 )
                 count += 1
         log.info("RSS processor: summarized %d/%d articles", count, len(articles))
         return count
 
     async def _summarize_article(self, article: dict) -> str | None:
-        prompt = _SUMMARY_PROMPT.format(title=article["title"], url=article["url"])
+        description = (article.get("description") or "").strip()
+        title = article.get("title") or ""
+        if len(description) >= _MIN_DESC_LEN:
+            prompt = _SUMMARY_PROMPT_WITH_DESC.format(title=title, description=description)
+        else:
+            prompt = _SUMMARY_PROMPT_TITLE_ONLY.format(title=title)
         try:
             return await self.bot.llm_router.generate(
                 prompt, system=_SUMMARY_SYSTEM,

@@ -8,6 +8,7 @@ import { toast } from '../app.js';
 let activeTab = 'feeds';
 let feeds = [];
 let categories = {};
+let disabledCategories = [];
 let selectedCategory = '';
 let articles = [];
 let articlesLoading = false;
@@ -202,6 +203,47 @@ export function render() {
     color: var(--text-muted);
   }
 
+  /* Feedback buttons */
+  .rss-article-actions {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+  }
+  .rss-feedback-btn {
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all var(--ease);
+    user-select: none;
+    line-height: 1.2;
+  }
+  .rss-feedback-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text-primary);
+  }
+  .rss-feedback-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .rss-feedback-btn.active.down {
+    background: var(--danger, #c0392b);
+    border-color: var(--danger, #c0392b);
+  }
+
+  /* Disabled feed row */
+  .rss-feed-row.disabled {
+    opacity: 0.5;
+  }
+  .badge-disabled {
+    background: var(--text-muted);
+    color: #fff;
+  }
+
   /* Load more */
   .load-more-wrap {
     text-align: center;
@@ -306,10 +348,12 @@ function renderCategoryPills(containerId, selected) {
     return;
   }
 
-  const allCount = entries.reduce((sum, [, c]) => sum + c, 0);
+  // feeds から各カテゴリの件数を集計
+  const allCount = feeds.length;
   let html = `<button class="rss-cat-pill${!selected ? ' active' : ''}" data-category="">All<span class="cat-count">${allCount}</span></button>`;
-  for (const [name, count] of entries) {
-    html += `<button class="rss-cat-pill${selected === name ? ' active' : ''}" data-category="${esc(name)}">${esc(name)}<span class="cat-count">${count}</span></button>`;
+  for (const [key, label] of entries) {
+    const count = feeds.filter(f => f.category === key).length;
+    html += `<button class="rss-cat-pill${selected === key ? ' active' : ''}" data-category="${esc(key)}">${esc(label)}<span class="cat-count">${count}</span></button>`;
   }
   container.innerHTML = html;
 }
@@ -328,13 +372,23 @@ function renderFeedRows(feedList) {
     const presetBadge = f.is_preset
       ? '<span class="badge badge-accent">preset</span>'
       : '';
-    return `<tr>
-      <td>${esc(f.title || '(no title)')}</td>
+    const disabled = !!f.user_disabled;
+    const rowCls = disabled ? 'rss-feed-row disabled' : 'rss-feed-row';
+    const disabledBadge = disabled
+      ? ' <span class="badge badge-disabled">disabled</span>'
+      : '';
+    const toggleLabel = disabled ? 'Enable' : 'Disable';
+    const toggleTo = disabled ? 'true' : 'false';
+    return `<tr class="${rowCls}">
+      <td>${esc(f.title || '(no title)')}${disabledBadge}</td>
       <td class="rss-feed-url"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.url)}">${esc(truncateUrl(f.url))}</a></td>
       <td>${catBadge}</td>
       <td>${presetBadge}</td>
       <td class="text-xs">${esc(f.added_by || '---')}</td>
-      <td><button class="btn btn-sm btn-danger" data-action="delete-feed" data-feed-id="${f.id}">Delete</button></td>
+      <td>
+        <button class="btn btn-sm" data-action="toggle-feed" data-feed-id="${f.id}" data-enabled="${toggleTo}">${toggleLabel}</button>
+        <button class="btn btn-sm btn-danger" data-action="delete-feed" data-feed-id="${f.id}">Delete</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -349,6 +403,7 @@ async function loadFeeds() {
     const data = await api('/api/rss/feeds');
     feeds = data?.feeds || [];
     categories = data?.categories || {};
+    disabledCategories = data?.disabled_categories || [];
     renderCategoryPills('rss-feed-categories', selectedCategory);
     renderCategoryPills('rss-article-categories', selectedCategory);
     const tbody = $('rss-feeds-tbody');
@@ -396,6 +451,19 @@ async function deleteFeed(feedId) {
   }
 }
 
+async function toggleFeed(feedId, enabled) {
+  try {
+    await api(`/api/rss/feeds/${feedId}/toggle`, {
+      method: 'POST',
+      body: { enabled },
+    });
+    toast(enabled ? 'Feed enabled' : 'Feed disabled', 'success');
+    await loadFeeds();
+  } catch (err) {
+    toast('Failed to toggle feed: ' + err.message, 'error');
+  }
+}
+
 async function fetchNow() {
   if (fetchingFeeds) return;
   fetchingFeeds = true;
@@ -431,12 +499,19 @@ function renderArticleCards(list) {
     const summaryHtml = a.summary
       ? `<div class="rss-article-summary">${esc(truncate(a.summary, 200))}</div>`
       : '';
-    return `<div class="card rss-article-card">
+    const rating = Number(a.user_rating) || 0;
+    const upCls = rating === 1 ? 'rss-feedback-btn active' : 'rss-feedback-btn';
+    const downCls = rating === -1 ? 'rss-feedback-btn active down' : 'rss-feedback-btn';
+    return `<div class="card rss-article-card" data-article-id="${a.id}">
       <div class="rss-article-title"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title || '(no title)')}</a></div>
       ${summaryHtml}
       <div class="rss-article-meta">
         <span>${fmtTime(a.published_at)}</span>
         ${feedName ? `<span>${esc(feedName)}</span>` : ''}
+      </div>
+      <div class="rss-article-actions">
+        <button class="${upCls}" data-action="feedback" data-article-id="${a.id}" data-rating="1">👍</button>
+        <button class="${downCls}" data-action="feedback" data-article-id="${a.id}" data-rating="-1">👎</button>
       </div>
     </div>`;
   }).join('');
@@ -480,6 +555,37 @@ async function loadArticles(reset = false) {
     console.error(err);
   } finally {
     articlesLoading = false;
+  }
+}
+
+async function sendFeedback(articleId, rating) {
+  // 同じボタンを再度押したら取り消し
+  const article = articles.find(a => String(a.id) === String(articleId));
+  const current = article ? (Number(article.user_rating) || 0) : 0;
+  const nextRating = current === rating ? 0 : rating;
+  try {
+    const res = await api(`/api/rss/articles/${articleId}/feedback`, {
+      method: 'POST',
+      body: { rating: nextRating },
+    });
+    // ローカル状態を更新
+    if (article) article.user_rating = res?.rating ?? nextRating;
+    // 該当カードだけ再描画
+    const card = document.querySelector(`.rss-article-card[data-article-id="${articleId}"]`);
+    if (card) {
+      const upBtn = card.querySelector('[data-rating="1"]');
+      const downBtn = card.querySelector('[data-rating="-1"]');
+      if (upBtn) {
+        upBtn.classList.toggle('active', nextRating === 1);
+        upBtn.classList.remove('down');
+      }
+      if (downBtn) {
+        downBtn.classList.toggle('active', nextRating === -1);
+        downBtn.classList.toggle('down', nextRating === -1);
+      }
+    }
+  } catch (err) {
+    toast('Failed to send feedback: ' + err.message, 'error');
   }
 }
 
@@ -548,12 +654,31 @@ export async function mount() {
   // Fetch now
   $('rss-fetch-btn')?.addEventListener('click', fetchNow);
 
-  // Feed table — delegated delete handler
+  // Feed table — delegated delete/toggle handler
   $('rss-feeds-tbody')?.addEventListener('click', e => {
-    const btn = e.target.closest('[data-action="delete-feed"]');
+    const delBtn = e.target.closest('[data-action="delete-feed"]');
+    if (delBtn) {
+      const feedId = delBtn.dataset.feedId;
+      if (feedId) deleteFeed(feedId);
+      return;
+    }
+    const togBtn = e.target.closest('[data-action="toggle-feed"]');
+    if (togBtn) {
+      const feedId = togBtn.dataset.feedId;
+      const enabled = togBtn.dataset.enabled === 'true';
+      if (feedId) toggleFeed(feedId, enabled);
+    }
+  });
+
+  // Article list — delegated feedback handler
+  $('rss-article-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="feedback"]');
     if (!btn) return;
-    const feedId = btn.dataset.feedId;
-    if (feedId) deleteFeed(feedId);
+    const articleId = btn.dataset.articleId;
+    const rating = parseInt(btn.dataset.rating, 10);
+    if (articleId && (rating === 1 || rating === -1)) {
+      sendFeedback(articleId, rating);
+    }
   });
 
   // Load more articles
@@ -570,6 +695,7 @@ export function unmount() {
   activeTab = 'feeds';
   feeds = [];
   categories = {};
+  disabledCategories = [];
   selectedCategory = '';
   articles = [];
   articlesLoading = false;

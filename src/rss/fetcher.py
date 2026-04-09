@@ -1,8 +1,11 @@
 """RSSフェッチャー — feedparserで全フィードを巡回し新規記事をDBに保存。"""
 
 import asyncio
-from datetime import datetime, timedelta
+import calendar
+import re
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 
 import feedparser
 import httpx
@@ -13,6 +16,19 @@ from src.logger import get_logger
 log = get_logger(__name__)
 
 _HTTP_TIMEOUT = 15
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+_MAX_DESC_LEN = 800
+
+
+def _strip_html(text: str) -> str:
+    """HTMLタグ除去・エンティティデコード・空白正規化。"""
+    if not text:
+        return ""
+    text = _TAG_RE.sub(" ", text)
+    text = unescape(text)
+    text = _WS_RE.sub(" ", text).strip()
+    return text[:_MAX_DESC_LEN]
 
 
 class RSSFetcher:
@@ -61,17 +77,34 @@ class RSSFetcher:
                 continue
             title = getattr(entry, "title", "")[:500]
             published_at = self._parse_date(entry)
+            description = self._extract_description(entry)
 
             inserted = await self.bot.database.execute_returning_rowcount(
                 """INSERT OR IGNORE INTO rss_articles
-                   (feed_id, title, url, published_at, fetched_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (feed_id, title, article_url, published_at, jst_now()),
+                   (feed_id, title, url, description, published_at, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (feed_id, title, article_url, description, published_at, jst_now()),
             )
             if inserted:
                 new_count += 1
 
         return new_count
+
+    @staticmethod
+    def _extract_description(entry) -> str:
+        """feedparser entry から本文抜粋を抽出。content > summary > description の順に優先。"""
+        # entry.content は list[dict]（Atom の本文）
+        content = getattr(entry, "content", None)
+        if content and isinstance(content, list):
+            value = content[0].get("value", "") if isinstance(content[0], dict) else ""
+            if value:
+                return _strip_html(value)
+        # RSS 2.0 の summary / description
+        for attr in ("summary", "description", "subtitle"):
+            raw = getattr(entry, attr, "")
+            if raw:
+                return _strip_html(raw)
+        return ""
 
     async def _download_feed(self, url: str) -> str | None:
         try:
@@ -85,12 +118,17 @@ class RSSFetcher:
 
     @staticmethod
     def _parse_date(entry) -> str:
-        """feedparser entry から published_at を抽出。"""
+        """feedparser entry から published_at を JST 文字列で返す。
+
+        feedparser の *_parsed は UTC の time.struct_time なので、
+        calendar.timegm で epoch に変換してから JST に直す。
+        """
         for attr in ("published_parsed", "updated_parsed"):
             tp = getattr(entry, attr, None)
             if tp:
                 try:
-                    dt = datetime(*tp[:6], tzinfo=JST)
+                    epoch = calendar.timegm(tp)
+                    dt = datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(JST)
                     return dt.strftime("%Y-%m-%d %H:%M:%S")
                 except Exception:
                     pass
@@ -98,15 +136,20 @@ class RSSFetcher:
         if raw:
             try:
                 dt = parsedate_to_datetime(raw)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 return dt.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 pass
         return jst_now()
 
     async def _purge_old_articles(self, retention_days: int) -> None:
+        """published_at 優先でパージ。published_at が無い行は fetched_at で判定。"""
         cutoff = (datetime.now(JST) - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S")
         await self.bot.database.execute(
-            "DELETE FROM rss_articles WHERE fetched_at < ?", (cutoff,),
+            "DELETE FROM rss_articles "
+            "WHERE COALESCE(NULLIF(published_at, ''), fetched_at) < ?",
+            (cutoff,),
         )
 
     async def ensure_preset_feeds(self) -> None:

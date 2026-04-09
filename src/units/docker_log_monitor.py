@@ -155,8 +155,8 @@ class DockerLogMonitorUnit(BaseUnit):
         try:
             await self.bot.database.execute(
                 "INSERT INTO docker_log_exclusions (pattern, reason, added_by, created_at) "
-                "VALUES (?, ?, ?, datetime('now'))",
-                (pattern, reason, user_id),
+                "VALUES (?, ?, ?, ?)",
+                (pattern, reason, user_id, jst_now()),
             )
             return f"除外パターンを追加しました: `{pattern}`"
         except Exception as e:
