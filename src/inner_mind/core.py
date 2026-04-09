@@ -22,6 +22,34 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
+# 思考レンズ定義: (カテゴリ名, 指示テキスト)
+THINKING_LENSES = [
+    ("concrete", "具体的な観察 — コンテキストのデータを1つだけ拾って、素朴な感想を言ってみて。分析じゃなくて感想。"),
+    ("empathy", "ユーザーへの想像 — ユーザーが今何をしているか、どんな気分か想像してみて。"),
+    ("time_space", "時間と空間 — 今の時間帯や季節、天気から何か連想してみて。"),
+    ("curiosity", "好奇心の深掘り — コンテキストの中で気になった1つのことについて少しだけ考えてみて。"),
+    ("reflection", "振り返り — 最近の出来事やユーザーとのやりとりを軽く振り返ってみて。"),
+    ("rest", "休息モード — 今は静かに待機する時間。「特になし」と書いてOK。無理に考えなくていい。"),
+]
+
+# 発言ヒントのカテゴリ
+SPEAK_HINT_CATEGORIES = [
+    "挨拶・声かけ",
+    "話題へのコメント",
+    "軽い質問",
+    "ねぎらい",
+    "自分の考えの共有",
+]
+
+# mood → energy_level マッピング
+_MOOD_ENERGY_MAP = {
+    "talkative": "high",
+    "curious": "high",
+    "calm": "medium",
+    "concerned": "low",
+    "idle": "low",
+}
+
 
 class InnerMind:
     """ミミの自律思考エンジン。"""
@@ -29,6 +57,11 @@ class InnerMind:
     def __init__(self, bot):
         self.bot = bot
         self.registry = ContextSourceRegistry()
+
+        # レンズローテーション用の追跡リスト
+        self._last_used_lenses: list[str] = []
+        # コンテキスト鮮度追跡
+        self._stale_count: int = 0
 
         # 初期ソース登録
         self.registry.register(ConversationSource(bot))
@@ -85,19 +118,41 @@ class InnerMind:
             # コンテキスト収集
             context = await self._collect_context()
 
-            # コンテキスト変化チェック（不変ならスキップ）
+            # コンテキスト鮮度チェック（段階的スキップ）
             ctx_key = (
                 context["discord_status"]
                 + "|".join(sr["text"][:200] for sr in context["sources"])
             )
             ctx_hash = hashlib.md5(ctx_key.encode()).hexdigest()
+
+            staleness_note = ""
             if hasattr(self, "_last_ctx_hash") and self._last_ctx_hash == ctx_hash:
-                log.info("InnerMind: context unchanged, skipping think cycle")
-                return
+                self._stale_count += 1
+                if self._stale_count >= 5:
+                    # 5回連続不変 → 思考スキップ
+                    log.info(
+                        "InnerMind: context unchanged %d times, skipping think cycle",
+                        self._stale_count,
+                    )
+                    return
+                if self._stale_count >= 3:
+                    # 3回連続不変 → 鮮度メモを付与して思考は続行
+                    staleness_note = (
+                        "コンテキストに大きな変化はありません。"
+                        "無理に考える必要はなく、「特になし」でOKです。"
+                    )
+                    log.debug(
+                        "InnerMind: context stale (%d), adding staleness note",
+                        self._stale_count,
+                    )
+            else:
+                # コンテキスト変化あり → リセット
+                self._stale_count = 0
+
             self._last_ctx_hash = ctx_hash
 
-            # 思考フェーズ
-            thought = await self._think_phase(context)
+            # 思考フェーズ（鮮度メモを渡す）
+            thought = await self._think_phase(context, staleness_note)
             if not thought:
                 return
 
@@ -110,6 +165,106 @@ class InnerMind:
             log.warning("InnerMind: LLM unavailable during think cycle")
         except Exception:
             log.error("InnerMind: think cycle failed", exc_info=True)
+
+    # --- レンズ選択 ---
+
+    def _select_thinking_lens(self) -> tuple[str, str]:
+        """未使用のレンズを優先的に選択する。rest は重み付けで出やすくする。"""
+        all_categories = [cat for cat, _ in THINKING_LENSES]
+
+        # 未使用レンズを抽出
+        unused = [cat for cat in all_categories if cat not in self._last_used_lenses]
+        if not unused:
+            # 全部使った → リセット
+            self._last_used_lenses.clear()
+            unused = list(all_categories)
+
+        # rest レンズの重み付け（rest が未使用なら2倍の確率）
+        weighted = []
+        for cat in unused:
+            weighted.append(cat)
+            if cat == "rest":
+                weighted.append(cat)  # rest を2回追加 → 約2倍の選択確率
+
+        chosen_category = random.choice(weighted)
+        self._last_used_lenses.append(chosen_category)
+
+        # カテゴリに対応する指示テキストを取得
+        for cat, instruction in THINKING_LENSES:
+            if cat == chosen_category:
+                return cat, instruction
+
+        # フォールバック（到達しないはず）
+        return THINKING_LENSES[0]
+
+    # --- 時間帯コンテキスト ---
+
+    @staticmethod
+    def _get_time_context() -> str:
+        """現在時刻から時間帯テキストを生成する。"""
+        hour = datetime.now(JST).hour
+        if 5 <= hour < 10:
+            return "朝"
+        if 10 <= hour < 12:
+            return "午前"
+        if 12 <= hour < 14:
+            return "昼"
+        if 14 <= hour < 17:
+            return "午後"
+        if 17 <= hour < 20:
+            return "夕方"
+        if 20 <= hour < 23:
+            return "夜"
+        return "深夜"
+
+    # --- 発言ヒント生成 ---
+
+    @staticmethod
+    def _build_speak_hint(recent_speaks: list[dict]) -> str:
+        """直近の発言パターンを分析し、使われていないカテゴリを提案する。"""
+        if not recent_speaks:
+            return "まだ自発発言がないので、自由に話しかけてOK"
+
+        # 直近発言のテキストからカテゴリを簡易推定
+        used_categories: set[str] = set()
+        for s in recent_speaks:
+            msg = s.get("notified_message", "") or ""
+            if any(w in msg for w in ["おはよう", "おつかれ", "おやすみ", "こんにち", "こんばん"]):
+                used_categories.add("挨拶・声かけ")
+            if any(w in msg for w in ["？", "?", "何", "どう"]):
+                used_categories.add("軽い質問")
+            if any(w in msg for w in ["頑張", "お疲れ", "無理しないで", "休憩"]):
+                used_categories.add("ねぎらい")
+            if any(w in msg for w in ["考えてた", "思った", "気になった"]):
+                used_categories.add("自分の考えの共有")
+
+        # 未使用カテゴリを提案
+        unused = [c for c in SPEAK_HINT_CATEGORIES if c not in used_categories]
+        if unused:
+            return f"今回は「{unused[0]}」系の発言を試してみて"
+        return "バリエーションを意識して、最近と違うトーンで"
+
+    # --- モノローグのサニタイズ ---
+
+    @staticmethod
+    def _sanitize_monologue(text: str) -> str:
+        """モノローグテキストからJSON構造的ノイズを除去。"""
+        # ```json ... ``` ブロック内のテキストを取り出す
+        m = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+        if m:
+            text = m.group(1)
+        # JSON構造の場合、monologueフィールドを抽出
+        text = text.strip()
+        if text.startswith('{'):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict) and 'monologue' in parsed:
+                    text = parsed['monologue']
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # 先頭の "monologue": " や末尾の不要な引用符を除去
+        text = re.sub(r'^["\s]*(?:monologue["\s]*:["\s]*)', '', text)
+        return text.strip().strip('"')
 
     # --- コンテキスト収集 ---
 
@@ -152,7 +307,7 @@ class InnerMind:
 
     # --- 思考フェーズ ---
 
-    async def _think_phase(self, context: dict) -> dict | None:
+    async def _think_phase(self, context: dict, staleness_note: str = "") -> dict | None:
         """LLM呼び出し①: 思考プロンプトでモノローグを生成。"""
         persona = self.bot.config.get("character", {}).get("persona", "")
 
@@ -176,6 +331,10 @@ class InnerMind:
         else:
             recent_monologues_text = "（初回思考）"
 
+        # 思考レンズ選択
+        lens_category, lens_instruction = self._select_thinking_lens()
+        thinking_lens = f"カテゴリ: {lens_category}\n{lens_instruction}"
+
         system = THINK_SYSTEM.format(persona=persona)
         prompt = THINK_PROMPT.format(
             datetime=context["datetime"],
@@ -183,12 +342,20 @@ class InnerMind:
             context_sections=context_sections,
             recent_monologues=recent_monologues_text,
             self_model=self_model_text,
+            thinking_lens=thinking_lens,
+            staleness_note=staleness_note,
         )
 
         raw = await self.bot.llm_router.generate(
             prompt, system=system, purpose="inner_mind", ollama_only=True,
         )
-        return self._parse_think_response(raw)
+        result = self._parse_think_response(raw)
+
+        # 選択したレンズカテゴリを思考結果に付与（保存時に使う）
+        if result:
+            result["_lens_category"] = lens_category
+
+        return result
 
     # --- 思考保存 ---
 
@@ -196,6 +363,10 @@ class InnerMind:
         """モノローグ・自己モデル・記憶をDBに保存。"""
         monologue = thought.get("monologue", "")
         mood = thought.get("mood", "unknown")
+
+        # モノローグのサニタイズ（JSON構造ノイズ除去）
+        monologue = self._sanitize_monologue(monologue)
+        thought["monologue"] = monologue
 
         monologue_id = await self.bot.database.save_monologue(monologue, mood)
 
@@ -207,6 +378,16 @@ class InnerMind:
         interest = thought.get("interest_topic")
         if interest and interest != "null":
             await self.bot.database.upsert_self_model("interest_topic", interest)
+
+        # last_lens の保存（レンズカテゴリ）
+        lens_category = thought.get("_lens_category")
+        if lens_category:
+            await self.bot.database.upsert_self_model("last_lens", lens_category)
+
+        # energy_level の導出・保存（moodから）
+        energy = _MOOD_ENERGY_MAP.get(mood)
+        if energy:
+            await self.bot.database.upsert_self_model("energy_level", energy)
 
         # memory_update があれば ChromaDB に保存（重複検出付き）
         mem_update = thought.get("memory_update")
@@ -222,7 +403,10 @@ class InnerMind:
                 )
                 log.info("InnerMind: memory updated: %s", mem_update[:80])
 
-        log.info("InnerMind: thought saved (mood=%s): %s", mood, monologue[:80])
+        log.info(
+            "InnerMind: thought saved (mood=%s, lens=%s): %s",
+            mood, lens_category, monologue[:80],
+        )
         return monologue_id
 
     # --- 発言フェーズ ---
@@ -286,13 +470,21 @@ class InnerMind:
                 recent_conv = sr["text"]
                 break
 
+        # 時間帯コンテキスト
+        time_context = self._get_time_context()
+
+        # 発言ヒント生成（直近発言のパターン分析に基づく）
+        speak_hint = self._build_speak_hint(recent_speaks)
+
         system = SPEAK_SYSTEM.format(persona=persona)
         prompt = SPEAK_PROMPT.format(
             monologue=thought.get("monologue", ""),
             mood=thought.get("mood", "unknown"),
             datetime=context["datetime"],
+            time_context=time_context,
             recent_conversation=recent_conv or "（なし）",
             recent_speaks_section=recent_speaks_section,
+            speak_hint=speak_hint,
         )
 
         raw = await self.bot.llm_router.generate(
