@@ -340,16 +340,19 @@ class OBSManager:
             return False
 
     def _obs_alive(self) -> bool:
-        """EventClient の接続が生きているか確認。"""
+        """EventClient の接続とワーカースレッドが生きているか確認。"""
         if not self._ev:
             # EventClient がなければ ReqClient のポーリングで判断
             return self._connected
+        # ワーカースレッドが死んでいれば不達 → 再接続トリガー
+        # (obsws_python 1.8.0 はコールバック内の非 OSError 例外を捕捉せず、
+        #  ワーカースレッドが silent に死ぬため、明示的に生死を確認する)
+        worker = getattr(self._ev, 'worker', None)
+        if worker is not None and not worker.is_alive():
+            return False
         ws = getattr(self._ev.base_client, 'ws', None)
         if ws is not None:
             return bool(getattr(ws, 'connected', True))
-        thread = getattr(self._ev.base_client, 'thread', None)
-        if thread is not None:
-            return thread.is_alive()
         return True
 
     # --- 状態ポーリング ---
@@ -380,37 +383,50 @@ class OBSManager:
 
     # --- OBS イベントハンドラ ---
 
+    # NOTE: obsws_python 1.8.0 はコールバック内の非 OSError 例外を捕捉せず、
+    # ワーカースレッドが silent に死ぬ。各コールバックは必ず try/except で
+    # 包み、例外を log.exception で記録してからスレッド死を防ぐこと。
+
     def on_record_state_changed(self, data) -> None:
-        if data.output_state != "OBS_WEBSOCKET_OUTPUT_STOPPED":
-            return
-        file_path = getattr(data, "output_path", None)
-        if not file_path:
-            log.warning("RecordStateChanged STOPPED: no output_path")
-            return
-        log.info("Recording stopped: %s", file_path)
-        game = _resolve_game_name(self._main_activity_url)
-        log.info("Detected game: %s", game or "(unknown)")
-        self._organize_video(file_path, game)
+        try:
+            if data.output_state != "OBS_WEBSOCKET_OUTPUT_STOPPED":
+                return
+            file_path = getattr(data, "output_path", None)
+            if not file_path:
+                log.warning("RecordStateChanged STOPPED: no output_path")
+                return
+            log.info("Recording stopped: %s", file_path)
+            game = _resolve_game_name(self._main_activity_url)
+            log.info("Detected game: %s", game or "(unknown)")
+            self._organize_video(file_path, game)
+        except Exception:
+            log.exception("on_record_state_changed failed")
 
     def on_replay_buffer_saved(self, data) -> None:
-        file_path = getattr(data, "saved_replay_path", None)
-        if not file_path:
-            log.warning("ReplayBufferSaved: no saved_replay_path")
-            return
-        log.info("Replay saved: %s", file_path)
-        game = _resolve_game_name(self._main_activity_url)
-        log.info("Detected game: %s", game or "(unknown)")
-        self._organize_video(file_path, game)
+        try:
+            file_path = getattr(data, "saved_replay_path", None)
+            if not file_path:
+                log.warning("ReplayBufferSaved: no saved_replay_path")
+                return
+            log.info("Replay saved: %s", file_path)
+            game = _resolve_game_name(self._main_activity_url)
+            log.info("Detected game: %s", game or "(unknown)")
+            self._organize_video(file_path, game)
+        except Exception:
+            log.exception("on_replay_buffer_saved failed")
 
     def on_screenshot_saved(self, data) -> None:
-        file_path = getattr(data, "saved_screenshot_path", None)
-        if not file_path:
-            log.warning("ScreenshotSaved: no saved_screenshot_path")
-            return
-        log.info("Screenshot saved: %s", file_path)
-        game = _resolve_game_name(self._main_activity_url)
-        log.info("Detected game: %s", game or "(unknown)")
-        self._organize_screenshot(file_path, game)
+        try:
+            file_path = getattr(data, "saved_screenshot_path", None)
+            if not file_path:
+                log.warning("ScreenshotSaved: no saved_screenshot_path")
+                return
+            log.info("Screenshot saved: %s", file_path)
+            game = _resolve_game_name(self._main_activity_url)
+            log.info("Detected game: %s", game or "(unknown)")
+            self._organize_screenshot(file_path, game)
+        except Exception:
+            log.exception("on_screenshot_saved failed")
 
     # --- ファイル整理 ---
 
