@@ -80,6 +80,8 @@ units:
   power:
     enabled: true
     shutdown_delay: 60  # デフォルト遅延秒数
+  docker_log_monitor:
+    enabled: true
 
 # RSS フィーダー
 rss:
@@ -137,6 +139,14 @@ rss:
           title: "NHK"
         - url: "https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml"
           title: "ITmedia"
+
+# Docker ログ監視
+docker_monitor:
+  enabled: true
+  check_interval_seconds: 60       # チェック間隔（秒）
+  cooldown_minutes: 30             # 同一エラー再通知までのクールダウン（分）
+  containers: []                   # 監視対象コンテナ名（空=全コンテナ）
+  max_lines_per_check: 200         # 1回のチェックで取得する最大行数
 
 # STT（音声テキスト化）
 stt:

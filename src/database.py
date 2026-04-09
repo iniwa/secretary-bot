@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 16
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -123,6 +123,14 @@ CREATE TABLE IF NOT EXISTS mimi_self_model (
     key        TEXT NOT NULL,
     value      TEXT NOT NULL,
     updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS docker_log_exclusions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern    TEXT NOT NULL UNIQUE,
+    reason     TEXT DEFAULT '',
+    added_by   TEXT DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -280,6 +288,15 @@ class Database:
             ],
             15: [
                 "ALTER TABLE mimi_monologue ADD COLUMN context_json TEXT DEFAULT ''",
+            ],
+            16: [
+                """CREATE TABLE IF NOT EXISTS docker_log_exclusions (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern    TEXT NOT NULL UNIQUE,
+                    reason     TEXT DEFAULT '',
+                    added_by   TEXT DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

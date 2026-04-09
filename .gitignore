@@ -54,4 +54,3 @@ temp/
 
 # Playwright
 .playwright-mcp/
-*.png

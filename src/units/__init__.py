@@ -20,6 +20,7 @@ _UNIT_MODULES = {
     "calendar": "src.units.calendar",
     "power": "src.units.power",
     "rss": "src.units.rss",
+    "docker_log_monitor": "src.units.docker_log_monitor",
 }
 
 

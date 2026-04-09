@@ -6,6 +6,7 @@ services:
       - /home/iniwa/docker/secretary-bot/app/src:/app/src
       - /home/iniwa/docker/secretary-bot/app/config.yaml:/app/config.yaml
       - /home/iniwa/docker/secretary-bot/data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/iniwa/.ssh/id_ed25519:/home/botuser/.ssh/id_ed25519:ro
       - /home/iniwa/.ssh/known_hosts:/home/botuser/.ssh/known_hosts:ro
       - /home/iniwa/docker/secretary-bot/ssh_config:/home/botuser/.ssh/config:ro
@@ -15,6 +16,8 @@ services:
       - /home/iniwa/docker/secretary-bot/.env
     extra_hosts:
       - "gitea:host-gateway"
+    group_add:
+      - "985"  # docker group GID — Docker ソケットアクセス用
     restart: unless-stopped
     environment:
       - TZ=Asia/Tokyo
