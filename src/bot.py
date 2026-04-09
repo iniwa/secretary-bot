@@ -80,8 +80,8 @@ class SecretaryBot(commands.Bot):
         from src.status_collector import StatusCollector
         self.status_collector = StatusCollector(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
-        # 通知メッセージID → ユニット名マッピング（返信ルーティング用）
-        self._notification_units: dict[int, str] = {}
+        # ボットメッセージID → ユニット名マッピング（返信ルーティング用）
+        self._reply_units: dict[int, str] = {}
         # チャネル+ユーザーごとのメッセージ処理ロック（直列化）
         self._user_locks: dict[str, asyncio.Lock] = {}
 
@@ -140,14 +140,23 @@ class SecretaryBot(commands.Bot):
         channel_tag = "discord_dm" if is_dm else "discord"
         channel_name = "" if is_dm else getattr(message.channel, "name", "")
 
-        # ボット通知への返信を検出（返信ルーティング用）
+        # ボットメッセージへの返信を検出（返信ルーティング用）
         reply_unit = None
+        is_bot_reply = False
         if message.reference and message.reference.message_id:
-            reply_unit = self._notification_units.get(message.reference.message_id)
+            ref_id = message.reference.message_id
+            reply_unit = self._reply_units.get(ref_id)
+            if reply_unit:
+                is_bot_reply = True
+            else:
+                # メモリにない場合はキャッシュからボットのメッセージか確認
+                ref_msg = message.reference.resolved
+                if ref_msg and ref_msg.author.id == self.user.id:
+                    is_bot_reply = True
 
         # DMでなく、メンションなしのメッセージは会話ログのみ保存して終了
-        # ただし、ボット通知への返信は処理を続行
-        if not is_dm and self.user not in message.mentions and not reply_unit:
+        # ただし、ボットメッセージへの返信は処理を続行
+        if not is_dm and self.user not in message.mentions and not is_bot_reply:
             await self.database.log_conversation(channel_tag, "user", content, user_id=user_id, channel_name=channel_name)
             return
 
@@ -218,7 +227,8 @@ class SecretaryBot(commands.Bot):
                     await ft.emit("SESSION_UPDATE", "error", {"error": str(e)}, flow_id)
 
             if response:
-                await message.channel.send(response)
+                sent = await message.channel.send(response)
+                self._reply_units[sent.id] = unit_name
                 mode = "eco" if not self.llm_router.ollama_available else "normal"
                 await self.database.log_conversation(channel_tag, "assistant", response, mode=mode, unit=unit_name, user_id=user_id, channel_name=channel_name)
                 await ft.emit("DB_LOG", "done", {"mode": mode, "unit": unit_name}, flow_id)

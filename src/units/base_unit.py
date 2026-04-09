@@ -59,7 +59,7 @@ class BaseUnit(commands.Cog):
                 sent = await channel.send(message)
                 # 返信ルーティング用: メッセージID → ユニット名を記録
                 if self.UNIT_NAME:
-                    self.bot._notification_units[sent.id] = self.UNIT_NAME
+                    self.bot._reply_units[sent.id] = self.UNIT_NAME
                 # 通知を会話ログに保存（InnerMind等の文脈参照用）
                 log_content = _MENTION_RE.sub("", message).strip()
                 if log_content:
@@ -68,6 +68,11 @@ class BaseUnit(commands.Cog):
                         unit=self.UNIT_NAME or None,
                         user_id=_user_id,
                         channel_name=getattr(channel, "name", ""),
+                    )
+                    # WebGUIにリアルタイム通知を配信
+                    ft = get_flow_tracker()
+                    await ft.broadcast_notification(
+                        log_content, unit=self.UNIT_NAME, user_id=_user_id,
                     )
 
     async def notify_user(self, message: str, user_id: str = "") -> None:

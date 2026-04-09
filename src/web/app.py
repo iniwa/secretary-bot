@@ -46,6 +46,7 @@ def create_web_app(bot) -> FastAPI:
     async def chat(request: Request):
         body = await request.json()
         message = body.get("message", "").strip()
+        reply_unit = body.get("reply_unit")  # 返信ルーティング用
         if not message:
             raise HTTPException(400, "message is required")
 
@@ -68,9 +69,16 @@ def create_web_app(bot) -> FastAPI:
                         r for r in recent_rows if r["content"] != message
                     ][-4:]
 
-                    result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
-                    unit_name = result.get("unit", "chat")
-                    user_message = result.get("message", message)
+                    # 返信ルーティング: reply_unit指定時はLLMルーティングをバイパス
+                    if reply_unit and bot.unit_manager.get(reply_unit):
+                        unit_name = reply_unit
+                        user_message = message
+                        log.info("WebGUI reply-based routing to: %s", unit_name)
+                        await ft.emit("UNIT_DECIDE", "done", {"unit": unit_name, "reply": True}, flow_id)
+                    else:
+                        result = await bot.unit_router.route(message, channel="webgui", user_id=_webgui_user_id, flow_id=flow_id, conversation_context=conversation_context)
+                        unit_name = result.get("unit", "chat")
+                        user_message = result.get("message", message)
 
                     unit = bot.unit_manager.get(unit_name)
                     if unit is None:

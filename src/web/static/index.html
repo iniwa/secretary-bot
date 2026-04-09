@@ -61,6 +61,16 @@ main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .msg.thinking .dot:nth-child(2) { animation-delay: 0.2s; }
 .msg.thinking .dot:nth-child(3) { animation-delay: 0.4s; }
 @keyframes thinking-bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
+.msg.assistant { position: relative; }
+.msg .reply-btn { position: absolute; top: 0.3rem; right: 0.3rem; background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0.3rem; border-radius: 4px; opacity: 0; transition: opacity 0.15s; }
+.msg:hover .reply-btn { opacity: 1; }
+.msg .reply-btn:hover { background: var(--border); color: var(--text); }
+#reply-bar { display: none; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.3rem; }
+#reply-bar .reply-icon { color: var(--accent); }
+#reply-bar .reply-unit { color: var(--accent); font-weight: bold; }
+#reply-bar .reply-preview { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#reply-bar .reply-close { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1rem; padding: 0 0.3rem; }
+#reply-bar .reply-close:hover { color: var(--text); }
 #chat-form { display: flex; gap: 0.5rem; padding-top: 0.5rem; }
 #chat-form textarea { flex: 1; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 1rem; resize: none; overflow-y: auto; max-height: 8rem; line-height: 1.4; font-family: inherit; }
 #chat-form button { padding: 0.6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 1rem; }
@@ -249,6 +259,12 @@ nav.bottom-nav { display: none; }
   <!-- Chat -->
   <div id="page-chat" class="page active">
     <div id="chat-messages"></div>
+    <div id="reply-bar">
+      <span class="reply-icon">↩</span>
+      <span class="reply-unit"></span>
+      <span class="reply-preview"></span>
+      <button class="reply-close" onclick="clearReplyContext()" title="キャンセル">&times;</button>
+    </div>
     <form id="chat-form" onsubmit="sendChat(event)">
       <textarea id="chat-input" placeholder="メッセージを入力... (Shift+Enterで改行)" rows="1" autocomplete="off"></textarea>
       <button type="submit">送信</button>
@@ -928,6 +944,22 @@ function showPage(name) {
 }
 
 let chatBusy = false;
+let replyContext = null; // { unit: string|null, preview: string }
+
+function setReplyContext(unit, text) {
+  replyContext = { unit: unit || null, preview: text.substring(0, 80) };
+  const bar = document.getElementById('reply-bar');
+  bar.style.display = 'flex';
+  bar.querySelector('.reply-unit').textContent = unit ? `[${unit}]` : '';
+  bar.querySelector('.reply-preview').textContent = replyContext.preview + (text.length > 80 ? '...' : '');
+  document.getElementById('chat-input').focus();
+}
+
+function clearReplyContext() {
+  replyContext = null;
+  document.getElementById('reply-bar').style.display = 'none';
+}
+
 async function sendChat(e) {
   e.preventDefault();
   if (chatBusy) return;
@@ -942,6 +974,12 @@ async function sendChat(e) {
   appendMsg('user', msg);
   const thinking = appendThinking();
 
+  const payload = { message: msg };
+  if (replyContext && replyContext.unit) {
+    payload.reply_unit = replyContext.unit;
+  }
+  clearReplyContext();
+
   function chatDone() {
     chatBusy = false;
     btn.disabled = false;
@@ -949,7 +987,7 @@ async function sendChat(e) {
   }
 
   try {
-    const res = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: msg}) });
+    const res = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
     const data = await res.json();
     const flowId = data.flow_id;
     if (!flowId) {
@@ -1032,6 +1070,15 @@ function appendMsg(role, text, unit, channel) {
     mdWrapper.className = 'md-body';
     mdWrapper.innerHTML = marked.parse(text);
     el.appendChild(mdWrapper);
+    // 返信ボタン
+    const replyBtn = document.createElement('button');
+    replyBtn.className = 'reply-btn';
+    replyBtn.innerHTML = '&#8617;';
+    replyBtn.title = '返信';
+    const msgUnit = unit || null;
+    const msgText = text;
+    replyBtn.onclick = () => setReplyContext(msgUnit, msgText);
+    el.appendChild(replyBtn);
   } else {
     el.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
   }
@@ -2021,6 +2068,11 @@ function connectFlowSSE() {
 }
 
 function handleFlowEvent(event) {
+  if (event.type === 'notification') {
+    // ボット通知（リマインダー等）をチャットに表示
+    appendMsg('assistant', event.message || '', event.unit, 'Discord');
+    return;
+  }
   if (event.type === 'flow_start') {
     flowActive = true;
     flowNodeStates = {};

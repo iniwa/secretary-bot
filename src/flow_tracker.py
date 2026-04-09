@@ -107,6 +107,16 @@ class FlowTracker:
         except ValueError:
             pass
 
+    async def broadcast_notification(self, message: str, unit: str = "", user_id: str = "") -> None:
+        """通知イベントをSSEで配信（フロー外）。"""
+        await self._broadcast({
+            "type": "notification",
+            "message": message,
+            "unit": unit,
+            "user_id": user_id,
+            "timestamp": time.time(),
+        })
+
     async def _broadcast(self, event: dict) -> None:
         dead: list[asyncio.Queue] = []
         for q in self._subscribers:
