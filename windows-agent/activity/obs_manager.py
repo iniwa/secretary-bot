@@ -204,20 +204,17 @@ def _query_game(main_agent_url: str, timeout: int = 3) -> tuple[str | None, str 
     return None, None
 
 
-def _resolve_game_name(main_agent_url: str) -> str | None:
-    """ゲーム名を解決。game が null なら foreground_process のファイル名を使う。"""
-    game, foreground = _query_game(main_agent_url)
-    if game:
-        return game
-    if foreground:
-        stem = Path(foreground).stem
-        log.info(
-            "No known game detected; using foreground process '%s' as folder name"
-            " (add to game_processes.json: \"%s\": \"...\")",
-            stem, foreground,
-        )
-        return stem
-    return None
+def _resolve_game_name(main_agent_url: str) -> tuple[str | None, str | None]:
+    """Main PC からゲーム検出結果を取得。
+
+    Returns:
+        (known_game_name, foreground_process)
+        - known_game_name: game_processes.json で識別されたゲーム名。未登録なら None。
+        - foreground_process: Main PC の生 foreground パス（メモ用）。取得できなかった場合は None。
+
+    NOTE: 呼び出し側が known_game_name と foreground から、最終的な保存フォルダを決める。
+    """
+    return _query_game(main_agent_url)
 
 
 # ---------------------------------------------------------------------------
@@ -396,9 +393,9 @@ class OBSManager:
                 log.warning("RecordStateChanged STOPPED: no output_path")
                 return
             log.info("Recording stopped: %s", file_path)
-            game = _resolve_game_name(self._main_activity_url)
+            game, foreground = _resolve_game_name(self._main_activity_url)
             log.info("Detected game: %s", game or "(unknown)")
-            self._organize_video(file_path, game)
+            self._organize_video(file_path, game, foreground)
         except Exception:
             log.exception("on_record_state_changed failed")
 
@@ -409,9 +406,9 @@ class OBSManager:
                 log.warning("ReplayBufferSaved: no saved_replay_path")
                 return
             log.info("Replay saved: %s", file_path)
-            game = _resolve_game_name(self._main_activity_url)
+            game, foreground = _resolve_game_name(self._main_activity_url)
             log.info("Detected game: %s", game or "(unknown)")
-            self._organize_video(file_path, game)
+            self._organize_video(file_path, game, foreground)
         except Exception:
             log.exception("on_replay_buffer_saved failed")
 
@@ -422,31 +419,66 @@ class OBSManager:
                 log.warning("ScreenshotSaved: no saved_screenshot_path")
                 return
             log.info("Screenshot saved: %s", file_path)
-            game = _resolve_game_name(self._main_activity_url)
+            game, foreground = _resolve_game_name(self._main_activity_url)
             log.info("Detected game: %s", game or "(unknown)")
-            self._organize_screenshot(file_path, game)
+            self._organize_screenshot(file_path, game, foreground)
         except Exception:
             log.exception("on_screenshot_saved failed")
 
     # --- ファイル整理 ---
 
-    def _organize_video(self, file_path: str, game_name: str | None) -> None:
+    def _pick_folder(self, kind: str, file_name: str,
+                     game_name: str | None, foreground: str | None) -> str:
+        """保存フォルダ名を決定し、ゲーム未識別時にメモログを出す。
+
+        優先順位:
+          1. game_processes.json で識別されたゲーム名
+          2. foreground プロセスの stem（exe 名ベース、ゲーム登録漏れのヒント用）
+          3. self._unknown_folder（設定値。デフォルト "Unknown"）
+
+        2, 3 のケースでは、その時の foreground プロセスを警告ログとしてメモ。
+        """
+        if game_name:
+            return _sanitize_folder_name(game_name)
+
+        # ゲーム未識別 → foreground をメモして folder を決める
+        if foreground:
+            folder = _sanitize_folder_name(Path(foreground).stem)
+            log.warning(
+                "[Unknown memo] %s '%s' saved to fallback folder '%s'. "
+                "Foreground process at capture time: %s "
+                "(add to game_processes.json to register as a game)",
+                kind, file_name, folder, foreground,
+            )
+            return folder
+
+        # 完全に不明 → Unknown 行き
+        log.warning(
+            "[Unknown memo] %s '%s' saved to '%s'. "
+            "Foreground process: (unavailable — Main PC unreachable or no foreground)",
+            kind, file_name, self._unknown_folder,
+        )
+        return self._unknown_folder
+
+    def _organize_video(self, file_path: str, game_name: str | None,
+                        foreground: str | None = None) -> None:
         src = Path(file_path)
         if not src.exists():
             log.error("Source file not found: %s", src)
             return
-        folder = _sanitize_folder_name(game_name) if game_name else self._unknown_folder
+        folder = self._pick_folder("recording", src.name, game_name, foreground)
         dest_dir = Path(self._output_base) / folder
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = _resolve_dest(dest_dir, src.name)
         _move_file(src, dest, self._retries, self._retry_delay)
 
-    def _organize_screenshot(self, file_path: str, game_name: str | None) -> None:
+    def _organize_screenshot(self, file_path: str, game_name: str | None,
+                             foreground: str | None = None) -> None:
         src = Path(file_path)
         if not src.exists():
             log.error("Source file not found: %s", src)
             return
-        folder = _sanitize_folder_name(game_name) if game_name else self._unknown_folder
+        folder = self._pick_folder("screenshot", src.name, game_name, foreground)
         incoming_dir = Path(self._output_base) / self._screenshot_folder / folder
         incoming_dir.mkdir(parents=True, exist_ok=True)
         dest = _resolve_dest(incoming_dir, src.name)

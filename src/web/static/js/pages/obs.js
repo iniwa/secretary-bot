@@ -10,6 +10,7 @@ let games = [];
 let groups = [];
 let logs = [];
 let editingGame = null; // game object being edited, or null
+let _activityTimer = null;
 
 // ============================================================
 // Helpers
@@ -200,6 +201,47 @@ export function render() {
     font-family: inherit;
   }
 
+  /* Main PC activity panel */
+  .obs-activity-panel {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 0;
+  }
+  .obs-activity-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 160px;
+  }
+  .obs-activity-col.wide {
+    flex: 1;
+    min-width: 220px;
+  }
+  .obs-activity-label {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+  }
+  .obs-activity-game {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .obs-activity-game.none {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .obs-activity-fg {
+    font-family: 'Cascadia Code', 'Fira Code', 'SF Mono', monospace;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    word-break: break-all;
+  }
+
   /* Groups summary */
   .obs-groups-wrap {
     display: flex;
@@ -238,6 +280,28 @@ export function render() {
     <div class="obs-status-row" id="obs-status-row">
       <div class="obs-status-dot disconnected" id="obs-status-dot"></div>
       <span class="obs-status-label" id="obs-status-label">Checking...</span>
+    </div>
+  </div>
+
+  <!-- Main PC Activity Card -->
+  <div class="card">
+    <div class="card-header">
+      <h3>Main PC Activity</h3>
+      <button class="btn btn-sm" id="obs-activity-refresh">Refresh</button>
+    </div>
+    <div class="obs-activity-panel" id="obs-activity-panel">
+      <div class="obs-activity-col">
+        <div class="obs-activity-label">Playing</div>
+        <div class="obs-activity-game none" id="obs-activity-game">---</div>
+      </div>
+      <div class="obs-activity-col wide">
+        <div class="obs-activity-label">Foreground Process</div>
+        <div class="obs-activity-fg" id="obs-activity-fg">---</div>
+      </div>
+      <div class="obs-activity-col" style="min-width:auto">
+        <div class="obs-activity-label">Fullscreen</div>
+        <div id="obs-activity-fs"><span class="badge badge-muted">---</span></div>
+      </div>
     </div>
   </div>
 
@@ -290,6 +354,43 @@ export function render() {
 
 <!-- Edit modal (rendered dynamically) -->
 <div id="obs-edit-root"></div>`;
+}
+
+// ============================================================
+// Main PC Activity
+// ============================================================
+async function loadActivity() {
+  const gameEl = $('obs-activity-game');
+  const fgEl = $('obs-activity-fg');
+  const fsEl = $('obs-activity-fs');
+  if (!gameEl) return;
+
+  try {
+    const data = await api('/api/activity/main');
+    if (!data || data.alive === false) {
+      gameEl.textContent = '---';
+      gameEl.className = 'obs-activity-game none';
+      fgEl.textContent = data?.error || 'Main PC agent not reachable';
+      if (fsEl) fsEl.innerHTML = '<span class="badge badge-muted">---</span>';
+      return;
+    }
+    const game = data.game;
+    const fg = data.foreground_process || '';
+    const isFs = data.is_fullscreen === true;
+    gameEl.textContent = game || 'No Game';
+    gameEl.className = game ? 'obs-activity-game' : 'obs-activity-game none';
+    fgEl.textContent = fg || '(none)';
+    if (fsEl) {
+      fsEl.innerHTML = isFs
+        ? '<span class="badge badge-info">Yes</span>'
+        : '<span class="badge badge-muted">No</span>';
+    }
+  } catch (err) {
+    gameEl.textContent = '---';
+    gameEl.className = 'obs-activity-game none';
+    fgEl.textContent = 'Error: ' + (err?.message || 'fetch failed');
+    if (fsEl) fsEl.innerHTML = '<span class="badge badge-muted">---</span>';
+  }
 }
 
 // ============================================================
@@ -592,6 +693,16 @@ export async function mount() {
     toast('Status refreshed', 'info');
   });
 
+  // Activity refresh
+  $('obs-activity-refresh')?.addEventListener('click', async () => {
+    await loadActivity();
+    toast('Activity refreshed', 'info');
+  });
+
+  // Kick off Main PC activity load + poll
+  loadActivity();
+  _activityTimer = setInterval(loadActivity, 10000);
+
   // Games refresh
   $('obs-games-refresh')?.addEventListener('click', async () => {
     await loadGames();
@@ -667,6 +778,10 @@ export function unmount() {
   groups = [];
   logs = [];
   editingGame = null;
+  if (_activityTimer) {
+    clearInterval(_activityTimer);
+    _activityTimer = null;
+  }
   // Clean up edit modal if open
   const root = document.getElementById('obs-edit-root');
   if (root) root.innerHTML = '';

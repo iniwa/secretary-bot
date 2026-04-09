@@ -1174,10 +1174,13 @@ def create_web_app(bot) -> FastAPI:
         return {"summaries": [dict(r) for r in rows]}
 
     # --- OBS: ゲームプロセス管理 ---
+    # NOTE: ゲームは Main PC で実行されるため game_processes.json は Main PC が
+    # マスター。Sub PC の OBS Manager は /activity 経由で Main PC に問い合わせる。
+    # そのため /api/obs/games の編集は Main PC に向ける。
 
     @app.get("/api/obs/games", )
     async def obs_games():
-        results = await _agent_request("GET", "/obs/games", role="sub")
+        results = await _agent_request("GET", "/obs/games", role="main")
         if not results:
             return {"games": [], "groups": []}
         return results[0]
@@ -1185,11 +1188,12 @@ def create_web_app(bot) -> FastAPI:
     @app.post("/api/obs/games", )
     async def obs_games_save(request: Request):
         body = await request.json()
-        results = await _agent_request_json("POST", "/obs/games", role="sub", json_body=body)
+        results = await _agent_request_json("POST", "/obs/games", role="main", json_body=body)
         if not results:
-            raise HTTPException(502, "Sub PC agent unreachable")
+            raise HTTPException(502, "Main PC agent unreachable")
         return results[0]
 
+    # OBS 本体（WebSocket / ファイル整理 / ログ）は Sub PC 上で動作
     @app.get("/api/obs/status", )
     async def obs_status():
         results = await _agent_request("GET", "/obs/status", role="sub")
@@ -1202,6 +1206,16 @@ def create_web_app(bot) -> FastAPI:
         results = await _agent_request("GET", f"/obs/logs?lines={lines}", role="sub")
         if not results:
             return {"logs": []}
+        return results[0]
+
+    # --- Main PC アクティビティ（ゲームプレイ状況） ---
+
+    @app.get("/api/activity/main", )
+    async def activity_main():
+        """Main PC のフォアグラウンド / ゲーム状況を返す。"""
+        results = await _agent_request("GET", "/activity", role="main")
+        if not results:
+            return {"alive": False, "error": "Main PC agent not reachable"}
         return results[0]
 
     # --- RSS フィード管理 ---

@@ -1,5 +1,5 @@
 /** Dashboard page. */
-import { apiBatch } from '../api.js';
+import { api, apiBatch } from '../api.js';
 
 const MOOD_BADGE = {
   curious:   'badge-info',
@@ -68,6 +68,26 @@ export function render() {
     </div>
   </section>
 
+  <section class="card" id="d-game-card" style="margin-bottom:1rem">
+    <div class="card-header">
+      <h3>Main PC Activity</h3>
+      <span class="status-dot" id="d-game-dot" title="Main PC agent status"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;padding:0.25rem 0">
+      <div style="flex:1;min-width:180px">
+        <div class="stat-label" style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Playing</div>
+        <div class="stat-value" id="d-game-name" style="font-size:1.25rem;font-weight:600">---</div>
+      </div>
+      <div style="flex:2;min-width:220px">
+        <div class="stat-label" style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Foreground Process</div>
+        <div class="mono" id="d-game-fg" style="font-size:0.8125rem;color:var(--text-secondary);word-break:break-all">---</div>
+      </div>
+      <div id="d-game-fs-wrap" style="display:none">
+        <span class="badge badge-info" id="d-game-fs">Fullscreen</span>
+      </div>
+    </div>
+  </section>
+
   <section class="monologue-card" id="d-monologue">
     <div class="card-header">
       <h3>Latest Monologue</h3>
@@ -102,7 +122,48 @@ export function render() {
 
 function $(id) { return document.getElementById(id); }
 
+// ------------------------------------------------------------
+// Main PC game activity (polled; card is updated independently)
+// ------------------------------------------------------------
+let _gamePollTimer = null;
+
+async function refreshMainActivity() {
+  const dot = $('d-game-dot');
+  const nameEl = $('d-game-name');
+  const fgEl = $('d-game-fg');
+  const fsWrap = $('d-game-fs-wrap');
+  if (!nameEl) return;
+
+  try {
+    const data = await api('/api/activity/main');
+    if (!data || data.alive === false) {
+      if (dot) dot.className = 'status-dot error';
+      nameEl.textContent = '---';
+      fgEl.textContent = data?.error || 'Main PC agent not reachable';
+      if (fsWrap) fsWrap.style.display = 'none';
+      return;
+    }
+    if (dot) dot.className = 'status-dot online';
+    const game = data.game;
+    const fg = data.foreground_process || '';
+    const isFs = data.is_fullscreen === true;
+    nameEl.textContent = game || 'No Game';
+    nameEl.style.color = game ? 'var(--text-primary)' : 'var(--text-muted)';
+    fgEl.textContent = fg || '(none)';
+    if (fsWrap) fsWrap.style.display = isFs ? '' : 'none';
+  } catch (err) {
+    if (dot) dot.className = 'status-dot error';
+    nameEl.textContent = '---';
+    fgEl.textContent = 'Error: ' + (err?.message || 'fetch failed');
+    if (fsWrap) fsWrap.style.display = 'none';
+  }
+}
+
 export async function mount() {
+  // Kick off Main PC activity fetch in parallel (non-blocking for rest of dashboard)
+  refreshMainActivity();
+  _gamePollTimer = setInterval(refreshMainActivity, 10000);
+
   const [status, monologues, imStatus, reminders, memos, llmConfig] = await apiBatch([
     ['/api/status'],
     ['/api/monologue', { params: { limit: 1 } }],
@@ -186,5 +247,12 @@ export async function mount() {
   // Memos
   if (memos?.items) {
     $('d-memos').textContent = memos.items.length;
+  }
+}
+
+export function unmount() {
+  if (_gamePollTimer) {
+    clearInterval(_gamePollTimer);
+    _gamePollTimer = null;
   }
 }
