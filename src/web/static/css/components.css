@@ -153,6 +153,38 @@
 .badge-info { background: var(--info-muted); color: var(--info); }
 .badge-muted { background: var(--bg-overlay); color: var(--text-muted); }
 
+/* Badge tooltip */
+.has-tooltip {
+  position: relative;
+  cursor: default;
+}
+.has-tooltip .tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.3rem 0.6rem;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+}
+.has-tooltip .tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border-hover);
+}
+.has-tooltip:hover .tooltip { display: block; }
+
 /* === Buttons === */
 
 .btn {

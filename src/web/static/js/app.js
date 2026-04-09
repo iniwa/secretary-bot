@@ -110,18 +110,36 @@ export function toast(message, type = 'info') {
 }
 
 // ============================================================
-// Topbar status dots
+// Topbar status chips
 // ============================================================
+function chip(state, label) {
+  return `<span class="status-chip chip-${state}"><span class="chip-dot"></span>${label}</span>`;
+}
+
 async function refreshTopbarStatus() {
+  const container = document.getElementById('topbar-status');
+  if (!container) return;
   try {
-    const s = await api('/api/status');
-    const ollamaDot = document.getElementById('topbar-ollama');
-    const agentDot = document.getElementById('topbar-agent');
-    if (ollamaDot) ollamaDot.className = 'status-dot ' + (s.ollama ? 'online' : 'error');
-    if (agentDot) {
-      const alive = (s.agents || []).some(a => a.alive);
-      agentDot.className = 'status-dot ' + (alive ? 'online' : 'error');
-    }
+    const [s, gemini] = await Promise.all([
+      api('/api/status'),
+      api('/api/gemini-config').catch(() => null),
+    ]);
+    const chips = [];
+
+    // Ollama
+    chips.push(chip(s.ollama ? 'ok' : 'ng', 'Ollama'));
+
+    // Gemini
+    const geminiEnabled = gemini && (gemini.conversation || gemini.memory_extraction || gemini.unit_routing);
+    chips.push(chip(geminiEnabled ? 'ok' : 'off', 'Gemini'));
+
+    // Agents
+    const agents = s.agents || [];
+    const alive = agents.filter(a => a.alive).length;
+    const agentState = agents.length === 0 ? 'off' : alive === agents.length ? 'ok' : alive > 0 ? 'warn' : 'ng';
+    chips.push(chip(agentState, `Agent ${alive}/${agents.length}`));
+
+    container.innerHTML = chips.join('');
   } catch { /* silent */ }
 }
 

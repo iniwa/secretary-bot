@@ -121,7 +121,7 @@ export function unmount() {
 // ============================================================
 // Message Display
 // ============================================================
-function appendMessage(role, text, unit, channel) {
+function appendMessage(role, text, unit, channel, channelName) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
 
@@ -158,8 +158,16 @@ function appendMessage(role, text, unit, channel) {
   }
   if (channel && channel !== 'webgui') {
     const badge = document.createElement('span');
-    badge.className = 'badge badge-info';
-    badge.textContent = channel;
+    badge.className = 'badge badge-info has-tooltip';
+    const label = channel === 'discord' ? 'Discord' : channel === 'discord_dm' ? 'DM' : channel;
+    badge.textContent = label;
+    // Tooltip with channel name
+    if (channelName) {
+      const tip = document.createElement('span');
+      tip.className = 'tooltip';
+      tip.textContent = `#${channelName}`;
+      badge.appendChild(tip);
+    }
     meta.appendChild(badge);
   }
   if (meta.children.length) el.appendChild(meta);
@@ -299,8 +307,7 @@ async function loadHistory() {
     const data = await api('/api/logs', { params: { limit: 50, bot_only: 1 } });
     const msgs = (data.logs || []).reverse();
     msgs.forEach(l => {
-      const ch = l.channel === 'discord' ? 'Discord' : l.channel === 'discord_dm' ? 'DM' : l.channel !== 'webgui' ? l.channel : null;
-      appendMessage(l.role, l.content, l.unit, ch);
+      appendMessage(l.role, l.content, l.unit, l.channel, l.channel_name);
     });
   } catch (err) {
     console.error('Chat history load failed:', err);
