@@ -11,6 +11,8 @@ import re
 import struct
 import time
 
+import logging
+
 import httpx
 
 from src.flow_tracker import get_flow_tracker
@@ -18,6 +20,7 @@ from src.logger import get_logger
 from src.units.base_unit import BaseUnit
 
 log = get_logger(__name__)
+_httpx_logger = logging.getLogger("httpx")
 
 # エラー検出パターン
 _ERROR_PATTERNS = [
@@ -266,21 +269,31 @@ class DockerLogMonitorUnit(BaseUnit):
     # ================================================================
     async def _docker_api_get(self, path: str, params: dict | None = None) -> list | dict:
         transport = httpx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://docker", timeout=10.0,
-        ) as client:
-            resp = await client.get(path, params=params)
-            resp.raise_for_status()
-            return resp.json()
+        prev = _httpx_logger.level
+        _httpx_logger.setLevel(logging.WARNING)
+        try:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://docker", timeout=10.0,
+            ) as client:
+                resp = await client.get(path, params=params)
+                resp.raise_for_status()
+                return resp.json()
+        finally:
+            _httpx_logger.setLevel(prev)
 
     async def _docker_api_get_raw(self, path: str, params: dict | None = None) -> bytes:
         transport = httpx.AsyncHTTPTransport(uds=_DOCKER_SOCKET)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://docker", timeout=10.0,
-        ) as client:
-            resp = await client.get(path, params=params)
-            resp.raise_for_status()
-            return resp.content
+        prev = _httpx_logger.level
+        _httpx_logger.setLevel(logging.WARNING)
+        try:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://docker", timeout=10.0,
+            ) as client:
+                resp = await client.get(path, params=params)
+                resp.raise_for_status()
+                return resp.content
+        finally:
+            _httpx_logger.setLevel(prev)
 
     # ================================================================
     # ログパーサー
