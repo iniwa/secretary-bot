@@ -1,6 +1,7 @@
 """BaseUnit — 全ユニットの基底クラス。discord.py の Cog を継承。"""
 
 import os
+import re
 
 from discord.ext import commands
 
@@ -10,6 +11,8 @@ from src.llm.unit_llm import UnitLLM
 from src.logger import get_logger
 
 log = get_logger(__name__)
+
+_MENTION_RE = re.compile(r"<@!?\d+>\s*")
 
 
 class BaseUnit(commands.Cog):
@@ -49,17 +52,29 @@ class BaseUnit(commands.Cog):
 
     # --- Discord通知ヘルパー ---
 
-    async def notify(self, message: str) -> None:
+    async def notify(self, message: str, *, _user_id: str = "") -> None:
         if self._admin_channel_id:
             channel = self.bot.get_channel(self._admin_channel_id)
             if channel:
-                await channel.send(message)
+                sent = await channel.send(message)
+                # 返信ルーティング用: メッセージID → ユニット名を記録
+                if self.UNIT_NAME:
+                    self.bot._notification_units[sent.id] = self.UNIT_NAME
+                # 通知を会話ログに保存（InnerMind等の文脈参照用）
+                log_content = _MENTION_RE.sub("", message).strip()
+                if log_content:
+                    await self.bot.database.log_conversation(
+                        "discord", "assistant", log_content,
+                        unit=self.UNIT_NAME or None,
+                        user_id=_user_id,
+                        channel_name=getattr(channel, "name", ""),
+                    )
 
     async def notify_user(self, message: str, user_id: str = "") -> None:
         """ユーザーメンション付きで管理チャンネルに通知する。"""
         if user_id and user_id != "webgui":
             message = f"<@{user_id}> {message}"
-        await self.notify(message)
+        await self.notify(message, _user_id=user_id)
 
     async def notify_error(self, message: str) -> None:
         await self.notify(f"[Error] {message}")

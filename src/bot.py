@@ -80,6 +80,8 @@ class SecretaryBot(commands.Bot):
         from src.status_collector import StatusCollector
         self.status_collector = StatusCollector(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
+        # 通知メッセージID → ユニット名マッピング（返信ルーティング用）
+        self._notification_units: dict[int, str] = {}
         # チャネル+ユーザーごとのメッセージ処理ロック（直列化）
         self._user_locks: dict[str, asyncio.Lock] = {}
 
@@ -138,8 +140,14 @@ class SecretaryBot(commands.Bot):
         channel_tag = "discord_dm" if is_dm else "discord"
         channel_name = "" if is_dm else getattr(message.channel, "name", "")
 
+        # ボット通知への返信を検出（返信ルーティング用）
+        reply_unit = None
+        if message.reference and message.reference.message_id:
+            reply_unit = self._notification_units.get(message.reference.message_id)
+
         # DMでなく、メンションなしのメッセージは会話ログのみ保存して終了
-        if not is_dm and self.user not in message.mentions:
+        # ただし、ボット通知への返信は処理を続行
+        if not is_dm and self.user not in message.mentions and not reply_unit:
             await self.database.log_conversation(channel_tag, "user", content, user_id=user_id, channel_name=channel_name)
             return
 
@@ -171,9 +179,16 @@ class SecretaryBot(commands.Bot):
 
             # Unit Router（typing表示中に処理）
             async with message.channel.typing():
-                result = await self.unit_router.route(content, channel=channel_tag, user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
-                unit_name = result.get("unit", "chat")
-                user_message = result.get("message", content)
+                # ボット通知への返信 → LLMルーティングをバイパス
+                if reply_unit:
+                    unit_name = reply_unit
+                    user_message = content
+                    log.info("Reply-based routing to: %s", unit_name)
+                    await ft.emit("UNIT_DECIDE", "done", {"unit": unit_name, "reply": True}, flow_id)
+                else:
+                    result = await self.unit_router.route(content, channel=channel_tag, user_id=user_id, flow_id=flow_id, conversation_context=conversation_context)
+                    unit_name = result.get("unit", "chat")
+                    user_message = result.get("message", content)
 
                 unit = self.unit_manager.get(unit_name)
                 if unit is None:
