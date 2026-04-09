@@ -14,6 +14,9 @@ import * as rss from './pages/rss.js';
 import * as monologue from './pages/monologue.js';
 import * as memory from './pages/memory.js';
 import * as innermind from './pages/innermind.js';
+import * as obs from './pages/obs.js';
+import * as inputRelay from './pages/input-relay.js';
+import * as stt from './pages/stt.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -30,9 +33,9 @@ const pages = {
   monologue:    { title: 'Monologue',        module: monologue },
   memory:       { title: 'Memory',           module: memory },
   innermind:    { title: 'InnerMind Settings', module: innermind },
-  obs:          { title: 'OBS',              module: null },
-  'input-relay':{ title: 'Input Relay',      module: null },
-  stt:          { title: 'STT',              module: null },
+  obs:          { title: 'OBS',              module: obs },
+  'input-relay':{ title: 'Input Relay',      module: inputRelay },
+  stt:          { title: 'STT',              module: stt },
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
   maintenance:  { title: 'Maintenance',      module: maintenance },

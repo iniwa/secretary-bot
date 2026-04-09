@@ -1214,7 +1214,19 @@ def create_web_app(bot) -> FastAPI:
         html_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
         try:
             with open(html_path, encoding="utf-8") as f:
-                return f.read()
+                html = f.read()
+            # Cache busting: append version query to JS/CSS references
+            import hashlib, glob as _glob
+            static_dir_path = os.path.join(os.path.dirname(__file__), "static")
+            h = hashlib.md5()
+            for p in sorted(_glob.glob(os.path.join(static_dir_path, "**", "*.js"), recursive=True)):
+                h.update(str(os.path.getmtime(p)).encode())
+            ver = h.hexdigest()[:8]
+            html = html.replace('src="/static/js/app.js"', f'src="/static/js/app.js?v={ver}"')
+            html = html.replace('href="/static/css/base.css"', f'href="/static/css/base.css?v={ver}"')
+            html = html.replace('href="/static/css/layout.css"', f'href="/static/css/layout.css?v={ver}"')
+            html = html.replace('href="/static/css/components.css"', f'href="/static/css/components.css?v={ver}"')
+            return html
         except FileNotFoundError:
             return "<h1>Secretary Bot WebGUI</h1><p>static/index.html not found</p>"
 
