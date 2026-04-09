@@ -5,6 +5,10 @@ import * as chat from './pages/chat.js';
 import * as settings from './pages/settings.js';
 import * as logs from './pages/logs.js';
 import * as maintenance from './pages/maintenance.js';
+import * as reminder from './pages/reminder.js';
+import * as todo from './pages/todo.js';
+import * as memo from './pages/memo.js';
+import * as timer from './pages/timer.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -12,10 +16,10 @@ import * as maintenance from './pages/maintenance.js';
 const pages = {
   dashboard:    { title: 'Dashboard',        module: dashboard },
   chat:         { title: 'Chat',             module: chat },
-  reminder:     { title: 'Reminder',         module: null },
-  todo:         { title: 'Todo',             module: null },
-  memo:         { title: 'Memo',             module: null },
-  timer:        { title: 'Timer',            module: null },
+  reminder:     { title: 'Reminder',         module: reminder },
+  todo:         { title: 'Todo',             module: todo },
+  memo:         { title: 'Memo',             module: memo },
+  timer:        { title: 'Timer',            module: timer },
   weather:      { title: 'Weather',          module: null },
   rss:          { title: 'RSS',              module: null },
   monologue:    { title: 'Monologue',        module: null },
