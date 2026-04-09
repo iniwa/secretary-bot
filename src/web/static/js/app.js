@@ -11,6 +11,9 @@ import * as memo from './pages/memo.js';
 import * as timer from './pages/timer.js';
 import * as weather from './pages/weather.js';
 import * as rss from './pages/rss.js';
+import * as monologue from './pages/monologue.js';
+import * as memory from './pages/memory.js';
+import * as innermind from './pages/innermind.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -24,9 +27,9 @@ const pages = {
   timer:        { title: 'Timer',            module: timer },
   weather:      { title: 'Weather',          module: weather },
   rss:          { title: 'RSS',              module: rss },
-  monologue:    { title: 'Monologue',        module: null },
-  memory:       { title: 'Memory',           module: null },
-  innermind:    { title: 'InnerMind Settings', module: null },
+  monologue:    { title: 'Monologue',        module: monologue },
+  memory:       { title: 'Memory',           module: memory },
+  innermind:    { title: 'InnerMind Settings', module: innermind },
   obs:          { title: 'OBS',              module: null },
   'input-relay':{ title: 'Input Relay',      module: null },
   stt:          { title: 'STT',              module: null },
