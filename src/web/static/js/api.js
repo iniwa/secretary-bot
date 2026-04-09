@@ -12,7 +12,8 @@ export async function api(path, opts = {}) {
     init.headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(url, init);
+  const fullUrl = url.startsWith('/') ? `${location.protocol}//${location.host}${url}` : url;
+  const res = await fetch(fullUrl, init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`${res.status}: ${text.slice(0, 200)}`);
