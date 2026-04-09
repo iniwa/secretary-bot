@@ -1,20 +1,20 @@
 """Docker コンテナログ監視ユニット。
 
-定期的に Docker コンテナのログをチェックし、エラーを検出したら Discord に通知する。
-除外パターンをチャット経由で管理可能。
+定期的に Docker コンテナのログをチェックし、エラーを DB に保存。
+WebGUI で閲覧・除外パターン管理が可能。
+Discord 通知は WebGUI のトグルで有効化できる。
 """
 
 import asyncio
 import hashlib
-import json
+import logging
 import re
 import struct
 import time
 
-import logging
-
 import httpx
 
+from src.database import jst_now
 from src.flow_tracker import get_flow_tracker
 from src.logger import get_logger
 from src.units.base_unit import BaseUnit
@@ -29,15 +29,15 @@ _ERROR_PATTERNS = [
     re.compile(r'"level"\s*:\s*"(ERROR|CRITICAL|FATAL)"', re.IGNORECASE),
 ]
 
-# Docker API のログで無視するノイズ（デフォルト除外）
+# デフォルト除外パターン
 _DEFAULT_IGNORES = [
-    "Migration stmt skipped",  # DB マイグレーション既適用時のログ
-    "chromadb.telemetry",       # ChromaDB テレメトリ送信失敗（無害）
-    "posthog",                  # ChromaDB 内部のPostHog関連エラー
-    "node_filesystem_device_error",  # node-exporter のファイルシステムメトリクス収集エラー
+    "Migration stmt skipped",
+    "chromadb.telemetry",
+    "posthog",
+    "node_filesystem_device_error",
 ]
 
-# Docker ログ行頭のタイムスタンプを除去する正規表現
+# Docker ログ行頭のタイムスタンプ除去
 _TIMESTAMP_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s*')
 
 _EXTRACT_PROMPT = """\
@@ -61,12 +61,13 @@ _EXTRACT_PROMPT = """\
 
 _DOCKER_SOCKET = "/var/run/docker.sock"
 _API_VERSION = "v1.43"
+_SETTING_NOTIFY_DISCORD = "docker_monitor.notify_discord"
 
 
 class DockerLogMonitorUnit(BaseUnit):
     UNIT_NAME = "docker_log_monitor"
     UNIT_DESCRIPTION = (
-        "Dockerコンテナログの監視。エラー検出時にDiscord通知。"
+        "Dockerコンテナログの監視。エラー検出・除外パターン管理。"
         "除外パターンの追加・削除・一覧表示も可能。"
     )
 
@@ -76,14 +77,11 @@ class DockerLogMonitorUnit(BaseUnit):
         self._enabled = cfg.get("enabled", True)
         self._interval = cfg.get("check_interval_seconds", 60)
         self._cooldown = cfg.get("cooldown_minutes", 30) * 60
-        self._containers_filter = cfg.get("containers", [])  # 空=全コンテナ
+        self._containers_filter = cfg.get("containers", [])
         self._max_lines = cfg.get("max_lines_per_check", 200)
 
-        # 最後にチェックした時刻（Unix timestamp）
         self._last_check: float = time.time()
-        # 通知済みエラーのクールダウンキャッシュ {hash: timestamp}
-        self._notified_cache: dict[str, float] = {}
-        # 監視ループタスク
+        self._seen_cache: dict[str, float] = {}  # dedup hash -> timestamp
         self._task: asyncio.Task | None = None
 
     async def cog_load(self) -> None:
@@ -192,22 +190,28 @@ class DockerLogMonitorUnit(BaseUnit):
     async def _show_status(self) -> str:
         if not self._enabled:
             return "Docker ログ監視は無効です。"
+        notify = await self.bot.database.get_setting(_SETTING_NOTIFY_DISCORD)
         exclusion_count = await self.bot.database.fetchone(
             "SELECT COUNT(*) as cnt FROM docker_log_exclusions"
         )
-        cnt = exclusion_count["cnt"] if exclusion_count else 0
+        error_count = await self.bot.database.fetchone(
+            "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = 0"
+        )
+        cnt_ex = exclusion_count["cnt"] if exclusion_count else 0
+        cnt_err = error_count["cnt"] if error_count else 0
         return (
             f"Docker ログ監視: **稼働中**\n"
             f"チェック間隔: {self._interval}秒\n"
-            f"クールダウン: {self._cooldown // 60}分\n"
-            f"除外パターン数: {cnt}"
+            f"Discord通知: {'ON' if notify == '1' else 'OFF'}\n"
+            f"未対応エラー: {cnt_err}件\n"
+            f"除外パターン数: {cnt_ex}"
         )
 
     # ================================================================
     # 定期監視ループ
     # ================================================================
     async def _monitor_loop(self) -> None:
-        await asyncio.sleep(30)  # 起動直後の安定待ち
+        await asyncio.sleep(30)
         while True:
             try:
                 await self._check_logs()
@@ -221,7 +225,6 @@ class DockerLogMonitorUnit(BaseUnit):
         since = self._last_check
         self._last_check = time.time()
 
-        # 除外パターン取得
         rows = await self.bot.database.fetchall(
             "SELECT pattern FROM docker_log_exclusions"
         )
@@ -233,12 +236,10 @@ class DockerLogMonitorUnit(BaseUnit):
             log.debug("Docker API unavailable: %s", e)
             return
 
-        errors: list[dict] = []
+        new_errors: list[dict] = []
 
         for c in containers:
             name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
-
-            # フィルターが設定されていて、対象外なら skip
             if self._containers_filter and name not in self._containers_filter:
                 continue
 
@@ -263,12 +264,42 @@ class DockerLogMonitorUnit(BaseUnit):
                     continue
                 if self._is_excluded(line, exclusions):
                     continue
-                if not self._should_notify(name, line):
+                if not self._is_new_error(name, line):
                     continue
-                errors.append({"container": name, "message": line})
+                new_errors.append({"container": name, "message": line})
 
-        if errors:
-            await self._send_notification(errors)
+        if new_errors:
+            await self._save_errors(new_errors)
+
+            # Discord 通知トグルチェック
+            notify = await self.bot.database.get_setting(_SETTING_NOTIFY_DISCORD)
+            if notify == "1":
+                await self._send_discord_notification(new_errors)
+
+    # ================================================================
+    # エラーの DB 保存
+    # ================================================================
+    async def _save_errors(self, errors: list[dict]) -> None:
+        now = jst_now()
+        for e in errors:
+            normalized = self._normalize_message(e["message"])
+            # 同一コンテナ・同一メッセージの既存レコードを更新（カウント増加）
+            existing = await self.bot.database.fetchone(
+                "SELECT id, count FROM docker_error_log "
+                "WHERE container_name = ? AND message = ? AND dismissed = 0",
+                (e["container"], normalized),
+            )
+            if existing:
+                await self.bot.database.execute(
+                    "UPDATE docker_error_log SET last_seen = ?, count = count + 1 WHERE id = ?",
+                    (now, existing["id"]),
+                )
+            else:
+                await self.bot.database.execute(
+                    "INSERT INTO docker_error_log (container_name, message, first_seen, last_seen) "
+                    "VALUES (?, ?, ?, ?)",
+                    (e["container"], normalized, now, now),
+                )
 
     # ================================================================
     # Docker Engine API
@@ -306,11 +337,6 @@ class DockerLogMonitorUnit(BaseUnit):
     # ================================================================
     @staticmethod
     def _parse_docker_logs(raw: bytes) -> list[str]:
-        """Docker の多重化ログストリームをパースして行リストを返す。
-
-        TTY なしの場合: 8バイトヘッダー + ペイロードのフレーム構造
-        TTY ありの場合: プレーンテキスト
-        """
         lines: list[str] = []
         pos = 0
         valid_frames = 0
@@ -318,7 +344,7 @@ class DockerLogMonitorUnit(BaseUnit):
         while pos + 8 <= len(raw):
             stream_type = raw[pos]
             if stream_type not in (0, 1, 2):
-                break  # フレームヘッダーでない → プレーンテキスト
+                break
             size = struct.unpack(">I", raw[pos + 4 : pos + 8])[0]
             pos += 8
             if size == 0 or pos + size > len(raw):
@@ -332,7 +358,6 @@ class DockerLogMonitorUnit(BaseUnit):
             pos += size
             valid_frames += 1
 
-        # フレーム解析が失敗した場合はプレーンテキストとしてフォールバック
         if not valid_frames and raw:
             text = raw.decode("utf-8", errors="replace")
             lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -340,8 +365,15 @@ class DockerLogMonitorUnit(BaseUnit):
         return lines
 
     # ================================================================
-    # エラー判定
+    # エラー判定・正規化
     # ================================================================
+    @staticmethod
+    def _normalize_message(message: str) -> str:
+        """タイムスタンプ等を除去して正規化。DB 保存・重複判定に使用。"""
+        normalized = _TIMESTAMP_RE.sub("", message)
+        normalized = re.sub(r'"time"\s*:\s*"[^"]*",?\s*', "", normalized)
+        return normalized.strip()
+
     @staticmethod
     def _is_error_line(line: str) -> bool:
         return any(p.search(line) for p in _ERROR_PATTERNS)
@@ -351,30 +383,24 @@ class DockerLogMonitorUnit(BaseUnit):
         lower = line.lower()
         return any(pat.lower() in lower for pat in exclusions)
 
-    def _should_notify(self, container: str, message: str) -> bool:
-        """同一エラーのクールダウン判定。"""
-        # タイムスタンプと JSON の "time" フィールドを除去して正規化
-        normalized = _TIMESTAMP_RE.sub("", message)
-        normalized = re.sub(r'"time"\s*:\s*"[^"]*",?\s*', "", normalized)
+    def _is_new_error(self, container: str, message: str) -> bool:
+        """クールダウン内の同一エラーを除外。"""
+        normalized = self._normalize_message(message)
         key = hashlib.md5(f"{container}:{normalized[:200]}".encode()).hexdigest()
         now = time.time()
-        last = self._notified_cache.get(key, 0)
+        last = self._seen_cache.get(key, 0)
         if now - last < self._cooldown:
             return False
-        self._notified_cache[key] = now
-        # キャッシュ肥大化防止: 古いエントリを削除
-        if len(self._notified_cache) > 1000:
+        self._seen_cache[key] = now
+        if len(self._seen_cache) > 1000:
             cutoff = now - self._cooldown
-            self._notified_cache = {
-                k: v for k, v in self._notified_cache.items() if v > cutoff
-            }
+            self._seen_cache = {k: v for k, v in self._seen_cache.items() if v > cutoff}
         return True
 
     # ================================================================
-    # 通知
+    # Discord 通知（トグルで制御）
     # ================================================================
-    async def _send_notification(self, errors: list[dict]) -> None:
-        # コンテナごとにグルーピング
+    async def _send_discord_notification(self, errors: list[dict]) -> None:
         by_container: dict[str, list[str]] = {}
         for e in errors:
             by_container.setdefault(e["container"], []).append(e["message"])
@@ -383,14 +409,14 @@ class DockerLogMonitorUnit(BaseUnit):
         for cname, msgs in by_container.items():
             parts.append(f"\n**{cname}** ({len(msgs)}件):")
             for msg in msgs[:5]:
-                # メッセージを truncate して表示
-                short = msg[:300] + ("…" if len(msg) > 300 else "")
+                short = self._normalize_message(msg)[:300]
+                if len(msg) > 300:
+                    short += "…"
                 parts.append(f"```\n{short}\n```")
             if len(msgs) > 5:
                 parts.append(f"  ...他 {len(msgs) - 5} 件")
 
         text = "\n".join(parts)
-        # Discord メッセージ上限対策
         if len(text) > 1900:
             text = text[:1900] + "\n…(truncated)"
         await self.notify(text)

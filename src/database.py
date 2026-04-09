@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 16
+_SCHEMA_VERSION = 17
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS docker_log_exclusions (
     reason     TEXT DEFAULT '',
     added_by   TEXT DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS docker_error_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_name TEXT NOT NULL,
+    message        TEXT NOT NULL,
+    first_seen     DATETIME NOT NULL,
+    last_seen      DATETIME NOT NULL,
+    count          INTEGER NOT NULL DEFAULT 1,
+    dismissed      BOOLEAN NOT NULL DEFAULT 0
 );
 """
 
@@ -296,6 +306,17 @@ class Database:
                     reason     TEXT DEFAULT '',
                     added_by   TEXT DEFAULT '',
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+            ],
+            17: [
+                """CREATE TABLE IF NOT EXISTS docker_error_log (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    container_name TEXT NOT NULL,
+                    message        TEXT NOT NULL,
+                    first_seen     DATETIME NOT NULL,
+                    last_seen      DATETIME NOT NULL,
+                    count          INTEGER NOT NULL DEFAULT 1,
+                    dismissed      BOOLEAN NOT NULL DEFAULT 0
                 )""",
             ],
         }

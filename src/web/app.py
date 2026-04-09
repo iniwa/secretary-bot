@@ -1273,6 +1273,86 @@ def create_web_app(bot) -> FastAPI:
         result = await fetcher.fetch_all_feeds()
         return result
 
+    # --- Docker ログ監視 ---
+
+    @app.get("/api/docker-monitor/errors", dependencies=[Depends(_verify)])
+    async def get_docker_errors(
+        dismissed: int = 0, limit: int = 100, offset: int = 0,
+    ):
+        rows = await bot.database.fetchall(
+            "SELECT * FROM docker_error_log WHERE dismissed = ? "
+            "ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+            (dismissed, limit, offset),
+        )
+        total_row = await bot.database.fetchone(
+            "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = ?",
+            (dismissed,),
+        )
+        return {"items": rows, "total": total_row["cnt"] if total_row else 0}
+
+    @app.post("/api/docker-monitor/errors/{error_id}/dismiss", dependencies=[Depends(_verify)])
+    async def dismiss_docker_error(error_id: int):
+        await bot.database.execute(
+            "UPDATE docker_error_log SET dismissed = 1 WHERE id = ?", (error_id,)
+        )
+        return {"ok": True}
+
+    @app.post("/api/docker-monitor/errors/dismiss-all", dependencies=[Depends(_verify)])
+    async def dismiss_all_docker_errors():
+        await bot.database.execute("UPDATE docker_error_log SET dismissed = 1 WHERE dismissed = 0")
+        return {"ok": True}
+
+    @app.delete("/api/docker-monitor/errors/{error_id}", dependencies=[Depends(_verify)])
+    async def delete_docker_error(error_id: int):
+        await bot.database.execute("DELETE FROM docker_error_log WHERE id = ?", (error_id,))
+        return {"ok": True}
+
+    @app.get("/api/docker-monitor/exclusions", dependencies=[Depends(_verify)])
+    async def get_docker_exclusions():
+        rows = await bot.database.fetchall(
+            "SELECT * FROM docker_log_exclusions ORDER BY created_at DESC"
+        )
+        return {"items": rows}
+
+    @app.post("/api/docker-monitor/exclusions", dependencies=[Depends(_verify)])
+    async def add_docker_exclusion(request: Request):
+        data = await request.json()
+        pattern = data.get("pattern", "").strip()
+        reason = data.get("reason", "").strip()
+        if not pattern:
+            raise HTTPException(400, "pattern is required")
+        try:
+            await bot.database.execute(
+                "INSERT INTO docker_log_exclusions (pattern, reason, added_by, created_at) "
+                "VALUES (?, ?, 'webgui', datetime('now'))",
+                (pattern, reason),
+            )
+        except Exception as e:
+            if "UNIQUE" in str(e):
+                raise HTTPException(409, "pattern already exists")
+            raise
+        return {"ok": True}
+
+    @app.delete("/api/docker-monitor/exclusions/{exc_id}", dependencies=[Depends(_verify)])
+    async def delete_docker_exclusion(exc_id: int):
+        await bot.database.execute("DELETE FROM docker_log_exclusions WHERE id = ?", (exc_id,))
+        return {"ok": True}
+
+    @app.get("/api/docker-monitor/settings", dependencies=[Depends(_verify)])
+    async def get_docker_monitor_settings():
+        notify = await bot.database.get_setting("docker_monitor.notify_discord")
+        return {"notify_discord": notify == "1"}
+
+    @app.put("/api/docker-monitor/settings", dependencies=[Depends(_verify)])
+    async def update_docker_monitor_settings(request: Request):
+        data = await request.json()
+        if "notify_discord" in data:
+            await bot.database.set_setting(
+                "docker_monitor.notify_discord",
+                "1" if data["notify_discord"] else "0",
+            )
+        return {"ok": True}
+
     # --- 静的ファイル & フロントエンド ---
 
     # Cloudflare / ブラウザの ES モジュールキャッシュ対策
