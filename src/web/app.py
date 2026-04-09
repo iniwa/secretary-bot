@@ -580,8 +580,16 @@ def create_web_app(bot) -> FastAPI:
     async def get_memory(collection: str, limit: int = 200, offset: int = 0):
         if collection not in _MEMORY_COLLECTIONS:
             raise HTTPException(400, f"unknown collection: {collection}")
-        items = bot.chroma.get_all(collection, limit=limit, offset=offset)
-        total = bot.chroma.count(collection)
+        # 全件取得して新しい順にソート（ChromaDBはソート非対応のため）
+        all_items = bot.chroma.get_all(collection, limit=10000, offset=0)
+        total = len(all_items)
+        # created_at があればそれでソート、なければ逆順（新しいもの優先）
+        has_dates = any((it.get("metadata") or {}).get("created_at") for it in all_items)
+        if has_dates:
+            all_items.sort(key=lambda x: (x.get("metadata") or {}).get("created_at", ""), reverse=True)
+        else:
+            all_items.reverse()
+        items = all_items[offset:offset + limit]
         # Resolve user_id → display name for people_memory
         if collection == "people_memory":
             for item in items:
