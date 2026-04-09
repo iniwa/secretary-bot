@@ -9,6 +9,8 @@ import * as reminder from './pages/reminder.js';
 import * as todo from './pages/todo.js';
 import * as memo from './pages/memo.js';
 import * as timer from './pages/timer.js';
+import * as weather from './pages/weather.js';
+import * as rss from './pages/rss.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -20,8 +22,8 @@ const pages = {
   todo:         { title: 'Todo',             module: todo },
   memo:         { title: 'Memo',             module: memo },
   timer:        { title: 'Timer',            module: timer },
-  weather:      { title: 'Weather',          module: null },
-  rss:          { title: 'RSS',              module: null },
+  weather:      { title: 'Weather',          module: weather },
+  rss:          { title: 'RSS',              module: rss },
   monologue:    { title: 'Monologue',        module: null },
   memory:       { title: 'Memory',           module: null },
   innermind:    { title: 'InnerMind Settings', module: null },
