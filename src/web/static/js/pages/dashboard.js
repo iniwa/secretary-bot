@@ -191,10 +191,24 @@ export async function mount() {
     // Agents
     const agents = status.agents || [];
     const alive = agents.filter(a => a.alive).length;
+    const restarting = agents.filter(a => a.status === 'restarting').length;
     const aDot = $('d-agent-dot');
-    aDot.className = 'status-dot ' + (alive === agents.length && agents.length > 0 ? 'online' : alive > 0 ? 'warning' : 'error');
+    let aDotClass;
+    if (alive === agents.length && agents.length > 0) {
+      aDotClass = 'online';
+    } else if (restarting > 0) {
+      aDotClass = 'warning pulse';
+    } else if (alive > 0) {
+      aDotClass = 'warning';
+    } else {
+      aDotClass = 'error';
+    }
+    aDot.className = 'status-dot ' + aDotClass;
     $('d-agent-count').textContent = `${alive} / ${agents.length}`;
-    $('d-agent-detail').textContent = agents.map(a => `${a.name}: ${a.alive ? 'ON' : 'OFF'}`).join(', ') || 'No agents';
+    $('d-agent-detail').textContent = agents.map(a => {
+      if (a.status === 'restarting') return `${a.name}: RESTARTING`;
+      return `${a.name}: ${a.alive ? 'ON' : 'OFF'}`;
+    }).join(', ') || 'No agents';
 
     // Memory stats for quick stats
     if (status.memory) {

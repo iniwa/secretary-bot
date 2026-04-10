@@ -122,7 +122,10 @@ export function render() {
   <div class="card">
     <div class="card-header">
       <h3>Code Update</h3>
-      <span class="mono" id="m-current-version" style="color:var(--text-muted);font-size:0.8125rem">---</span>
+      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        <span class="mono" id="m-current-version" style="color:var(--text-muted);font-size:0.8125rem">---</span>
+        <span id="m-version-status" style="font-size:0.75rem"></span>
+      </div>
     </div>
     <div class="card-body">
       <div class="card-desc">Pull latest code from git, update submodules, and restart agents.</div>
@@ -310,17 +313,30 @@ async function loadAgents() {
       return;
     }
     $('m-agents-list').innerHTML = agents.map(a => {
-      const dotClass = a.alive ? 'online' : 'error';
-      const statusLabel = a.alive ? 'Online' : 'Offline';
+      const isRestarting = a.status === 'restarting';
+      let dotClass, statusLabel;
+      if (isRestarting) {
+        dotClass = 'warning pulse';
+        statusLabel = `Restarting (${a.restart_elapsed}s)`;
+      } else if (a.alive) {
+        dotClass = 'online';
+        statusLabel = 'Online';
+      } else {
+        dotClass = 'error';
+        statusLabel = 'Offline';
+      }
       const currentMode = a.mode || 'auto';
+      const agentIdEsc = esc(String(a.id));
+      const agentNameEsc = esc(a.name || a.id);
       return `
         <div class="agent-row">
-          <span class="agent-name">${esc(a.name || a.id)}</span>
+          <span class="agent-name">${agentNameEsc}</span>
           <span class="agent-status">
             <span class="status-dot ${dotClass}"></span>
             ${statusLabel}
           </span>
-          <select class="form-input agent-mode-select" data-agent-id="${esc(String(a.id))}" style="width:auto;max-width:140px">
+          <button class="btn btn-sm agent-restart-btn" data-action="restart-one" data-agent-id="${agentIdEsc}" data-agent-name="${agentNameEsc}">Restart</button>
+          <select class="form-input agent-mode-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:140px">
             <option value="auto"${currentMode === 'auto' ? ' selected' : ''}>auto</option>
             <option value="allow"${currentMode === 'allow' ? ' selected' : ''}>allow</option>
             <option value="deny"${currentMode === 'deny' ? ' selected' : ''}>deny</option>
@@ -342,6 +358,24 @@ async function loadAgents() {
         }
       });
     });
+
+    // Attach per-agent restart listeners
+    document.querySelectorAll('.agent-restart-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const target = e.currentTarget;
+        const agentId = target.dataset.agentId;
+        const name = target.dataset.agentName || agentId;
+        if (!window.confirm(`Restart agent "${name}"?`)) return;
+        try {
+          await api(`/api/agents/${encodeURIComponent(agentId)}/restart`, { method: 'POST' });
+          toast('Agent restart requested', 'success');
+        } catch (err) {
+          console.error('Restart agent:', err);
+          toast('Restart failed: ' + err.message, 'error');
+        }
+        setTimeout(() => loadAgents(), 8000);
+      });
+    });
   } catch (err) {
     console.error('Load agents:', err);
     $('m-agents-list').innerHTML = '<div style="color:var(--error);font-size:0.8125rem">Failed to load agents</div>';
@@ -360,11 +394,45 @@ async function loadVersion() {
   }
 }
 
+async function verifyVersions() {
+  const statusEl = $('m-version-status');
+  if (!statusEl) return;
+  try {
+    const data = await api('/api/agents/versions');
+    const pi = data?.pi || '?';
+    const agents = data?.agents || [];
+    const allMatch = !!data?.all_match;
+    const anyDead = !!data?.any_dead;
+
+    if (allMatch && !anyDead) {
+      statusEl.innerHTML = '<span style="color:var(--success)">&#10003; in sync</span>';
+      return;
+    }
+
+    if (!allMatch) {
+      const parts = agents.map(a => {
+        const name = esc(a.name || a.id || '?');
+        const ver = esc(a.version || '?');
+        return `${name}:${ver}`;
+      }).join(', ');
+      statusEl.innerHTML = `<span style="color:var(--warning)">&#9888; Mismatch: Pi=${esc(pi)}, Agents=[${parts}]</span>`;
+      return;
+    }
+
+    // allMatch && anyDead
+    const deadCount = agents.filter(a => !a.alive).length;
+    statusEl.innerHTML = `<span style="color:var(--warning)">&#9888; ${deadCount} agent(s) offline</span>`;
+  } catch (err) {
+    console.error('Verify versions:', err);
+    statusEl.innerHTML = '';
+  }
+}
+
 // ---- mount ----
 
 export async function mount() {
   // Load data in parallel
-  await Promise.all([loadUnits(), loadAgents(), loadVersion()]);
+  await Promise.all([loadUnits(), loadAgents(), loadVersion(), verifyVersions()]);
 
   // Code Update button
   $('m-update-code').addEventListener('click', async () => {

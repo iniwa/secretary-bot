@@ -43,6 +43,21 @@ def create_web_app(bot) -> FastAPI:
     _webgui_lock = asyncio.Lock()
     # update-code / input-relay update の2重実行防止用（chatとは独立）
     _update_lock = asyncio.Lock()
+    # Agent 再起動タイムスタンプ (agent_id → unix time) - Restarting 状態判定に使用
+    _agent_restart_ts: dict[str, float] = {}
+    _RESTART_WINDOW_SEC = 60  # この時間内に alive=False の Agent は "restarting" とみなす
+
+    def _mark_agent_restarting(agent_id: str):
+        import time
+        _agent_restart_ts[str(agent_id)] = time.time()
+
+    def _mark_agents_restarting_bulk(results: list[dict]):
+        """restart-self を呼んだ結果リストから成功分だけマークする。"""
+        for r in results or []:
+            if r.get("success"):
+                aid = r.get("id")
+                if aid:
+                    _mark_agent_restarting(aid)
 
     @app.post("/api/chat", )
     async def chat(request: Request):
@@ -121,7 +136,25 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/status", )
     async def get_status():
-        return await bot.status_collector.collect()
+        import time
+        status = await bot.status_collector.collect()
+        # Agent 再起動直後の一時 down を "restarting" 状態として扱う
+        now = time.time()
+        stale_ids = []
+        for agent in status.get("agents", []) or []:
+            aid = str(agent.get("id") or agent.get("host") or "")
+            ts = _agent_restart_ts.get(aid)
+            if ts is None:
+                continue
+            elapsed = now - ts
+            if agent.get("alive") or elapsed >= _RESTART_WINDOW_SEC:
+                stale_ids.append(aid)
+            else:
+                agent["status"] = "restarting"
+                agent["restart_elapsed"] = int(elapsed)
+        for aid in stale_ids:
+            _agent_restart_ts.pop(aid, None)
+        return status
 
     @app.get("/api/version", )
     async def get_version():
@@ -251,6 +284,49 @@ def create_web_app(bot) -> FastAPI:
         """全Windows Agentに /update を並列で呼んでコード更新させる。"""
         return await _post_all_agents(bot, "/update", timeout=8)
 
+    async def _get_all_agent_versions(bot) -> list[dict]:
+        """全 Windows Agent の /version を並列取得してハッシュを返す。"""
+        agents = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
+        if not agents:
+            return []
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
+
+        async def _get_one(agent: dict) -> dict:
+            agent_id = agent.get("id", agent["host"])
+            url = f"http://{agent['host']}:{agent['port']}/version"
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    resp = await client.get(url, headers=headers)
+                    data = resp.json() if resp.content else {}
+                full = (data.get("version") or "").strip()
+                return {
+                    "id": agent_id,
+                    "name": agent.get("name"),
+                    "alive": True,
+                    "version": full[:7] if full else "",
+                    "version_full": full,
+                }
+            except Exception as e:
+                return {
+                    "id": agent_id,
+                    "name": agent.get("name"),
+                    "alive": False,
+                    "version": "",
+                    "error": str(e),
+                }
+
+        return await asyncio.gather(*[_get_one(a) for a in agents._agents])
+
+    def _find_agent_by_id(agent_id: str) -> dict | None:
+        pool = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
+        if not pool:
+            return None
+        for a in pool._agents:
+            if str(a.get("id", a.get("host"))) == str(agent_id):
+                return a
+        return None
+
     @app.post("/api/update-code", )
     async def update_code(background_tasks: BackgroundTasks):
         # 2重実行防止（ダブルクリック・中継再送対策）
@@ -333,6 +409,7 @@ def create_web_app(bot) -> FastAPI:
                 agent_update_results = await _update_all_agents(bot)
                 # Agent プロセスを自己再起動させてコードを反映（start_agent.bat のループが再起動担当）
                 agent_restart_results = await _post_all_agents(bot, "/restart-self", timeout=5)
+                _mark_agents_restarting_bulk(agent_restart_results)
 
                 # レスポンス送信後に再起動（遅延付き）
                 background_tasks.add_task(_delayed_restart, 2)
@@ -365,12 +442,67 @@ def create_web_app(bot) -> FastAPI:
             }
         async with _update_lock:
             results = await _post_all_agents(bot, "/restart-self", timeout=5)
+            _mark_agents_restarting_bulk(results)
             ok_count = sum(1 for r in results if r.get("success"))
             return {
                 "success": True,
                 "message": f"{ok_count} / {len(results)} 件の Agent に再起動を要求しました",
                 "agents": results,
             }
+
+    @app.post("/api/agents/{agent_id}/restart", )
+    async def restart_agent_one(agent_id: str):
+        """個別 Agent を再起動する。"""
+        if _update_lock.locked():
+            return {"success": False, "message": "別の更新処理が実行中です"}
+        async with _update_lock:
+            agent = _find_agent_by_id(agent_id)
+            if not agent:
+                raise HTTPException(404, f"Agent '{agent_id}' not found")
+            token = os.environ.get("AGENT_SECRET_TOKEN", "")
+            headers = {"X-Agent-Token": token} if token else {}
+            url = f"http://{agent['host']}:{agent['port']}/restart-self"
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    resp = await client.post(url, headers=headers)
+                    data = resp.json() if resp.content else {}
+                _mark_agent_restarting(agent_id)
+                log.info("Agent %s restart triggered (single)", agent_id)
+                return {"success": True, "agent_id": agent_id, **data}
+            except Exception as e:
+                log.warning("Agent %s restart failed: %s", agent_id, e)
+                return {"success": False, "agent_id": agent_id, "error": str(e)}
+
+    @app.get("/api/agents/versions", )
+    async def get_agents_versions():
+        """Pi と全 Windows Agent のハッシュを取得し、mismatch を検出する。"""
+        from src.bot import BASE_DIR
+        git_dir = os.environ.get("GIT_REPO_DIR") or (
+            os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+        )
+        try:
+            pi_full = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=git_dir,
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except Exception:
+            pi_full = ""
+        pi_short = pi_full[:7] if pi_full else "unknown"
+
+        agents = await _get_all_agent_versions(bot)
+
+        # 生きている agent が全員 Pi と同じ hash なら OK
+        live_agents = [a for a in agents if a.get("alive")]
+        all_match = bool(live_agents) and all(a.get("version") == pi_short for a in live_agents)
+        any_dead = any(not a.get("alive") for a in agents)
+
+        return {
+            "pi": pi_short,
+            "pi_full": pi_full,
+            "agents": agents,
+            "all_match": all_match,
+            "any_dead": any_dead,
+        }
 
     # --- Units データ閲覧 API ---
 
