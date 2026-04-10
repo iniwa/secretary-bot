@@ -6,10 +6,13 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
+:: Ollama を全インターフェースでリスンさせる（Pi等の外部からアクセス可能にする）
+set OLLAMA_HOST=0.0.0.0
+
 echo Checking Ollama...
 tasklist /FI "IMAGENAME eq ollama.exe" 2>NUL | find /I "ollama.exe" >NUL
 if %ERRORLEVEL% NEQ 0 (
-    echo Starting Ollama...
+    echo Starting Ollama (OLLAMA_HOST=%OLLAMA_HOST%)...
     start "" "C:\Users\iniwa\AppData\Local\Programs\Ollama\ollama.exe" serve
     timeout /t 5 /nobreak >NUL
     echo Ollama started.
