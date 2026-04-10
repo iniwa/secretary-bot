@@ -22,6 +22,20 @@
 
 ---
 
+## Ollama マルチインスタンス対応
+
+### 解決済み
+- [x] OllamaClient を複数インスタンス対応に改修（least-connections 分配、フェイルオーバー）
+- [x] `router.py` が `windows_agents` 設定から Ollama URL を自動構築
+- [x] 設計ドキュメント作成（`docs/design/parallel_llm.md`）
+- [x] `start_agent.bat` に `OLLAMA_HOST=0.0.0.0` を追加
+
+### 残タスク
+- [ ] MainPC の Ollama 動作確認（物理アクセスが必要）
+- [ ] Phase 2: アプリケーション層の並列化（`asyncio.gather` による ContextSource 収集の並列化）
+
+---
+
 ## その他
 
 - [ ] `docs/design/inner_mind_improvements.md` の「5. 未実装：追加 ContextSource 候補」も参照
