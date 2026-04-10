@@ -223,6 +223,102 @@ class AgentPool:
 
         return True, None
 
+    async def get_checks(self, agent: dict) -> list[dict]:
+        """エージェントの全委託条件を個別に評価し、結果リストを返す。"""
+        aid = agent["id"]
+        checks = []
+
+        # 1. オンライン
+        alive = await self._is_alive(agent)
+        checks.append({"name": "オンライン", "ok": alive, "detail": ""})
+        if not alive:
+            return checks  # オフラインなら以降のチェック不要
+
+        # 2. 一時停止
+        paused = self.is_paused(aid)
+        remain = self.get_pause_remaining(aid)
+        detail = f"残り{remain // 60}分" if remain else ""
+        checks.append({"name": "一時停止", "ok": not paused, "detail": detail})
+
+        # 3. モード
+        mode = self.get_mode(aid)
+        checks.append({"name": "委託モード", "ok": mode != "deny", "detail": mode})
+
+        # 4-6. メトリクス（CPU/メモリ/GPU）
+        instance = agent.get("metrics_instance", "")
+        if self._metrics_url and instance:
+            thresholds = self._delegation_config.get("thresholds", {})
+            http = self._get_http()
+
+            # CPU
+            cpu_limit = thresholds.get("cpu_percent", 80)
+            try:
+                cpu_query = f'100 - (avg(rate(windows_cpu_time_total{{instance="{instance}",mode="idle"}}[5m])) * 100)'
+                resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": cpu_query})
+                cpu_val = float(resp.json()["data"]["result"][0]["value"][1])
+                checks.append({"name": "CPU使用率", "ok": cpu_val <= cpu_limit, "detail": f"{cpu_val:.1f}% (上限{cpu_limit}%)"})
+            except Exception:
+                checks.append({"name": "CPU使用率", "ok": True, "detail": "取得失敗"})
+
+            # メモリ
+            mem_limit = thresholds.get("memory_percent", 85)
+            try:
+                mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
+                resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": mem_query})
+                mem_val = float(resp.json()["data"]["result"][0]["value"][1])
+                checks.append({"name": "メモリ使用率", "ok": mem_val <= mem_limit, "detail": f"{mem_val:.1f}% (上限{mem_limit}%)"})
+            except Exception:
+                checks.append({"name": "メモリ使用率", "ok": True, "detail": "取得失敗"})
+
+            # GPU
+            gpu_limit = thresholds.get("gpu_percent", 80)
+            if gpu_limit > 0:
+                try:
+                    gpu_query = f'nvidia_smi_utilization_gpu_ratio{{instance="{instance}"}} * 100'
+                    resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": gpu_query})
+                    results = resp.json().get("data", {}).get("result", [])
+                    if results:
+                        gpu_val = float(results[0]["value"][1])
+                        checks.append({"name": "GPU使用率", "ok": gpu_val <= gpu_limit, "detail": f"{gpu_val:.1f}% (上限{gpu_limit}%)"})
+                    else:
+                        checks.append({"name": "GPU使用率", "ok": True, "detail": "exporter未導入"})
+                except Exception:
+                    checks.append({"name": "GPU使用率", "ok": True, "detail": "取得失敗"})
+        else:
+            checks.append({"name": "CPU使用率", "ok": True, "detail": "メトリクス未設定"})
+            checks.append({"name": "メモリ使用率", "ok": True, "detail": "メトリクス未設定"})
+            checks.append({"name": "GPU使用率", "ok": True, "detail": "メトリクス未設定"})
+
+        # 7-8. アクティビティ
+        if self._activity_detector:
+            try:
+                status = await self._activity_detector.get_status()
+                role = agent.get("role", "")
+                rules = self._activity_detector._block_rules
+
+                if role == "main":
+                    gaming = status.get("gaming", {})
+                    game_active = gaming.get("active", False) and rules.get("gaming_on_main", False)
+                    detail = gaming.get("game", "") if game_active else ""
+                    checks.append({"name": "ゲーム検出", "ok": not game_active, "detail": detail})
+                elif role == "sub":
+                    obs_stream = status.get("obs_streaming", False) and rules.get("obs_streaming", True)
+                    obs_rec = status.get("obs_recording", False) and rules.get("obs_recording", True)
+                    obs_replay = status.get("obs_replay_buffer", False) and rules.get("obs_replay_buffer", False)
+                    obs_ng = obs_stream or obs_rec or obs_replay
+                    obs_detail = ""
+                    if obs_stream: obs_detail = "配信中"
+                    elif obs_rec: obs_detail = "録画中"
+                    elif obs_replay: obs_detail = "リプレイバッファ"
+                    checks.append({"name": "OBS", "ok": not obs_ng, "detail": obs_detail})
+
+                vc = status.get("discord_vc", False) and rules.get("discord_vc", False)
+                checks.append({"name": "Discord VC", "ok": not vc, "detail": ""})
+            except Exception:
+                checks.append({"name": "アクティビティ", "ok": True, "detail": "取得失敗"})
+
+        return checks
+
     async def check_version(self, agent: dict) -> bool:
         """バージョンチェック。不一致時は /update を呼ぶ。"""
         import subprocess

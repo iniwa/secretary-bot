@@ -117,6 +117,27 @@ export function render() {
     font-size: 0.75rem;
     color: var(--warning);
   }
+  .agent-checks {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 0.25rem 1rem;
+    margin-top: 0.4rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-raised);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+  }
+  .check-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .check-icon { font-size: 0.75rem; flex-shrink: 0; }
+  .check-icon.ok { color: var(--success); }
+  .check-icon.ng { color: var(--error); }
+  .check-icon.na { color: var(--text-muted); }
+  .check-name { color: var(--text-secondary); }
+  .check-detail { color: var(--text-muted); font-size: 0.75rem; }
   .btn-row {
     display: flex;
     gap: 0.75rem;
@@ -367,12 +388,6 @@ async function loadAgents() {
       const agentIdEsc = esc(String(a.id));
       const agentNameEsc = esc(a.name || a.id);
 
-      // ブロック理由バッジ
-      const reasons = a.block_reasons || [];
-      const reasonsHtml = reasons.length > 0
-        ? `<span class="block-reasons">${reasons.map(r => `<span class="badge badge-warning">${esc(r)}</span>`).join('')}</span>`
-        : '';
-
       // 一時停止コントロール
       const pauseCtrl = isPaused
         ? `<button class="btn btn-sm agent-unpause-btn" data-agent-id="${agentIdEsc}">Unpause</button>`
@@ -383,26 +398,38 @@ async function loadAgents() {
              <option value="180">3h</option>
            </select>`;
 
+      // チェックリスト
+      const checks = a.checks || [];
+      const checksHtml = checks.length > 0
+        ? `<div class="agent-checks">${checks.map(c => {
+            const icon = c.ok ? '<span class="check-icon ok">OK</span>' : '<span class="check-icon ng">NG</span>';
+            const detail = c.detail ? ` <span class="check-detail">${esc(c.detail)}</span>` : '';
+            return `<span class="check-item">${icon} <span class="check-name">${esc(c.name)}</span>${detail}</span>`;
+          }).join('')}</div>`
+        : '';
+
       return `
-        <div class="agent-row">
-          <span class="agent-info">
-            <span class="agent-name">${agentNameEsc}</span>
-            <span class="agent-status">
-              <span class="status-dot ${dotClass}"></span>
-              ${statusLabel}${a.version ? ` <span style="color:var(--text-muted);font-size:0.75rem">(${esc(a.version)})</span>` : ''}
+        <div class="agent-row" style="flex-direction:column;align-items:stretch">
+          <div style="display:flex;align-items:center;gap:0.75rem">
+            <span class="agent-info">
+              <span class="agent-name">${agentNameEsc}</span>
+              <span class="agent-status">
+                <span class="status-dot ${dotClass}"></span>
+                ${statusLabel}${a.version ? ` <span style="color:var(--text-muted);font-size:0.75rem">(${esc(a.version)})</span>` : ''}
+              </span>
             </span>
-            ${reasonsHtml}
-          </span>
-          <span class="agent-controls">
-            ${pauseCtrl}
-            <button class="btn btn-sm agent-restart-btn" data-action="restart-one" data-agent-id="${agentIdEsc}" data-agent-name="${agentNameEsc}">Restart</button>
-            <select class="form-input agent-mode-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:140px"
-              ${isPaused ? 'disabled' : ''}>
-              <option value="auto"${currentMode === 'auto' ? ' selected' : ''}>auto</option>
-              <option value="allow"${currentMode === 'allow' ? ' selected' : ''}>allow</option>
-              <option value="deny"${currentMode === 'deny' ? ' selected' : ''}>deny</option>
-            </select>
-          </span>
+            <span class="agent-controls">
+              ${pauseCtrl}
+              <button class="btn btn-sm agent-restart-btn" data-action="restart-one" data-agent-id="${agentIdEsc}" data-agent-name="${agentNameEsc}">Restart</button>
+              <select class="form-input agent-mode-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:140px"
+                ${isPaused ? 'disabled' : ''}>
+                <option value="auto"${currentMode === 'auto' ? ' selected' : ''}>auto</option>
+                <option value="allow"${currentMode === 'allow' ? ' selected' : ''}>allow</option>
+                <option value="deny"${currentMode === 'deny' ? ' selected' : ''}>deny</option>
+              </select>
+            </span>
+          </div>
+          ${checksHtml}
         </div>`;
     }).join('');
 
