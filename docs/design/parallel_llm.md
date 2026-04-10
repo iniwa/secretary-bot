@@ -126,18 +126,79 @@ MainPC Ollama: [RSS要約2]
   - `check_availability()` 時に各 URL のモデル一覧をキャッシュ
   - `_acquire_instance(model=...)` でフィルタリング
 
+## アプリケーション層の並列化
+
+インフラ層（OllamaClient マルチインスタンス）だけでも同時リクエストが自動分配されるが、
+アプリケーション層で独立タスクを `asyncio.gather()` で並列実行すると効果が最大化する。
+
+### 対象タスクと並列化パターン
+
+#### InnerMind の ContextSource 収集
+現状: 各 ContextSource を直列に収集 → LLM 呼び出しも直列
+改善: 独立した ContextSource の LLM 呼び出しを `asyncio.gather()` で並列化
+
+```python
+# Before（直列）
+rss_summary = await rss_source.collect()      # LLM呼び出し含む
+stt_summary = await stt_source.collect()       # LLM呼び出し含む
+chat_summary = await chat_source.collect()     # LLM呼び出し含む
+# → 3回分の直列待ち
+
+# After（並列）
+rss_summary, stt_summary, chat_summary = await asyncio.gather(
+    rss_source.collect(),
+    stt_source.collect(),
+    chat_source.collect(),
+)
+# → 2台なら2回分の待ちで済む（3タスク中2つが同時実行）
+```
+
+#### ハートビート処理
+現状: `on_heartbeat()` 各ユニットを直列呼び出し
+改善: 独立したユニットの heartbeat を並列化
+
+#### 具体的な効果試算（2台構成）
+
+```
+現状（直列・1台）:
+  [RSS要約] → [STT要約] → [チャット要約] → [Monologue]
+  合計: 4T（T = 1回のLLM呼び出し時間）
+
+並列化後（2台）:
+  SubPC:  [RSS要約  ] → [Monologue]
+  MainPC: [STT要約  ]
+  SubPC:             [チャット要約] ↗
+  合計: ≈ 2.5T（約40%短縮）
+
+3台構成なら:
+  PC-1: [RSS要約  ] → [Monologue]
+  PC-2: [STT要約  ]
+  PC-3: [チャット要約] ↗
+  合計: ≈ 2T（50%短縮）
+```
+
+### 並列化の注意点
+
+- **依存関係のあるタスクは直列のまま**: Monologue は全 ContextSource の結果が必要 → gather 後に実行
+- **書き込み競合の回避**: 同一リソース（DB の同一テーブル等）への同時書き込みは aiosqlite の WAL モードで安全
+- **エラーハンドリング**: `asyncio.gather(return_exceptions=True)` で1つ失敗しても他は継続
+
 ## 段階的実装
 
-### Phase 1（最小限）
+### Phase 1: OllamaClient マルチインスタンス化
 - `_available_url` → `_available_urls` リスト化
 - Semaphore による排他制御
 - Least-connections 分配
+- 変更: `src/llm/ollama_client.py` のみ
 
-### Phase 2（改善）
+### Phase 2: アプリケーション層の並列化
+- InnerMind の ContextSource 収集を `asyncio.gather()` で並列化
+- heartbeat の on_heartbeat 並列化
+- 変更: `src/inner_mind/core.py`, `src/heartbeat.py`
+
+### Phase 3: 高度な最適化
 - モデル別ルーティング（特定モデル指定時のフィルタ）
 - インスタンス別の成功率・レイテンシ追跡
-- WebGUI での Ollama 状態表示（どのPCが処理中か）
-
-### Phase 3（発展）
 - 優先度付きキュー（ユーザー会話 > InnerMind > RSS）
+- WebGUI での Ollama 状態表示（どのPCが処理中か）
 - GPU メモリ使用量に基づく動的ルーティング
