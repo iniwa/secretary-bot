@@ -185,16 +185,15 @@ rss_summary, stt_summary, chat_summary = await asyncio.gather(
 
 ## 段階的実装
 
-### Phase 1: OllamaClient マルチインスタンス化
+### Phase 1: OllamaClient マルチインスタンス化 ✅
 - `_available_url` → `_available_urls` リスト化
-- Semaphore による排他制御
-- Least-connections 分配
+- Least-connections 分配（Semaphore は不要 — asyncio の協調スケジューリングで安全）
 - 変更: `src/llm/ollama_client.py` のみ
 
-### Phase 2: アプリケーション層の並列化
-- InnerMind の ContextSource 収集を `asyncio.gather()` で並列化
-- heartbeat の on_heartbeat 並列化
-- 変更: `src/inner_mind/core.py`, `src/heartbeat.py`
+### Phase 2: アプリケーション層の並列化 ✅
+- ContextSourceRegistry.collect_all() を `asyncio.gather()` で並列化
+- heartbeat の on_heartbeat + STT + RSS を `asyncio.gather()` で並列化
+- 変更: `src/inner_mind/context_sources/registry.py`, `src/heartbeat.py`
 
 ### Phase 3: 高度な最適化
 - モデル別ルーティング（特定モデル指定時のフィルタ）

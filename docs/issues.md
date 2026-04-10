@@ -32,7 +32,7 @@
 
 ### 残タスク
 - [ ] MainPC の Ollama 動作確認（物理アクセスが必要）
-- [ ] Phase 2: アプリケーション層の並列化（`asyncio.gather` による ContextSource 収集の並列化）
+- [x] Phase 2: アプリケーション層の並列化（ContextSource 収集 + heartbeat の STT/RSS/on_heartbeat を `asyncio.gather` で並列化）
 
 ---
 

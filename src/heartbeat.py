@@ -79,22 +79,38 @@ class Heartbeat:
             # スヌーズ済みリマインダーの再通知
             await self._check_snooze_reminders()
 
-            # 各ユニットの on_heartbeat 呼び出し
-            for unit in self.bot.unit_manager.units.values():
-                name = getattr(getattr(unit, "unit", unit), "UNIT_NAME", "?")
+            # 各ユニットの on_heartbeat + STT + RSS を並列実行
+            units = list(self.bot.unit_manager.units.values())
+            unit_names = [
+                getattr(getattr(u, "unit", u), "UNIT_NAME", "?") for u in units
+            ]
+
+            async def _safe_heartbeat(unit, name):
                 try:
                     await unit.on_heartbeat()
-                    tick_log["units"].append({"name": name, "ok": True})
+                    return {"name": name, "ok": True}
                 except Exception as e:
                     log.error("Heartbeat error in %s: %s", name, e)
-                    tick_log["units"].append({"name": name, "ok": False, "error": str(e)})
+                    return {"name": name, "ok": False, "error": str(e)}
 
-            # STT収集・要約
-            stt_result = await self._run_stt()
+            # 全タスクを並列実行（ユニット群 + STT + RSS）
+            tasks = [_safe_heartbeat(u, n) for u, n in zip(units, unit_names)]
+            tasks.append(self._run_stt())
+            tasks.append(self._run_rss())
+
+            all_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 結果を分解: ユニット結果 | STT | RSS
+            n_units = len(units)
+            for i, r in enumerate(all_results[:n_units]):
+                if isinstance(r, Exception):
+                    tick_log["units"].append({"name": unit_names[i], "ok": False, "error": str(r)})
+                else:
+                    tick_log["units"].append(r)
+
+            stt_result = all_results[n_units] if not isinstance(all_results[n_units], Exception) else {"error": str(all_results[n_units])}
+            rss_result = all_results[n_units + 1] if not isinstance(all_results[n_units + 1], Exception) else {"error": str(all_results[n_units + 1])}
             tick_log["stt"] = stt_result
-
-            # RSS定期フェッチ・要約・ダイジェスト通知
-            rss_result = await self._run_rss()
             tick_log["rss"] = rss_result
 
             # コンテキスト圧縮チェック
