@@ -138,6 +138,16 @@ secretary-bot/
 - Geminiトグルは全項目デフォルトOFF（高額課金防止）
 - 省エネモード時: ペルソナ注入なし、`people_memory` のみ注入
 
+### LLM並列化ガイドライン
+OllamaClientは複数インスタンス対応（least-connections分配）。同時にLLM呼び出しが発生すれば自動的に空きインスタンスへ分配される。設計詳細は `docs/design/parallel_llm.md` 参照。
+
+**新しいLLM呼び出しを追加する際の原則:**
+- 独立した複数のLLM呼び出しは `asyncio.gather()` で並列実行すること
+- ループ内で直列にLLM呼び出しを繰り返さない（`for item in items: await llm_generate(...)` は NG）
+  - 代わりに `await asyncio.gather(*[llm_generate(item) for item in items])` を使う
+- 依存関係がある場合（前の結果が次の入力になる）は直列のままでよい
+- `return_exceptions=True` を使い、1件の失敗が他に波及しないようにする
+
 ### エラーハンドリング
 - 全エラーは `BotError` 継承
 - サーキットブレーカーで保護（連続失敗 → 一時停止 → 自動復帰）
