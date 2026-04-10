@@ -5,7 +5,7 @@ import json
 import random
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from src.database import JST, jst_now
 from src.errors import AllLLMsUnavailableError
@@ -17,7 +17,14 @@ from src.inner_mind.context_sources.reminder import ReminderSource
 from src.inner_mind.context_sources.rss import RSSSource
 from src.inner_mind.context_sources.stt import STTSource
 from src.inner_mind.context_sources.weather import WeatherSource
-from src.inner_mind.prompts import SPEAK_PROMPT, SPEAK_SYSTEM, THINK_PROMPT, THINK_SYSTEM
+from src.inner_mind.prompts import (
+    EXTRACT_PROMPT,
+    EXTRACT_SYSTEM,
+    SPEAK_PROMPT,
+    SPEAK_SYSTEM,
+    THINK_PROMPT,
+    THINK_SYSTEM,
+)
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -249,17 +256,36 @@ class InnerMind:
     @staticmethod
     def _sanitize_monologue(text: str) -> str:
         """モノローグテキストからJSON構造的ノイズを除去。"""
-        # ```json ... ``` ブロック内のテキストを取り出す
+        # ```json ... ``` ブロック内のテキストを取り出す（閉じなしにも対応）
         m = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+        if not m:
+            m = re.search(r'```json\s*(.*)', text, re.DOTALL)
         if m:
-            text = m.group(1)
-        # JSON構造の場合、monologueフィールドを抽出
+            text = m.group(1).strip().rstrip("`")
+        # JSON構造の場合、monologue系フィールドを抽出
         text = text.strip()
         if text.startswith('{'):
             try:
                 parsed = json.loads(text)
-                if isinstance(parsed, dict) and 'monologue' in parsed:
-                    text = parsed['monologue']
+                if isinstance(parsed, dict):
+                    # 複数の既知キー名に対応
+                    for key in ("monologue", "internal_monologue", "internal_thoughts", "thought"):
+                        if key in parsed:
+                            val = parsed[key]
+                            # ネストされた dict の場合はさらに掘る
+                            if isinstance(val, dict):
+                                for sub_key in ("thought_process", "text", "content"):
+                                    if sub_key in val:
+                                        sub = val[sub_key]
+                                        text = sub if isinstance(sub, str) else str(sub)
+                                        break
+                                else:
+                                    text = str(val)
+                            elif isinstance(val, list):
+                                text = " ".join(str(v) for v in val)
+                            else:
+                                text = str(val)
+                            break
             except (json.JSONDecodeError, TypeError):
                 pass
         # 先頭の "monologue": " や末尾の不要な引用符を除去
@@ -305,10 +331,41 @@ class InnerMind:
             "sources": source_results,
         }
 
-    # --- 思考フェーズ ---
+    # --- 思考レンズ → mood ヒントマッピング ---
+
+    _LENS_MOOD_HINTS: dict[str, str] = {
+        "empathy": "ユーザーのことを想像しているので、talkative（話しかけたい）寄りかもしれません。",
+        "curiosity": "好奇心が刺激されているので、curious が自然です。",
+        "rest": "休息モードなので、idle が自然です。",
+        "reflection": "振り返りなので、calm か concerned が自然です。",
+        "concrete": "具体的な観察なので、curious か calm が自然です。",
+        "time_space": "時間や空間の連想なので、calm か idle が自然です。",
+    }
+
+    # --- 思考フェーズ（2段階） ---
 
     async def _think_phase(self, context: dict, staleness_note: str = "") -> dict | None:
-        """LLM呼び出し①: 思考プロンプトでモノローグを生成。"""
+        """思考フェーズ: Step1で自由形式モノローグ生成、Step2で構造化抽出。"""
+        # --- Step 1: モノローグ生成 ---
+        monologue, lens_category = await self._generate_monologue(context, staleness_note)
+        if not monologue:
+            return None
+
+        # --- Step 2: 構造化抽出 ---
+        structured = await self._extract_structure(monologue, lens_category)
+
+        # 結果を統合
+        result = {
+            "monologue": monologue,
+            "mood": structured.get("mood", "calm"),
+            "memory_update": structured.get("memory_update"),
+            "interest_topic": structured.get("interest_topic"),
+            "_lens_category": lens_category,
+        }
+        return result
+
+    async def _generate_monologue(self, context: dict, staleness_note: str = "") -> tuple[str, str]:
+        """Step 1: 自由形式でモノローグを生成。(monologue, lens_category) を返す。"""
         persona = self.bot.config.get("character", {}).get("persona", "")
 
         # コンテキストソースをプロンプトセクションに変換
@@ -321,7 +378,7 @@ class InnerMind:
         sm = context["self_model"]
         self_model_text = "\n".join(f"{k}: {v}" for k, v in sm.items()) if sm else "（未形成）"
 
-        # 直近5件のモノローグ要約（重複思考防止用）
+        # 直近5件のモノローグ要約（重複思考防止用） — mood併記
         recent_monos = await self.bot.database.get_monologues(limit=5)
         if recent_monos:
             mono_lines = []
@@ -349,11 +406,57 @@ class InnerMind:
         raw = await self.bot.llm_router.generate(
             prompt, system=system, purpose="inner_mind", ollama_only=True,
         )
-        result = self._parse_think_response(raw)
 
-        # 選択したレンズカテゴリを思考結果に付与（保存時に使う）
-        if result:
-            result["_lens_category"] = lens_category
+        # Step1はプレーンテキスト — JSONラッパーが混入した場合はサニタイズ
+        monologue = self._sanitize_monologue(raw)
+        if not monologue or monologue == "特になし":
+            log.info("InnerMind: monologue is empty/skipped")
+            return ("", lens_category)
+
+        return (monologue, lens_category)
+
+    async def _extract_structure(self, monologue: str, lens_category: str) -> dict:
+        """Step 2: モノローグからmood/memory_update/interest_topicをJSON抽出。"""
+        # mood ヒント
+        mood_hint = self._LENS_MOOD_HINTS.get(lens_category, "")
+        if mood_hint:
+            mood_hint = f"[ヒント] {mood_hint}"
+
+        # 直近mood履歴（同じmoodの連続を防ぐ）
+        recent_monos = await self.bot.database.get_monologues(limit=5)
+        if recent_monos:
+            recent_moods = ", ".join(m["mood"] for m in recent_monos)
+        else:
+            recent_moods = "（なし）"
+
+        prompt = EXTRACT_PROMPT.format(
+            monologue=monologue,
+            mood_hint=mood_hint,
+            recent_moods=recent_moods,
+        )
+
+        raw = await self.bot.llm_router.generate(
+            prompt, system=EXTRACT_SYSTEM, purpose="inner_mind", ollama_only=True,
+        )
+
+        result = self._extract_json(raw)
+
+        # mood バリデーション
+        valid_moods = {"curious", "calm", "talkative", "concerned", "idle"}
+        if result.get("mood") not in valid_moods:
+            # 間違ったキー名のフォールバック
+            for key in ("emotion", "feeling", "state"):
+                if result.get(key) in valid_moods:
+                    result["mood"] = result[key]
+                    break
+            else:
+                result["mood"] = "calm"
+
+        # "null" 文字列を None に正規化
+        for key in ("memory_update", "interest_topic"):
+            val = result.get(key)
+            if val in ("null", "None", "", None):
+                result[key] = None
 
         return result
 
@@ -548,27 +651,6 @@ class InnerMind:
 
     # --- JSON パース ---
 
-    def _parse_think_response(self, raw: str) -> dict:
-        """LLM応答からthink JSONを抽出。4段階フォールバック + 二次検証。"""
-        result = self._extract_json(raw)
-        # monologue が JSON 文字列の場合、再パースを試みる
-        mono = result.get("monologue", "")
-        if isinstance(mono, str) and mono.strip().startswith("{"):
-            try:
-                inner = json.loads(mono)
-                if isinstance(inner, dict) and "monologue" in inner:
-                    result = inner
-            except (json.JSONDecodeError, TypeError):
-                pass
-        # 最低限の構造を保証
-        if "monologue" not in result:
-            result["monologue"] = raw
-        if "mood" not in result:
-            result["mood"] = "unknown"
-        if "memory_update" not in result:
-            result["memory_update"] = None
-        return result
-
     def _parse_speak_response(self, raw: str) -> dict:
         """LLM応答からspeak JSONを抽出。"""
         result = self._extract_json(raw)
@@ -586,11 +668,13 @@ class InnerMind:
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # 2. ```json ... ``` ブロック抽出
+        # 2. ```json ... ``` ブロック抽出（閉じなしにも対応）
         m = re.search(r"```json\s*(.*?)\s*```", raw, re.DOTALL)
+        if not m:
+            m = re.search(r"```json\s*(.*)", raw, re.DOTALL)
         if m:
             try:
-                return json.loads(m.group(1))
+                return json.loads(m.group(1).strip().rstrip("`"))
             except json.JSONDecodeError:
                 pass
 
