@@ -296,24 +296,26 @@ class AgentPool:
                 role = agent.get("role", "")
                 rules = self._activity_detector._block_rules
 
-                if role == "main":
+                if role == "main" and rules.get("gaming_on_main", False):
                     gaming = status.get("gaming", {})
-                    game_active = gaming.get("active", False) and rules.get("gaming_on_main", False)
+                    game_active = gaming.get("active", False)
                     detail = gaming.get("game", "") if game_active else ""
                     checks.append({"name": "ゲーム検出", "ok": not game_active, "detail": detail})
                 elif role == "sub":
-                    obs_stream = status.get("obs_streaming", False) and rules.get("obs_streaming", True)
-                    obs_rec = status.get("obs_recording", False) and rules.get("obs_recording", True)
-                    obs_replay = status.get("obs_replay_buffer", False) and rules.get("obs_replay_buffer", False)
-                    obs_ng = obs_stream or obs_rec or obs_replay
-                    obs_detail = ""
-                    if obs_stream: obs_detail = "配信中"
-                    elif obs_rec: obs_detail = "録画中"
-                    elif obs_replay: obs_detail = "リプレイバッファ"
-                    checks.append({"name": "OBS", "ok": not obs_ng, "detail": obs_detail})
+                    if rules.get("obs_streaming", True) or rules.get("obs_recording", True) or rules.get("obs_replay_buffer", False):
+                        obs_stream = status.get("obs_streaming", False) and rules.get("obs_streaming", True)
+                        obs_rec = status.get("obs_recording", False) and rules.get("obs_recording", True)
+                        obs_replay = status.get("obs_replay_buffer", False) and rules.get("obs_replay_buffer", False)
+                        obs_ng = obs_stream or obs_rec or obs_replay
+                        obs_detail = ""
+                        if obs_stream: obs_detail = "配信中"
+                        elif obs_rec: obs_detail = "録画中"
+                        elif obs_replay: obs_detail = "リプレイバッファ"
+                        checks.append({"name": "OBS", "ok": not obs_ng, "detail": obs_detail})
 
-                vc = status.get("discord_vc", False) and rules.get("discord_vc", False)
-                checks.append({"name": "Discord VC", "ok": not vc, "detail": ""})
+                if rules.get("discord_vc", False):
+                    vc = status.get("discord_vc", False)
+                    checks.append({"name": "Discord VC", "ok": not vc, "detail": ""})
             except Exception:
                 checks.append({"name": "アクティビティ", "ok": True, "detail": "取得失敗"})
 
