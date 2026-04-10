@@ -458,6 +458,7 @@ async function updateAllAgents() {
   try {
     const res = await api('/api/tools/input-relay/update', { method: 'POST' });
     const agentResults = res?.agents || [];
+    const toolRestartResults = res?.agents_tool_restart || [];
 
     // サブモジュールの更新結果を先頭に表示
     const headerParts = [];
@@ -470,24 +471,31 @@ async function updateAllAgents() {
         <span class="ir-result-msg">${esc(res.old_hash || '?')} → ${esc(res.new_hash || '?')}</span>
       </div>`);
 
+    // Agent ごとの結果行を生成するローカルヘルパー
+    const renderAgentRows = (arr, rowLabel) => {
+      if (!arr || arr.length === 0) return '';
+      return arr.map(a => {
+        const statusBadge = a.success
+          ? '<span class="badge badge-success">OK</span>'
+          : '<span class="badge badge-error">Failed</span>';
+        const name = a.name || a.agent_name || a.id || a.agent_id || 'unknown';
+        const msg = a.message || a.detail || a.error || a.status || '';
+        return `
+          <div class="ir-result-item">
+            <span class="ir-result-name">${esc(rowLabel)}: ${esc(name)}</span>
+            ${statusBadge}
+            <span class="ir-result-msg">${esc(msg)}</span>
+          </div>`;
+      }).join('');
+    };
+
     let agentHtml = '';
     if (res.updated) {
       if (agentResults.length === 0) {
         agentHtml = '<div class="ir-result-item"><span class="ir-result-msg">No agents configured</span></div>';
       } else {
-        agentHtml = agentResults.map(a => {
-          const statusBadge = a.success
-            ? '<span class="badge badge-success">OK</span>'
-            : '<span class="badge badge-error">Failed</span>';
-          const name = a.name || a.agent_name || a.id || a.agent_id || 'unknown';
-          const msg = a.message || a.detail || a.error || '';
-          return `
-            <div class="ir-result-item">
-              <span class="ir-result-name">${esc(name)}</span>
-              ${statusBadge}
-              <span class="ir-result-msg">${esc(msg)}</span>
-            </div>`;
-        }).join('');
+        agentHtml = renderAgentRows(agentResults, 'Pull');
+        agentHtml += renderAgentRows(toolRestartResults, 'Tool Restart');
       }
     }
 

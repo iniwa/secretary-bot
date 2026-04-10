@@ -169,12 +169,16 @@ export function render() {
   <div class="card card-full">
     <div class="card-header">
       <h3>Agent Management</h3>
-      <button class="btn btn-sm" id="m-ollama-recheck">Recheck Ollama</button>
+      <div style="display:flex;gap:0.5rem">
+        <button class="btn btn-sm" id="m-restart-agents">Restart All Agents</button>
+        <button class="btn btn-sm" id="m-ollama-recheck">Recheck Ollama</button>
+      </div>
     </div>
     <div class="card-body">
       <div id="m-agents-list">
         <div style="color:var(--text-muted);font-size:0.8125rem">Loading...</div>
       </div>
+      <div class="result-box" id="m-agents-result"></div>
     </div>
   </div>
 
@@ -215,6 +219,17 @@ function showResult(boxId, html) {
 
 function resultItem(label, value) {
   return `<div class="result-item"><span class="result-label">${label}: </span><span class="result-value">${esc(String(value))}</span></div>`;
+}
+
+/** Agent 実行結果配列を resultItem の連続 HTML に変換。 */
+function agentResultList(label, agents) {
+  if (!agents || agents.length === 0) return '';
+  return agents.map(a => {
+    const name = a.name || a.id || 'unknown';
+    const status = a.success ? 'OK' : 'Failed';
+    const detail = a.message || a.detail || a.error || a.status || '';
+    return resultItem(`${label}: ${name}`, detail ? `${status} - ${detail}` : status);
+  }).join('');
 }
 
 function esc(s) {
@@ -372,12 +387,8 @@ export async function mount() {
       if (res.restart_detail) {
         html += resultItem('Restart Detail', res.restart_detail);
       }
-      if (res.agents && res.agents.length > 0) {
-        res.agents.forEach(a => {
-          const status = a.success ? 'OK' : 'Failed';
-          html += resultItem(`Agent: ${a.name || a.id || 'unknown'}`, `${status} - ${a.message || a.detail || ''}`);
-        });
-      }
+      html += agentResultList('Update', res.agents);
+      html += agentResultList('Restart', res.agents_restart);
       showResult('m-update-result', html);
       toast(res.updated ? 'Code updated successfully' : 'Already up to date', res.updated ? 'success' : 'info');
 
@@ -428,6 +439,31 @@ export async function mount() {
     }
   });
 
+  // Restart All Agents button（コード更新なしで全 Agent を自己再起動させる）
+  $('m-restart-agents').addEventListener('click', async () => {
+    if (!window.confirm('全 Windows Agent を再起動しますか？ STT/OBS が一時的に停止します。')) {
+      return;
+    }
+    const btn = $('m-restart-agents');
+    setLoading(btn, true);
+    try {
+      const res = await api('/api/agents/restart-all', { method: 'POST' });
+      let html = '';
+      html += resultItem('Message', res.message || '-');
+      html += agentResultList('Restart', res.agents);
+      showResult('m-agents-result', html);
+      toast(res.message || 'Restart requested', res.success ? 'success' : 'warning');
+      // 数秒後に状態再取得（Agent 復帰検知用）
+      setTimeout(() => loadAgents(), 8000);
+    } catch (err) {
+      console.error('Restart agents:', err);
+      showResult('m-agents-result', resultItem('Error', err.message));
+      toast('Agent restart failed', 'error');
+    } finally {
+      setLoading(btn, false);
+    }
+  });
+
   // Recheck Ollama button
   $('m-ollama-recheck').addEventListener('click', async () => {
     const btn = $('m-ollama-recheck');
@@ -458,12 +494,8 @@ export async function mount() {
       if (res.message) {
         html += resultItem('Message', res.message);
       }
-      if (res.agents && res.agents.length > 0) {
-        res.agents.forEach(a => {
-          const status = a.success ? 'OK' : 'Failed';
-          html += resultItem(`Agent: ${a.name || a.id || 'unknown'}`, `${status} - ${a.message || a.detail || ''}`);
-        });
-      }
+      html += agentResultList('Update', res.agents);
+      html += agentResultList('Tool Restart', res.agents_tool_restart);
       showResult('m-relay-result', html);
       toast(
         res.updated ? `Input Relay updated (${res.new_hash})` : 'Already up to date',

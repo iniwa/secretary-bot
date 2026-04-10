@@ -353,6 +353,25 @@ def create_web_app(bot) -> FastAPI:
         background_tasks.add_task(_delayed_restart, 2)
         return {"restarted": True, "detail": "まもなく再起動します…"}
 
+    @app.post("/api/agents/restart-all", )
+    async def restart_all_agents_endpoint():
+        """全 Windows Agent プロセスを手動で再起動する（コード更新なし）。
+        start_agent.bat のループが自動再起動を担当する前提。"""
+        if _update_lock.locked():
+            return {
+                "success": False,
+                "message": "別の更新処理が実行中です",
+                "agents": [],
+            }
+        async with _update_lock:
+            results = await _post_all_agents(bot, "/restart-self", timeout=5)
+            ok_count = sum(1 for r in results if r.get("success"))
+            return {
+                "success": True,
+                "message": f"{ok_count} / {len(results)} 件の Agent に再起動を要求しました",
+                "agents": results,
+            }
+
     # --- Units データ閲覧 API ---
 
     @app.get("/api/units/reminders", )
