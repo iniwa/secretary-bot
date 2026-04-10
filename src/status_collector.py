@@ -75,10 +75,22 @@ class StatusCollector:
         alive = await pool._is_alive(agent)
         aid = agent["id"]
         pause_remaining = pool.get_pause_remaining(aid)
+        version = ""
+        if alive:
+            try:
+                url = f"http://{agent['host']}:{agent['port']}/version"
+                resp = await pool._get_http().get(
+                    url, headers={"X-Agent-Token": pool._agent_token}
+                )
+                full = (resp.json().get("version") or "").strip()
+                version = full[:7] if full else ""
+            except Exception:
+                pass
         return {
             "id": aid,
             "name": agent.get("name", aid),
             "alive": alive,
+            "version": version,
             "mode": pool.get_mode(aid),
             "block_reasons": pool.get_block_reasons(aid),
             "paused": pool.is_paused(aid),

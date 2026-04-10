@@ -402,6 +402,26 @@ def create_web_app(bot) -> FastAPI:
                 ).stdout.strip()
 
                 if hash_before == remote_hash:
+                    # Pi は最新だが、エージェント側が古い可能性があるのでチェック
+                    agent_versions = await _get_all_agent_versions(bot)
+                    stale_agents = [
+                        a for a in agent_versions
+                        if a.get("alive") and a.get("version_full") and a["version_full"] != remote_hash
+                    ]
+                    if stale_agents:
+                        log.info("Pi up-to-date but %d agent(s) stale, triggering update", len(stale_agents))
+                        agent_update_results = await _update_all_agents(bot)
+                        agent_restart_results = await _post_all_agents(bot, "/restart-self", timeout=5)
+                        _mark_agents_restarting_bulk(agent_restart_results)
+                        stale_names = ", ".join(a.get("name", a["id"]) for a in stale_agents)
+                        return {
+                            "updated": False,
+                            "message": f"Pi は最新 ({hash_before[:7]})。エージェント更新: {stale_names}",
+                            "restarted": False,
+                            "restart_detail": "エージェントのみ更新",
+                            "agents": agent_update_results,
+                            "agents_restart": agent_restart_results,
+                        }
                     return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
                 # pull

@@ -389,7 +389,7 @@ async function loadAgents() {
             <span class="agent-name">${agentNameEsc}</span>
             <span class="agent-status">
               <span class="status-dot ${dotClass}"></span>
-              ${statusLabel}
+              ${statusLabel}${a.version ? ` <span style="color:var(--text-muted);font-size:0.75rem">(${esc(a.version)})</span>` : ''}
             </span>
             ${reasonsHtml}
           </span>
