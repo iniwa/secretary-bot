@@ -218,9 +218,11 @@ export function render() {
     <div class="card">
       <div class="card-body ir-update-card">
         <div>
-          <div class="ir-update-desc">Update the Input Relay submodule on all connected agents.</div>
+          <div class="ir-update-desc">
+            Fetch the latest Input Relay from GitHub, commit the new submodule hash to the main repo, and propagate to all agents.
+          </div>
         </div>
-        <button class="btn btn-primary" id="ir-update-all">Update All Agents</button>
+        <button class="btn btn-primary" id="ir-update-all">Update Input Relay</button>
       </div>
       <div class="ir-update-results" id="ir-update-results"></div>
     </div>
@@ -432,26 +434,44 @@ async function updateAllAgents() {
     const res = await api('/api/tools/input-relay/update', { method: 'POST' });
     const agentResults = res?.agents || [];
 
-    if (agentResults.length === 0) {
-      resultsEl.innerHTML = '<div class="ir-result-item"><span class="ir-result-msg">No agent results returned</span></div>';
-    } else {
-      resultsEl.innerHTML = agentResults.map(a => {
-        const statusBadge = a.success
-          ? '<span class="badge badge-success">OK</span>'
-          : '<span class="badge badge-error">Failed</span>';
-        const name = a.name || a.agent_name || a.id || a.agent_id || 'unknown';
-        const msg = a.message || a.detail || '';
-        return `
-          <div class="ir-result-item">
-            <span class="ir-result-name">${esc(name)}</span>
-            ${statusBadge}
-            <span class="ir-result-msg">${esc(msg)}</span>
-          </div>`;
-      }).join('');
+    // サブモジュールの更新結果を先頭に表示
+    const headerParts = [];
+    headerParts.push(`
+      <div class="ir-result-item">
+        <span class="ir-result-name">Submodule</span>
+        ${res.updated
+          ? '<span class="badge badge-success">Updated</span>'
+          : '<span class="badge badge-muted">Unchanged</span>'}
+        <span class="ir-result-msg">${esc(res.old_hash || '?')} → ${esc(res.new_hash || '?')}</span>
+      </div>`);
+
+    let agentHtml = '';
+    if (res.updated) {
+      if (agentResults.length === 0) {
+        agentHtml = '<div class="ir-result-item"><span class="ir-result-msg">No agents configured</span></div>';
+      } else {
+        agentHtml = agentResults.map(a => {
+          const statusBadge = a.success
+            ? '<span class="badge badge-success">OK</span>'
+            : '<span class="badge badge-error">Failed</span>';
+          const name = a.name || a.agent_name || a.id || a.agent_id || 'unknown';
+          const msg = a.message || a.detail || a.error || '';
+          return `
+            <div class="ir-result-item">
+              <span class="ir-result-name">${esc(name)}</span>
+              ${statusBadge}
+              <span class="ir-result-msg">${esc(msg)}</span>
+            </div>`;
+        }).join('');
+      }
     }
 
+    resultsEl.innerHTML = headerParts.join('') + agentHtml;
     resultsEl.classList.add('visible');
-    toast('Input Relay update complete', 'success');
+    toast(
+      res.updated ? `Input Relay updated (${res.new_hash})` : 'Already up to date',
+      res.updated ? 'success' : 'info'
+    );
     // Refresh status after update
     await loadStatus();
   } catch (err) {

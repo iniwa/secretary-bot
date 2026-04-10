@@ -209,19 +209,8 @@ async def execute_unit(unit_name: str, request: Request):
 
 
 # --- Tools: input-relay ---
-
-@app.post("/tools/input-relay/update")
-async def input_relay_update(request: Request):
-    _verify_token(request)
-    try:
-        result = subprocess.run(
-            ["git", "submodule", "update", "--remote", "windows-agent/tools/input-relay"],
-            capture_output=True, text=True, errors="replace", timeout=30,
-        )
-        output = result.stdout.strip() or result.stderr.strip()
-        return {"success": result.returncode == 0, "output": output}
-    except Exception as e:
-        raise HTTPException(500, f"Submodule update failed: {e}")
+# サブモジュール更新は Pi 側の /api/tools/input-relay/update で commit & push され、
+# その後 /update 経由で各Agent に git pull で反映される。Agent 側単独の更新APIは持たない。
 
 
 @app.get("/tools/input-relay/status")

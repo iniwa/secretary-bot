@@ -426,22 +426,31 @@ export async function mount() {
   });
 
   // Submodule Update button
+  // Pi 側で submodule 更新 → commit & push → 全 Agent へ git pull 反映
   $('m-update-relay').addEventListener('click', async () => {
     const btn = $('m-update-relay');
     setLoading(btn, true);
     try {
       const res = await api('/api/tools/input-relay/update', { method: 'POST' });
       let html = '';
+      html += resultItem('Updated', res.updated ? 'Yes' : 'No');
+      if (res.old_hash || res.new_hash) {
+        html += resultItem('Submodule', `${res.old_hash || '?'} → ${res.new_hash || '?'}`);
+      }
+      if (res.message) {
+        html += resultItem('Message', res.message);
+      }
       if (res.agents && res.agents.length > 0) {
         res.agents.forEach(a => {
           const status = a.success ? 'OK' : 'Failed';
           html += resultItem(`Agent: ${a.name || a.id || 'unknown'}`, `${status} - ${a.message || a.detail || ''}`);
         });
-      } else {
-        html += resultItem('Result', 'No agent results returned');
       }
       showResult('m-relay-result', html);
-      toast('Input Relay update complete', 'success');
+      toast(
+        res.updated ? `Input Relay updated (${res.new_hash})` : 'Already up to date',
+        res.updated ? 'success' : 'info'
+      );
     } catch (err) {
       console.error('Update relay:', err);
       showResult('m-relay-result', resultItem('Error', err.message));
