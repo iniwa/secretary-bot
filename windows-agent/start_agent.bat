@@ -9,17 +9,6 @@ if %ERRORLEVEL% NEQ 0 (
 :: Ollama を全インターフェースでリスンさせる（Pi等の外部からアクセス可能にする）
 set OLLAMA_HOST=0.0.0.0
 
-echo Checking Ollama...
-tasklist /FI "IMAGENAME eq ollama.exe" 2>NUL | find /I "ollama.exe" >NUL
-if %ERRORLEVEL% NEQ 0 (
-    echo Starting Ollama (OLLAMA_HOST=%OLLAMA_HOST%)...
-    start "" "C:\Users\iniwa\AppData\Local\Programs\Ollama\ollama.exe" serve
-    timeout /t 5 /nobreak >NUL
-    echo Ollama started.
-) else (
-    echo Ollama already running.
-)
-
 :loop
 cd /d "%~dp0.."
 echo.
@@ -29,6 +18,14 @@ echo ============================================
 git pull
 echo Updating submodules...
 git submodule update --init --recursive
+
+echo Checking Ollama...
+taskkill /IM ollama.exe /F >NUL 2>&1
+timeout /t 2 /nobreak >NUL
+echo Starting Ollama (OLLAMA_HOST=%OLLAMA_HOST%)...
+start "" "C:\Users\iniwa\AppData\Local\Programs\Ollama\ollama.exe" serve
+timeout /t 5 /nobreak >NUL
+echo Ollama started.
 
 cd windows-agent
 echo.
