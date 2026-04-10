@@ -93,14 +93,15 @@ class Heartbeat:
                     log.error("Heartbeat error in %s: %s", name, e)
                     return {"name": name, "ok": False, "error": str(e)}
 
-            # 全タスクを並列実行（ユニット群 + STT + RSS）
+            # 全タスクを並列実行（ユニット群 + STT + RSS + コンテキスト圧縮）
             tasks = [_safe_heartbeat(u, n) for u, n in zip(units, unit_names)]
             tasks.append(self._run_stt())
             tasks.append(self._run_rss())
+            tasks.append(self._check_compact())
 
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # 結果を分解: ユニット結果 | STT | RSS
+            # 結果を分解: ユニット結果 | STT | RSS | Compact
             n_units = len(units)
             for i, r in enumerate(all_results[:n_units]):
                 if isinstance(r, Exception):
@@ -110,11 +111,9 @@ class Heartbeat:
 
             stt_result = all_results[n_units] if not isinstance(all_results[n_units], Exception) else {"error": str(all_results[n_units])}
             rss_result = all_results[n_units + 1] if not isinstance(all_results[n_units + 1], Exception) else {"error": str(all_results[n_units + 1])}
+            compact_result = all_results[n_units + 2] if not isinstance(all_results[n_units + 2], Exception) else {"error": str(all_results[n_units + 2])}
             tick_log["stt"] = stt_result
             tick_log["rss"] = rss_result
-
-            # コンテキスト圧縮チェック
-            compact_result = await self._check_compact()
             tick_log["compact"] = compact_result
 
             # Ollama状態を再チェックして次回間隔を調整
