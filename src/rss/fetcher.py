@@ -20,6 +20,17 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _MAX_DESC_LEN = 800
 
+# 一部サイト (Cloudflare 保護など) はデフォルト httpx UA を弾くため、ブラウザ UA を送る
+_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+    "Accept-Language": "ja,en;q=0.7",
+}
+
 
 def _strip_html(text: str) -> str:
     """HTMLタグ除去・エンティティデコード・空白正規化。"""
@@ -108,7 +119,9 @@ class RSSFetcher:
 
     async def _download_feed(self, url: str) -> str | None:
         try:
-            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                timeout=_HTTP_TIMEOUT, follow_redirects=True, headers=_HTTP_HEADERS
+            ) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 return resp.text
@@ -153,17 +166,42 @@ class RSSFetcher:
         )
 
     async def ensure_preset_feeds(self) -> None:
-        """config.yaml のプリセットフィードをDBに同期する。"""
+        """config.yaml のプリセットフィードをDBに同期する。
+
+        config.yaml の preset 集合を真のソースとして扱い、差分を適用する:
+        - config にあって DB にない URL → INSERT
+        - 同 URL で title/category が違う → UPDATE
+        - 以前 preset だったが config から消えた URL → 関連記事ごと削除
+        """
         presets = self.bot.config.get("rss", {}).get("presets", {})
+        preset_urls: set[str] = set()
         for category, cat_data in presets.items():
-            feeds = cat_data.get("feeds", [])
-            for f in feeds:
+            for f in cat_data.get("feeds", []):
                 url = f.get("url", "")
                 title = f.get("title", "")
                 if not url:
                     continue
+                preset_urls.add(url)
                 await self.bot.database.execute(
-                    """INSERT OR IGNORE INTO rss_feeds (url, title, category, is_preset)
-                       VALUES (?, ?, ?, 1)""",
+                    """INSERT INTO rss_feeds (url, title, category, is_preset)
+                       VALUES (?, ?, ?, 1)
+                       ON CONFLICT(url) DO UPDATE SET
+                           title    = excluded.title,
+                           category = excluded.category,
+                           is_preset = 1""",
                     (url, title, category),
                 )
+        # config.yaml から消えた preset を掃除（関連記事も一緒に）
+        stale = await self.bot.database.fetchall(
+            "SELECT id, url FROM rss_feeds WHERE is_preset = 1"
+        )
+        for row in stale:
+            if row["url"] in preset_urls:
+                continue
+            await self.bot.database.execute(
+                "DELETE FROM rss_articles WHERE feed_id = ?", (row["id"],)
+            )
+            await self.bot.database.execute(
+                "DELETE FROM rss_feeds WHERE id = ?", (row["id"],)
+            )
+            log.info("Removed stale preset feed: %s", row["url"])
