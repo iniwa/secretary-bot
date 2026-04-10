@@ -205,11 +205,17 @@ export function render() {
 
 function setLoading(btn, loading) {
   if (loading) {
+    // 既に loading 状態なら何もしない。2 回目の保存でスピナー HTML を
+    // _origHTML に焼き付けてしまうと、finally 復元でボタンが「Running」の
+    // まま戻らなくなる（2 回目以降の click が Running から帰らない症状の根本原因）。
+    if (btn.dataset.loadingState === '1') return;
     btn._origHTML = btn.innerHTML;
+    btn.dataset.loadingState = '1';
     btn.innerHTML = '<span class="spinner"></span> Running...';
     btn.disabled = true;
   } else {
     btn.innerHTML = btn._origHTML || btn.textContent;
+    btn.dataset.loadingState = '';
     btn.disabled = false;
   }
 }

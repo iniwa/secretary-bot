@@ -21,11 +21,16 @@ function esc(str) {
 
 function setLoading(btn, loading) {
   if (loading) {
+    // 既に loading 状態なら何もしない（スピナー HTML が _origHTML に焼き付いて
+    // Running から戻らなくなる symptoms 対策）。
+    if (btn.dataset.loadingState === '1') return;
     btn._origHTML = btn.innerHTML;
+    btn.dataset.loadingState = '1';
     btn.innerHTML = '<span class="ir-spinner"></span> Running...';
     btn.disabled = true;
   } else {
     btn.innerHTML = btn._origHTML || btn.textContent;
+    btn.dataset.loadingState = '';
     btn.disabled = false;
   }
 }
