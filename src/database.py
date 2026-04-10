@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS docker_error_log (
     first_seen     DATETIME NOT NULL,
     last_seen      DATETIME NOT NULL,
     count          INTEGER NOT NULL DEFAULT 1,
-    dismissed      BOOLEAN NOT NULL DEFAULT 0
+    dismissed      BOOLEAN NOT NULL DEFAULT 0,
+    level          TEXT NOT NULL DEFAULT 'error'
 );
 """
 
@@ -321,6 +322,9 @@ class Database:
             ],
             18: [
                 "ALTER TABLE rss_articles ADD COLUMN description TEXT",
+            ],
+            19: [
+                "ALTER TABLE docker_error_log ADD COLUMN level TEXT NOT NULL DEFAULT 'error'",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

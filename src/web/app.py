@@ -1699,17 +1699,32 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/docker-monitor/errors", dependencies=[Depends(_verify)])
     async def get_docker_errors(
-        dismissed: int = 0, limit: int = 100, offset: int = 0,
+        dismissed: int = 0,
+        level: str = "error",
+        limit: int = 100,
+        offset: int = 0,
     ):
-        rows = await bot.database.fetchall(
-            "SELECT * FROM docker_error_log WHERE dismissed = ? "
-            "ORDER BY last_seen DESC LIMIT ? OFFSET ?",
-            (dismissed, limit, offset),
-        )
-        total_row = await bot.database.fetchone(
-            "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = ?",
-            (dismissed,),
-        )
+        # level は 'error' / 'warning' / 'all'
+        if level == "all":
+            rows = await bot.database.fetchall(
+                "SELECT * FROM docker_error_log WHERE dismissed = ? "
+                "ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+                (dismissed, limit, offset),
+            )
+            total_row = await bot.database.fetchone(
+                "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = ?",
+                (dismissed,),
+            )
+        else:
+            rows = await bot.database.fetchall(
+                "SELECT * FROM docker_error_log WHERE dismissed = ? AND level = ? "
+                "ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+                (dismissed, level, limit, offset),
+            )
+            total_row = await bot.database.fetchone(
+                "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = ? AND level = ?",
+                (dismissed, level),
+            )
         return {"items": rows, "total": total_row["cnt"] if total_row else 0}
 
     @app.post("/api/docker-monitor/errors/{error_id}/dismiss", dependencies=[Depends(_verify)])
@@ -1720,8 +1735,17 @@ def create_web_app(bot) -> FastAPI:
         return {"ok": True}
 
     @app.post("/api/docker-monitor/errors/dismiss-all", dependencies=[Depends(_verify)])
-    async def dismiss_all_docker_errors():
-        await bot.database.execute("UPDATE docker_error_log SET dismissed = 1 WHERE dismissed = 0")
+    async def dismiss_all_docker_errors(level: str = "error"):
+        # level 指定で対象を絞る（'all' 指定時はレベル問わず全て）
+        if level == "all":
+            await bot.database.execute(
+                "UPDATE docker_error_log SET dismissed = 1 WHERE dismissed = 0"
+            )
+        else:
+            await bot.database.execute(
+                "UPDATE docker_error_log SET dismissed = 1 WHERE dismissed = 0 AND level = ?",
+                (level,),
+            )
         return {"ok": True}
 
     @app.delete("/api/docker-monitor/errors/{error_id}", dependencies=[Depends(_verify)])
@@ -1761,20 +1785,7 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.execute("DELETE FROM docker_log_exclusions WHERE id = ?", (exc_id,))
         return {"ok": True}
 
-    @app.get("/api/docker-monitor/settings", dependencies=[Depends(_verify)])
-    async def get_docker_monitor_settings():
-        notify = await bot.database.get_setting("docker_monitor.notify_discord")
-        return {"notify_discord": notify == "1"}
-
-    @app.put("/api/docker-monitor/settings", dependencies=[Depends(_verify)])
-    async def update_docker_monitor_settings(request: Request):
-        data = await request.json()
-        if "notify_discord" in data:
-            await bot.database.set_setting(
-                "docker_monitor.notify_discord",
-                "1" if data["notify_discord"] else "0",
-            )
-        return {"ok": True}
+    # /api/docker-monitor/settings は廃止（エラー通知は常時有効化されたため）
 
     # --- 静的ファイル & フロントエンド ---
 

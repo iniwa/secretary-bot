@@ -29,6 +29,12 @@ _ERROR_PATTERNS = [
     re.compile(r'"level"\s*:\s*"(ERROR|CRITICAL|FATAL)"', re.IGNORECASE),
 ]
 
+# 警告検出パターン（エラーより緩め、通知は出さない別セクション扱い）
+_WARN_PATTERNS = [
+    re.compile(r'\bWARN(ING)?\b'),
+    re.compile(r'"level"\s*:\s*"WARN(ING)?"', re.IGNORECASE),
+]
+
 # デフォルト除外パターン
 _DEFAULT_IGNORES = [
     "Migration stmt skipped",
@@ -61,7 +67,6 @@ _EXTRACT_PROMPT = """\
 
 _DOCKER_SOCKET = "/var/run/docker.sock"
 _API_VERSION = "v1.43"
-_SETTING_NOTIFY_DISCORD = "docker_monitor.notify_discord"
 
 
 class DockerLogMonitorUnit(BaseUnit):
@@ -190,20 +195,25 @@ class DockerLogMonitorUnit(BaseUnit):
     async def _show_status(self) -> str:
         if not self._enabled:
             return "Docker ログ監視は無効です。"
-        notify = await self.bot.database.get_setting(_SETTING_NOTIFY_DISCORD)
         exclusion_count = await self.bot.database.fetchone(
             "SELECT COUNT(*) as cnt FROM docker_log_exclusions"
         )
         error_count = await self.bot.database.fetchone(
-            "SELECT COUNT(*) as cnt FROM docker_error_log WHERE dismissed = 0"
+            "SELECT COUNT(*) as cnt FROM docker_error_log "
+            "WHERE dismissed = 0 AND level = 'error'"
+        )
+        warn_count = await self.bot.database.fetchone(
+            "SELECT COUNT(*) as cnt FROM docker_error_log "
+            "WHERE dismissed = 0 AND level = 'warning'"
         )
         cnt_ex = exclusion_count["cnt"] if exclusion_count else 0
         cnt_err = error_count["cnt"] if error_count else 0
+        cnt_warn = warn_count["cnt"] if warn_count else 0
         return (
             f"Docker ログ監視: **稼働中**\n"
             f"チェック間隔: {self._interval}秒\n"
-            f"Discord通知: {'ON' if notify == '1' else 'OFF'}\n"
             f"未対応エラー: {cnt_err}件\n"
+            f"未対応警告: {cnt_warn}件\n"
             f"除外パターン数: {cnt_ex}"
         )
 
@@ -237,6 +247,7 @@ class DockerLogMonitorUnit(BaseUnit):
             return
 
         new_errors: list[dict] = []
+        new_warnings: list[dict] = []
 
         for c in containers:
             name = (c.get("Names") or ["/unknown"])[0].lstrip("/")
@@ -260,34 +271,42 @@ class DockerLogMonitorUnit(BaseUnit):
             lines = self._parse_docker_logs(raw)
 
             for line in lines:
-                if not self._is_error_line(line):
+                level = self._classify_line(line)
+                if level is None:
                     continue
                 if self._is_excluded(line, exclusions):
                     continue
                 if not self._is_new_error(name, line):
                     continue
-                new_errors.append({"container": name, "message": line})
+                entry = {"container": name, "message": line, "level": level}
+                if level == "error":
+                    new_errors.append(entry)
+                else:
+                    new_warnings.append(entry)
 
         if new_errors:
-            await self._save_errors(new_errors)
+            await self._save_entries(new_errors)
+            # エラーは常にミミちゃん口調で通知
+            await self._send_mimi_alert(new_errors)
 
-            # Discord 通知トグルチェック
-            notify = await self.bot.database.get_setting(_SETTING_NOTIFY_DISCORD)
-            if notify == "1":
-                await self._send_discord_notification(new_errors)
+        if new_warnings:
+            await self._save_entries(new_warnings)
+            # 警告は保存のみ、通知は出さない
 
     # ================================================================
-    # エラーの DB 保存
+    # エラー/警告 の DB 保存
     # ================================================================
-    async def _save_errors(self, errors: list[dict]) -> None:
+    async def _save_entries(self, entries: list[dict]) -> None:
+        """error / warning を同一テーブルに level 付きで保存する。"""
         now = jst_now()
-        for e in errors:
+        for e in entries:
             normalized = self._normalize_message(e["message"])
-            # 同一コンテナ・同一メッセージの既存レコードを更新（カウント増加）
+            level = e.get("level", "error")
+            # 同一コンテナ・同一メッセージ・同一レベルの既存レコードを更新
             existing = await self.bot.database.fetchone(
                 "SELECT id, count FROM docker_error_log "
-                "WHERE container_name = ? AND message = ? AND dismissed = 0",
-                (e["container"], normalized),
+                "WHERE container_name = ? AND message = ? AND level = ? AND dismissed = 0",
+                (e["container"], normalized, level),
             )
             if existing:
                 await self.bot.database.execute(
@@ -296,9 +315,10 @@ class DockerLogMonitorUnit(BaseUnit):
                 )
             else:
                 await self.bot.database.execute(
-                    "INSERT INTO docker_error_log (container_name, message, first_seen, last_seen) "
-                    "VALUES (?, ?, ?, ?)",
-                    (e["container"], normalized, now, now),
+                    "INSERT INTO docker_error_log "
+                    "(container_name, message, first_seen, last_seen, level) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (e["container"], normalized, now, now, level),
                 )
 
     # ================================================================
@@ -375,8 +395,14 @@ class DockerLogMonitorUnit(BaseUnit):
         return normalized.strip()
 
     @staticmethod
-    def _is_error_line(line: str) -> bool:
-        return any(p.search(line) for p in _ERROR_PATTERNS)
+    def _classify_line(line: str) -> str | None:
+        """行を error / warning に分類。該当しなければ None。
+        error パターンを優先（WARNING を含んでも ERROR があれば error 扱い）。"""
+        if any(p.search(line) for p in _ERROR_PATTERNS):
+            return "error"
+        if any(p.search(line) for p in _WARN_PATTERNS):
+            return "warning"
+        return None
 
     @staticmethod
     def _is_excluded(line: str, exclusions: list[str]) -> bool:
@@ -398,28 +424,61 @@ class DockerLogMonitorUnit(BaseUnit):
         return True
 
     # ================================================================
-    # Discord 通知（トグルで制御）
+    # Discord 通知（エラーのみ、ミミちゃん口調で常時通知）
     # ================================================================
-    async def _send_discord_notification(self, errors: list[dict]) -> None:
+    async def _send_mimi_alert(self, errors: list[dict]) -> None:
+        """新規エラーを Mimi ペルソナで Discord に通知する。警告は含めない。"""
+        # 生のサマリを作る（コンテナ別にグルーピング）
         by_container: dict[str, list[str]] = {}
         for e in errors:
             by_container.setdefault(e["container"], []).append(e["message"])
 
-        parts = ["**[Docker Log Alert]**"]
+        summary_parts: list[str] = []
         for cname, msgs in by_container.items():
-            parts.append(f"\n**{cname}** ({len(msgs)}件):")
-            for msg in msgs[:5]:
-                short = self._normalize_message(msg)[:300]
-                if len(msg) > 300:
-                    short += "…"
-                parts.append(f"```\n{short}\n```")
-            if len(msgs) > 5:
-                parts.append(f"  ...他 {len(msgs) - 5} 件")
+            summary_parts.append(f"【{cname}】 {len(msgs)} 件")
+            for msg in msgs[:3]:
+                short = self._normalize_message(msg)[:200]
+                summary_parts.append(f"  - {short}")
+            if len(msgs) > 3:
+                summary_parts.append(f"  …他 {len(msgs) - 3} 件")
+        raw_summary = "\n".join(summary_parts)
 
-        text = "\n".join(parts)
+        # Ollama でペルソナ変換を試み、失敗時は生サマリを送る
+        text = await self._mimi_voice(raw_summary)
         if len(text) > 1900:
             text = text[:1900] + "\n…(truncated)"
         await self.notify(text)
+
+    async def _mimi_voice(self, raw_summary: str) -> str:
+        """Ollama 稼働時はミミちゃん口調に変換、それ以外は素のテキストを返す。
+        BaseUnit.personalize はユーザー発言が前提なので、自律通知用に直接 llm を叩く。"""
+        header = "**[Docker Error Alert]**\n"
+        fallback = header + raw_summary
+        if not self.bot.llm_router.ollama_available:
+            return fallback
+        persona = self.bot.config.get("character", {}).get("persona", "")
+        if not persona:
+            return fallback
+        try:
+            system = (
+                f"{persona}\n\n"
+                "あなたが監視している Docker コンテナで新しいエラーを検出しました。"
+                "マスターにキャラクターらしい口調で短く自然に伝えてください。"
+                "コンテナ名と件数は正確に残し、冗長にならないよう 3〜5 文以内で。"
+                "技術情報（エラーメッセージの内容）はそのまま引用して構いません。"
+            )
+            prompt = (
+                "検出された Docker エラー:\n"
+                f"{raw_summary}\n\n"
+                "このエラー発生をマスターに知らせる一言を生成してください。"
+            )
+            generated = await self.llm.generate(prompt, system=system)
+            if not generated:
+                return fallback
+            return header + generated.strip()
+        except Exception as e:
+            log.warning("Mimi voice generation failed: %s", e)
+            return fallback
 
 
 async def setup(bot) -> None:

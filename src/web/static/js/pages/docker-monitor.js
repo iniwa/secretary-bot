@@ -1,4 +1,4 @@
-/** Docker Monitor page — errors list, exclusion patterns, Discord notification toggle. */
+/** Docker Monitor page — errors list, warnings list, exclusion patterns. */
 import { api } from '../api.js';
 import { toast } from '../app.js';
 
@@ -6,12 +6,18 @@ import { toast } from '../app.js';
 // State
 // ============================================================
 let activeTab = 'errors';
+// errors
 let errors = [];
 let errorsTotal = 0;
 let errorsLoading = false;
-let showDismissed = false;
+let errorsShowDismissed = false;
+// warnings (別セクション、通知なし)
+let warnings = [];
+let warningsTotal = 0;
+let warningsLoading = false;
+let warningsShowDismissed = false;
+// exclusions
 let exclusions = [];
-let notifyDiscord = false;
 
 // ============================================================
 // Helpers
@@ -274,8 +280,8 @@ export function render() {
 <div class="dm-page">
   <div class="dm-tabs">
     <button class="dm-tab active" data-tab="errors">Errors</button>
+    <button class="dm-tab" data-tab="warnings">Warnings</button>
     <button class="dm-tab" data-tab="exclusions">Exclusions</button>
-    <button class="dm-tab" data-tab="settings">Settings</button>
   </div>
 
   <!-- Errors panel -->
@@ -283,12 +289,27 @@ export function render() {
     <div class="dm-toolbar">
       <div class="dm-stats" id="dm-errors-stats">Loading...</div>
       <label class="dm-checkbox-label">
-        <input type="checkbox" id="dm-show-dismissed"> 対応済みを表示
+        <input type="checkbox" id="dm-errors-show-dismissed"> 対応済みを表示
       </label>
       <button class="btn btn-sm" id="dm-refresh-errors">更新</button>
-      <button class="btn btn-sm btn-danger" id="dm-dismiss-all">全て対応済みに</button>
+      <button class="btn btn-sm btn-danger" id="dm-dismiss-all-errors">全て対応済みに</button>
     </div>
     <div class="dm-list" id="dm-errors-list">
+      <div class="dm-empty">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Warnings panel -->
+  <div class="dm-panel" id="dm-panel-warnings">
+    <div class="dm-toolbar">
+      <div class="dm-stats" id="dm-warnings-stats">Loading...</div>
+      <label class="dm-checkbox-label">
+        <input type="checkbox" id="dm-warnings-show-dismissed"> 対応済みを表示
+      </label>
+      <button class="btn btn-sm" id="dm-refresh-warnings">更新</button>
+      <button class="btn btn-sm btn-danger" id="dm-dismiss-all-warnings">全て対応済みに</button>
+    </div>
+    <div class="dm-list" id="dm-warnings-list">
       <div class="dm-empty">Loading...</div>
     </div>
   </div>
@@ -304,31 +325,23 @@ export function render() {
       <div class="dm-empty">Loading...</div>
     </div>
   </div>
-
-  <!-- Settings panel -->
-  <div class="dm-panel" id="dm-panel-settings">
-    <div class="card dm-settings-row">
-      <div>
-        <div class="dm-settings-label">Discord 通知</div>
-        <div class="dm-settings-desc">
-          エラー検出時に Discord へ通知します。OFF の場合は WebGUI 上でのみ確認可能です。
-        </div>
-      </div>
-      <div class="dm-toggle" id="dm-notify-toggle"></div>
-    </div>
-  </div>
 </div>`;
 }
 
 // ============================================================
-// Errors loading
+// Errors / Warnings loading（level 指定で同一 API を使う）
 // ============================================================
 async function loadErrors() {
   if (errorsLoading) return;
   errorsLoading = true;
   try {
     const data = await api('/api/docker-monitor/errors', {
-      params: { dismissed: showDismissed ? 1 : 0, limit: 200, offset: 0 },
+      params: {
+        dismissed: errorsShowDismissed ? 1 : 0,
+        level: 'error',
+        limit: 200,
+        offset: 0,
+      },
     });
     errors = data?.items || [];
     errorsTotal = data?.total ?? 0;
@@ -340,23 +353,32 @@ async function loadErrors() {
   }
 }
 
-function renderErrors() {
-  const stats = $('dm-errors-stats');
-  if (stats) {
-    const label = showDismissed ? '対応済みエラー' : '未対応エラー';
-    stats.textContent = `${label}: ${errorsTotal}件`;
+async function loadWarnings() {
+  if (warningsLoading) return;
+  warningsLoading = true;
+  try {
+    const data = await api('/api/docker-monitor/errors', {
+      params: {
+        dismissed: warningsShowDismissed ? 1 : 0,
+        level: 'warning',
+        limit: 200,
+        offset: 0,
+      },
+    });
+    warnings = data?.items || [];
+    warningsTotal = data?.total ?? 0;
+    renderWarnings();
+  } catch (err) {
+    toast('警告一覧の取得に失敗しました: ' + err.message, 'error');
+  } finally {
+    warningsLoading = false;
   }
+}
 
-  const list = $('dm-errors-list');
-  if (!list) return;
-
-  if (!errors.length) {
-    list.innerHTML = `<div class="dm-empty">${showDismissed ? '対応済みエラーはありません。' : '未対応のエラーはありません。'}</div>`;
-    return;
-  }
-
-  list.innerHTML = errors.map(e => `
-    <div class="card dm-card" data-error-id="${e.id}">
+/** 汎用: items 配列を dm-card の HTML 文字列に展開する。 */
+function renderCards(items, showDismissed, level) {
+  return items.map(e => `
+    <div class="card dm-card" data-entry-id="${e.id}" data-level="${level}">
       <div class="dm-card-header">
         <span class="dm-container-name">${esc(e.container_name)}</span>
         <span class="dm-count-badge">${e.count}回検出</span>
@@ -374,33 +396,71 @@ function renderErrors() {
   `).join('');
 }
 
-async function dismissError(id) {
+function renderErrors() {
+  const stats = $('dm-errors-stats');
+  if (stats) {
+    const label = errorsShowDismissed ? '対応済みエラー' : '未対応エラー';
+    stats.textContent = `${label}: ${errorsTotal}件`;
+  }
+  const list = $('dm-errors-list');
+  if (!list) return;
+  if (!errors.length) {
+    list.innerHTML = `<div class="dm-empty">${errorsShowDismissed ? '対応済みエラーはありません。' : '未対応のエラーはありません。'}</div>`;
+    return;
+  }
+  list.innerHTML = renderCards(errors, errorsShowDismissed, 'error');
+}
+
+function renderWarnings() {
+  const stats = $('dm-warnings-stats');
+  if (stats) {
+    const label = warningsShowDismissed ? '対応済み警告' : '未対応警告';
+    stats.textContent = `${label}: ${warningsTotal}件`;
+  }
+  const list = $('dm-warnings-list');
+  if (!list) return;
+  if (!warnings.length) {
+    list.innerHTML = `<div class="dm-empty">${warningsShowDismissed ? '対応済み警告はありません。' : '未対応の警告はありません。'}</div>`;
+    return;
+  }
+  list.innerHTML = renderCards(warnings, warningsShowDismissed, 'warning');
+}
+
+/** エントリの対応済み化（エラー・警告共通）。対応後は該当タブを再読み込み。 */
+async function dismissEntry(id, level) {
   try {
     await api(`/api/docker-monitor/errors/${id}/dismiss`, { method: 'POST' });
     toast('対応済みにしました', 'success');
-    await loadErrors();
+    if (level === 'warning') await loadWarnings();
+    else await loadErrors();
   } catch (err) {
     toast('対応済み化に失敗: ' + err.message, 'error');
   }
 }
 
-async function deleteError(id) {
-  if (!confirm('このエラーレコードを削除しますか？')) return;
+async function deleteEntry(id, level) {
+  if (!confirm('このレコードを削除しますか？')) return;
   try {
     await api(`/api/docker-monitor/errors/${id}`, { method: 'DELETE' });
     toast('削除しました', 'success');
-    await loadErrors();
+    if (level === 'warning') await loadWarnings();
+    else await loadErrors();
   } catch (err) {
     toast('削除に失敗: ' + err.message, 'error');
   }
 }
 
-async function dismissAllErrors() {
-  if (!confirm('表示中の未対応エラーをすべて対応済みにしますか？')) return;
+async function dismissAllByLevel(level) {
+  const label = level === 'warning' ? '警告' : 'エラー';
+  if (!confirm(`未対応の${label}をすべて対応済みにしますか？`)) return;
   try {
-    await api('/api/docker-monitor/errors/dismiss-all', { method: 'POST' });
+    await api('/api/docker-monitor/errors/dismiss-all', {
+      method: 'POST',
+      params: { level },
+    });
     toast('すべて対応済みにしました', 'success');
-    await loadErrors();
+    if (level === 'warning') await loadWarnings();
+    else await loadErrors();
   } catch (err) {
     toast('一括対応に失敗: ' + err.message, 'error');
   }
@@ -474,39 +534,6 @@ async function deleteExclusion(id) {
 }
 
 // ============================================================
-// Settings
-// ============================================================
-async function loadSettings() {
-  try {
-    const data = await api('/api/docker-monitor/settings');
-    notifyDiscord = !!data?.notify_discord;
-    renderSettings();
-  } catch (err) {
-    toast('設定の取得に失敗: ' + err.message, 'error');
-  }
-}
-
-function renderSettings() {
-  const toggle = $('dm-notify-toggle');
-  if (toggle) toggle.classList.toggle('on', notifyDiscord);
-}
-
-async function toggleNotify() {
-  const next = !notifyDiscord;
-  try {
-    await api('/api/docker-monitor/settings', {
-      method: 'PUT',
-      body: { notify_discord: next },
-    });
-    notifyDiscord = next;
-    renderSettings();
-    toast(`Discord 通知を ${next ? 'ON' : 'OFF'} にしました`, 'success');
-  } catch (err) {
-    toast('設定変更に失敗: ' + err.message, 'error');
-  }
-}
-
-// ============================================================
 // Tab switching
 // ============================================================
 function switchTab(tab) {
@@ -521,8 +548,21 @@ function switchTab(tab) {
   });
 
   if (tab === 'errors') loadErrors();
+  else if (tab === 'warnings') loadWarnings();
   else if (tab === 'exclusions') loadExclusions();
-  else if (tab === 'settings') loadSettings();
+}
+
+/** data-action クリックを id + level 付きでディスパッチする共通ハンドラ。 */
+function handleEntryClick(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const card = btn.closest('.dm-card');
+  if (!card) return;
+  const id = card.dataset.entryId;
+  const level = card.dataset.level || 'error';
+  if (!id) return;
+  if (btn.dataset.action === 'dismiss') dismissEntry(id, level);
+  else if (btn.dataset.action === 'delete') deleteEntry(id, level);
 }
 
 // ============================================================
@@ -535,23 +575,24 @@ export async function mount() {
   });
 
   // Errors toolbar
-  $('dm-show-dismissed')?.addEventListener('change', e => {
-    showDismissed = e.target.checked;
+  $('dm-errors-show-dismissed')?.addEventListener('change', e => {
+    errorsShowDismissed = e.target.checked;
     loadErrors();
   });
   $('dm-refresh-errors')?.addEventListener('click', () => loadErrors());
-  $('dm-dismiss-all')?.addEventListener('click', () => dismissAllErrors());
+  $('dm-dismiss-all-errors')?.addEventListener('click', () => dismissAllByLevel('error'));
 
-  // Errors list delegation
-  $('dm-errors-list')?.addEventListener('click', e => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const card = btn.closest('.dm-card');
-    if (!card) return;
-    const id = card.dataset.errorId;
-    if (btn.dataset.action === 'dismiss') dismissError(id);
-    else if (btn.dataset.action === 'delete') deleteError(id);
+  // Warnings toolbar
+  $('dm-warnings-show-dismissed')?.addEventListener('change', e => {
+    warningsShowDismissed = e.target.checked;
+    loadWarnings();
   });
+  $('dm-refresh-warnings')?.addEventListener('click', () => loadWarnings());
+  $('dm-dismiss-all-warnings')?.addEventListener('click', () => dismissAllByLevel('warning'));
+
+  // List delegation (errors + warnings 共通ハンドラ)
+  $('dm-errors-list')?.addEventListener('click', handleEntryClick);
+  $('dm-warnings-list')?.addEventListener('click', handleEntryClick);
 
   // Exclusions
   $('dm-exc-add')?.addEventListener('click', () => addExclusion());
@@ -569,9 +610,6 @@ export async function mount() {
     deleteExclusion(card.dataset.excId);
   });
 
-  // Settings toggle
-  $('dm-notify-toggle')?.addEventListener('click', () => toggleNotify());
-
   // Initial load for active tab
   await loadErrors();
 }
@@ -581,7 +619,10 @@ export function unmount() {
   errors = [];
   errorsTotal = 0;
   errorsLoading = false;
-  showDismissed = false;
+  errorsShowDismissed = false;
+  warnings = [];
+  warningsTotal = 0;
+  warningsLoading = false;
+  warningsShowDismissed = false;
   exclusions = [];
-  notifyDiscord = false;
 }
