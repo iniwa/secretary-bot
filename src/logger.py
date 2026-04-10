@@ -56,6 +56,9 @@ def setup_logging(verbose: bool = False) -> None:
     root.setLevel(level)
     root.handlers.clear()
     root.addHandler(handler)
+    # chromadb 0.6.x × posthog 7.x の API 不整合で telemetry 送信が毎回失敗する。
+    # 動作には影響しないのでロガーを黙らせる。
+    logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 
 
 def get_logger(name: str) -> logging.Logger:
