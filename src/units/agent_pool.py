@@ -157,7 +157,7 @@ class AgentPool:
                 return False, "CPU高負荷"
 
             # メモリ使用率
-            mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
+            mem_query = f'100 - (windows_memory_physical_free_bytes{{instance="{instance}"}} / windows_memory_physical_total_bytes{{instance="{instance}"}} * 100)'
             resp = await http.get(
                 f"{self._metrics_url}/api/v1/query",
                 params={"query": mem_query},
@@ -263,7 +263,7 @@ class AgentPool:
             # メモリ
             mem_limit = thresholds.get("memory_percent", 85)
             try:
-                mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
+                mem_query = f'100 - (windows_memory_physical_free_bytes{{instance="{instance}"}} / windows_memory_physical_total_bytes{{instance="{instance}"}} * 100)'
                 resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": mem_query})
                 mem_val = float(resp.json()["data"]["result"][0]["value"][1])
                 checks.append({"name": "メモリ使用率", "ok": mem_val <= mem_limit, "detail": f"{mem_val:.1f}% (上限{mem_limit}%)"})
