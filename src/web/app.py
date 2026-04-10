@@ -210,6 +210,26 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting(f"delegation_mode.{agent_id}", mode)
         return {"ok": True}
 
+    @app.post("/api/agents/{agent_id}/pause", dependencies=[Depends(_verify)])
+    async def pause_agent(agent_id: str, request: Request):
+        """エージェントを一時停止する。"""
+        body = await request.json()
+        duration_minutes = body.get("duration_minutes", 30)
+        if duration_minutes <= 0 or duration_minutes > 720:  # 最大12時間
+            raise HTTPException(400, "duration_minutes must be 1-720")
+        pool = bot.unit_manager.agent_pool
+        pool.pause_agent(agent_id, duration_minutes * 60)
+        log.info("Agent %s paused for %d minutes via WebGUI", agent_id, duration_minutes)
+        return {"ok": True, "paused_minutes": duration_minutes}
+
+    @app.delete("/api/agents/{agent_id}/pause", dependencies=[Depends(_verify)])
+    async def unpause_agent(agent_id: str):
+        """エージェントの一時停止を解除する。"""
+        pool = bot.unit_manager.agent_pool
+        pool.unpause_agent(agent_id)
+        log.info("Agent %s unpaused via WebGUI", agent_id)
+        return {"ok": True}
+
     async def _restart_container() -> dict:
         """Portainer API 経由でコンテナを再起動する。{"restarted": bool, "detail": str} を返す。"""
         portainer_url = os.environ.get("PORTAINER_URL", "")

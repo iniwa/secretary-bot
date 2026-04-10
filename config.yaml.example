@@ -48,6 +48,7 @@ delegation:
   thresholds:
     cpu_percent: 80
     memory_percent: 85
+    gpu_percent: 80          # nvidia_smi_exporter 経由（0で無効化）
 
 # ユニット設定
 units:

@@ -77,6 +77,7 @@ class SecretaryBot(commands.Bot):
         self.heartbeat = Heartbeat(self)
         self.unit_manager = UnitManager(self)
         self.activity_detector = ActivityDetector(self, config)
+        self.unit_manager.agent_pool.set_activity_detector(self.activity_detector)
         from src.status_collector import StatusCollector
         self.status_collector = StatusCollector(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))

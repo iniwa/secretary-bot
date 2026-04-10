@@ -45,6 +45,7 @@ const pages = {
 
 let currentPage = null;
 let currentModule = null;
+let _navGen = 0;  // ナビゲーション世代カウンター（高速切り替え時の競合防止）
 
 // ============================================================
 // Router
@@ -65,6 +66,7 @@ async function navigate(pageName) {
   currentPage = pageName;
   const page = pages[pageName];
   currentModule = page.module;
+  const gen = ++_navGen;  // この navigate 呼び出しの世代を記録
 
   // Update nav
   document.querySelectorAll('.nav-item').forEach(el => {
@@ -81,6 +83,8 @@ async function navigate(pageName) {
     try {
       await page.module.mount();
     } catch (err) {
+      // 世代が変わっていたら（別ページへ遷移済み）エラーを無視
+      if (gen !== _navGen) return;
       console.error(`Page mount error (${pageName}):`, err);
       toast(`Failed to load ${page.title}`, 'error');
     }

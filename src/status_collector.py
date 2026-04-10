@@ -73,11 +73,16 @@ class StatusCollector:
 
     async def _check_agent(self, pool, agent: dict) -> dict:
         alive = await pool._is_alive(agent)
+        aid = agent["id"]
+        pause_remaining = pool.get_pause_remaining(aid)
         return {
-            "id": agent["id"],
-            "name": agent.get("name", agent["id"]),
+            "id": aid,
+            "name": agent.get("name", aid),
             "alive": alive,
-            "mode": pool.get_mode(agent["id"]),
+            "mode": pool.get_mode(aid),
+            "block_reasons": pool.get_block_reasons(aid),
+            "paused": pool.is_paused(aid),
+            "pause_remaining": pause_remaining,
         }
 
     async def _get_db_stats(self) -> dict:

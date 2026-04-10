@@ -1,6 +1,7 @@
 """複数Windows PCの管理・フォールバック。"""
 
 import os
+import time
 
 import httpx
 
@@ -22,6 +23,12 @@ class AgentPool:
         self._modes: dict[str, str] = {}  # agent_id → "allow" | "deny" | "auto"
         # 共有httpxクライアント（毎回生成しない）
         self._http: httpx.AsyncClient | None = None
+        # ActivityDetector への参照
+        self._activity_detector = None
+        # 一時停止: agent_id → Unix timestamp（終了時刻）
+        self._paused_until: dict[str, float] = {}
+        # 最後の select_agent 時のブロック理由キャッシュ
+        self._block_reasons: dict[str, list[str]] = {}
 
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
@@ -38,19 +45,73 @@ class AgentPool:
     def get_mode(self, agent_id: str) -> str:
         return self._modes.get(agent_id, "auto")
 
+    def set_activity_detector(self, detector) -> None:
+        """ActivityDetector への参照をセット（bot.py 起動時に呼ばれる）。"""
+        self._activity_detector = detector
+
+    def pause_agent(self, agent_id: str, seconds: int) -> None:
+        """指定エージェントを seconds 秒間一時停止する。"""
+        self._paused_until[agent_id] = time.time() + seconds
+
+    def unpause_agent(self, agent_id: str) -> None:
+        """一時停止を解除する。"""
+        self._paused_until.pop(agent_id, None)
+
+    def is_paused(self, agent_id: str) -> bool:
+        """一時停止中か判定。期限切れなら自動クリーンアップ。"""
+        until = self._paused_until.get(agent_id)
+        if until is None:
+            return False
+        if time.time() >= until:
+            self._paused_until.pop(agent_id, None)
+            return False
+        return True
+
+    def get_pause_remaining(self, agent_id: str) -> int | None:
+        """一時停止の残り秒数を返す。停止中でなければ None。"""
+        until = self._paused_until.get(agent_id)
+        if until is None:
+            return None
+        remaining = int(until - time.time())
+        if remaining <= 0:
+            self._paused_until.pop(agent_id, None)
+            return None
+        return remaining
+
+    def get_block_reasons(self, agent_id: str) -> list[str]:
+        """最後の select_agent 時に記録されたブロック理由を返す。"""
+        return list(self._block_reasons.get(agent_id, []))
+
     async def select_agent(self, preferred: str | None = None) -> dict | None:
         agents = list(self._agents)
         if preferred:
             agents.sort(key=lambda a: 0 if a["id"] == preferred else 1)
 
+        self._block_reasons = {}
         for agent in agents:
-            mode = self.get_mode(agent["id"])
+            aid = agent["id"]
+            reasons = []
+            mode = self.get_mode(aid)
             if mode == "deny":
                 continue
+            if self.is_paused(aid):
+                reasons.append("一時停止中")
+                self._block_reasons[aid] = reasons
+                continue
             if not await self._is_alive(agent):
+                reasons.append("オフライン")
+                self._block_reasons[aid] = reasons
                 continue
-            if mode == "auto" and not await self._is_idle(agent):
-                continue
+            if mode == "auto":
+                idle, idle_reason = await self._is_idle_detailed(agent)
+                if not idle:
+                    reasons.append(idle_reason)
+                activity_ok, activity_reason = await self._is_activity_ok(agent)
+                if not activity_ok:
+                    reasons.append(activity_reason)
+                if reasons:
+                    self._block_reasons[aid] = reasons
+                    continue
             return agent
 
         return None
@@ -64,13 +125,18 @@ class AgentPool:
             return False
 
     async def _is_idle(self, agent: dict) -> bool:
-        """VictoriaMetrics APIでCPU・メモリ使用率を確認。"""
+        """後方互換ラッパー。"""
+        result, _ = await self._is_idle_detailed(agent)
+        return result
+
+    async def _is_idle_detailed(self, agent: dict) -> tuple[bool, str | None]:
+        """VictoriaMetrics APIでCPU・メモリ・GPU使用率を確認。"""
         if not self._metrics_url:
-            return True  # メトリクスなしなら委託許可
+            return True, None  # メトリクスなしなら委託許可
 
         instance = agent.get("metrics_instance", "")
         if not instance:
-            return True
+            return True, None
 
         thresholds = self._delegation_config.get("thresholds", {})
         cpu_limit = thresholds.get("cpu_percent", 80)
@@ -88,7 +154,7 @@ class AgentPool:
             cpu_val = float(cpu_data["data"]["result"][0]["value"][1])
             if cpu_val > cpu_limit:
                 log.info("Agent %s CPU too high: %.1f%%", agent["id"], cpu_val)
-                return False
+                return False, "CPU高負荷"
 
             # メモリ使用率
             mem_query = f'100 - (windows_os_physical_memory_free_bytes{{instance="{instance}"}} / windows_cs_physical_memory_bytes{{instance="{instance}"}} * 100)'
@@ -100,12 +166,62 @@ class AgentPool:
             mem_val = float(mem_data["data"]["result"][0]["value"][1])
             if mem_val > mem_limit:
                 log.info("Agent %s memory too high: %.1f%%", agent["id"], mem_val)
-                return False
+                return False, "メモリ高負荷"
 
-            return True
+            # GPU使用率（nvidia_smi_exporter 想定）
+            gpu_limit = thresholds.get("gpu_percent", 80)
+            if gpu_limit > 0:
+                try:
+                    gpu_query = f'nvidia_smi_utilization_gpu_ratio{{instance="{instance}"}} * 100'
+                    resp = await http.get(
+                        f"{self._metrics_url}/api/v1/query",
+                        params={"query": gpu_query},
+                    )
+                    gpu_data = resp.json()
+                    results = gpu_data.get("data", {}).get("result", [])
+                    if results:
+                        gpu_val = float(results[0]["value"][1])
+                        if gpu_val > gpu_limit:
+                            log.info("Agent %s GPU too high: %.1f%%", agent["id"], gpu_val)
+                            return False, "GPU高負荷"
+                except Exception:
+                    pass  # GPU メトリクス未設定時は無視
+
+            return True, None
         except Exception as e:
             log.warning("Metrics check failed for %s: %s", agent["id"], e)
-            return True  # メトリクス取得失敗時は委託許可
+            return True, None  # メトリクス取得失敗時は委託許可
+
+    async def _is_activity_ok(self, agent: dict) -> tuple[bool, str | None]:
+        """アクティビティ検出によるブロック判定。"""
+        if not self._activity_detector:
+            return True, None
+
+        try:
+            status = await self._activity_detector.get_status()
+        except Exception:
+            return True, None  # 取得失敗時は許可
+
+        role = agent.get("role", "")
+        rules = self._activity_detector._block_rules
+
+        if role == "main":
+            gaming = status.get("gaming", {})
+            if gaming.get("active") and rules.get("gaming_on_main", False):
+                game_name = gaming.get("game", "不明")
+                return False, f"ゲーム中({game_name})"
+        elif role == "sub":
+            if status.get("obs_streaming") and rules.get("obs_streaming", True):
+                return False, "OBS配信中"
+            if status.get("obs_recording") and rules.get("obs_recording", True):
+                return False, "OBS録画中"
+            if status.get("obs_replay_buffer") and rules.get("obs_replay_buffer", False):
+                return False, "OBSリプレイバッファ"
+
+        if status.get("discord_vc") and rules.get("discord_vc", False):
+            return False, "Discord VC接続中"
+
+        return True, None
 
     async def check_version(self, agent: dict) -> bool:
         """バージョンチェック。不一致時は /update を呼ぶ。"""

@@ -4,6 +4,8 @@ import { toast } from '../app.js';
 
 function $(id) { return document.getElementById(id); }
 
+let _active = false;
+
 const BREAKER_BADGE = {
   closed:    'badge-success',
   open:      'badge-error',
@@ -91,8 +93,29 @@ export function render() {
     font-size: 0.8125rem;
     min-width: 80px;
   }
-  .agent-mode-select {
+  .agent-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .agent-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     margin-left: auto;
+    flex-shrink: 0;
+  }
+  .block-reasons {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .pause-remaining {
+    font-size: 0.75rem;
+    color: var(--warning);
   }
   .btn-row {
     display: flex;
@@ -291,6 +314,7 @@ function delegateBadge(delegateTo) {
 async function loadUnits() {
   try {
     const data = await api('/api/units/loaded');
+    if (!_active) return;
     const units = data?.units || [];
     if (units.length === 0) {
       $('m-units-body').innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No units loaded</td></tr>';
@@ -305,6 +329,7 @@ async function loadUnits() {
       </tr>
     `).join('');
   } catch (err) {
+    if (!_active) return;
     console.error('Load units:', err);
     $('m-units-body').innerHTML = '<tr><td colspan="4" style="color:var(--error)">Failed to load</td></tr>';
   }
@@ -313,6 +338,7 @@ async function loadUnits() {
 async function loadAgents() {
   try {
     const data = await api('/api/status');
+    if (!_active) return;
     const agents = data?.agents || [];
     if (agents.length === 0) {
       $('m-agents-list').innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem">No agents configured</div>';
@@ -320,10 +346,16 @@ async function loadAgents() {
     }
     $('m-agents-list').innerHTML = agents.map(a => {
       const isRestarting = a.status === 'restarting';
+      const isPaused = !!a.paused;
       let dotClass, statusLabel;
       if (isRestarting) {
         dotClass = 'warning pulse';
         statusLabel = `Restarting (${a.restart_elapsed}s)`;
+      } else if (isPaused) {
+        dotClass = 'warning';
+        const rem = a.pause_remaining;
+        const remText = rem != null ? ` (${Math.ceil(rem / 60)}min)` : '';
+        statusLabel = `Paused${remText}`;
       } else if (a.alive) {
         dotClass = 'online';
         statusLabel = 'Online';
@@ -334,19 +366,43 @@ async function loadAgents() {
       const currentMode = a.mode || 'auto';
       const agentIdEsc = esc(String(a.id));
       const agentNameEsc = esc(a.name || a.id);
+
+      // ブロック理由バッジ
+      const reasons = a.block_reasons || [];
+      const reasonsHtml = reasons.length > 0
+        ? `<span class="block-reasons">${reasons.map(r => `<span class="badge badge-warning">${esc(r)}</span>`).join('')}</span>`
+        : '';
+
+      // 一時停止コントロール
+      const pauseCtrl = isPaused
+        ? `<button class="btn btn-sm agent-unpause-btn" data-agent-id="${agentIdEsc}">Unpause</button>`
+        : `<select class="form-input agent-pause-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:120px">
+             <option value="">Pause...</option>
+             <option value="30">30min</option>
+             <option value="60">1h</option>
+             <option value="180">3h</option>
+           </select>`;
+
       return `
         <div class="agent-row">
-          <span class="agent-name">${agentNameEsc}</span>
-          <span class="agent-status">
-            <span class="status-dot ${dotClass}"></span>
-            ${statusLabel}
+          <span class="agent-info">
+            <span class="agent-name">${agentNameEsc}</span>
+            <span class="agent-status">
+              <span class="status-dot ${dotClass}"></span>
+              ${statusLabel}
+            </span>
+            ${reasonsHtml}
           </span>
-          <button class="btn btn-sm agent-restart-btn" data-action="restart-one" data-agent-id="${agentIdEsc}" data-agent-name="${agentNameEsc}">Restart</button>
-          <select class="form-input agent-mode-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:140px">
-            <option value="auto"${currentMode === 'auto' ? ' selected' : ''}>auto</option>
-            <option value="allow"${currentMode === 'allow' ? ' selected' : ''}>allow</option>
-            <option value="deny"${currentMode === 'deny' ? ' selected' : ''}>deny</option>
-          </select>
+          <span class="agent-controls">
+            ${pauseCtrl}
+            <button class="btn btn-sm agent-restart-btn" data-action="restart-one" data-agent-id="${agentIdEsc}" data-agent-name="${agentNameEsc}">Restart</button>
+            <select class="form-input agent-mode-select" data-agent-id="${agentIdEsc}" style="width:auto;max-width:140px"
+              ${isPaused ? 'disabled' : ''}>
+              <option value="auto"${currentMode === 'auto' ? ' selected' : ''}>auto</option>
+              <option value="allow"${currentMode === 'allow' ? ' selected' : ''}>allow</option>
+              <option value="deny"${currentMode === 'deny' ? ' selected' : ''}>deny</option>
+            </select>
+          </span>
         </div>`;
     }).join('');
 
@@ -382,7 +438,43 @@ async function loadAgents() {
         setTimeout(() => loadAgents(), 8000);
       });
     });
+
+    // Attach pause select listeners (30min / 1h / 3h)
+    document.querySelectorAll('.agent-pause-select').forEach(sel => {
+      sel.addEventListener('change', async (e) => {
+        const minutes = parseInt(e.target.value, 10);
+        if (!minutes) return;
+        const agentId = e.target.dataset.agentId;
+        e.target.value = '';  // リセット
+        try {
+          await api(`/api/agents/${encodeURIComponent(agentId)}/pause`, {
+            method: 'POST', body: { duration_minutes: minutes },
+          });
+          toast(`${minutes} 分間一時停止しました`, 'success');
+          loadAgents();
+        } catch (err) {
+          console.error('Pause agent:', err);
+          toast('Pause failed: ' + err.message, 'error');
+        }
+      });
+    });
+
+    // Attach unpause listeners
+    document.querySelectorAll('.agent-unpause-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const agentId = e.currentTarget.dataset.agentId;
+        try {
+          await api(`/api/agents/${encodeURIComponent(agentId)}/pause`, { method: 'DELETE' });
+          toast('一時停止を解除しました', 'success');
+          loadAgents();
+        } catch (err) {
+          console.error('Unpause agent:', err);
+          toast('Unpause failed: ' + err.message, 'error');
+        }
+      });
+    });
   } catch (err) {
+    if (!_active) return;
     console.error('Load agents:', err);
     $('m-agents-list').innerHTML = '<div style="color:var(--error);font-size:0.8125rem">Failed to load agents</div>';
   }
@@ -391,11 +483,13 @@ async function loadAgents() {
 async function loadVersion() {
   try {
     const v = await api('/api/version');
+    if (!_active) return;
     const mainEl = $('m-current-version');
     const relayEl = $('m-current-relay-version');
     if (mainEl) mainEl.textContent = v?.main || '---';
     if (relayEl) relayEl.textContent = v?.input_relay || '---';
   } catch (err) {
+    if (!_active) return;
     console.error('Load version:', err);
   }
 }
@@ -405,6 +499,7 @@ async function verifyVersions() {
   if (!statusEl) return;
   try {
     const data = await api('/api/agents/versions');
+    if (!_active) return;
     const pi = data?.pi || '?';
     const agents = data?.agents || [];
     const allMatch = !!data?.all_match;
@@ -429,6 +524,7 @@ async function verifyVersions() {
     const deadCount = agents.filter(a => !a.alive).length;
     statusEl.innerHTML = `<span style="color:var(--warning)">&#9888; ${deadCount} agent(s) offline</span>`;
   } catch (err) {
+    if (!_active) return;
     console.error('Verify versions:', err);
     statusEl.innerHTML = '';
   }
@@ -436,10 +532,13 @@ async function verifyVersions() {
 
 // ---- mount ----
 
-export async function mount() {
-  // Load data in parallel
-  await Promise.all([loadUnits(), loadAgents(), loadVersion(), verifyVersions()]);
+export function unmount() {
+  _active = false;
+}
 
+export async function mount() {
+  _active = true;
+  // イベントリスナーを先に登録（データロード完了を待たずにボタンを押せるようにする）
   // Code Update button
   $('m-update-code').addEventListener('click', async () => {
     const btn = $('m-update-code');
@@ -585,4 +684,7 @@ export async function mount() {
       setLoading(btn, false);
     }
   });
+
+  // データロード（イベントリスナー登録後に非同期実行）
+  Promise.all([loadUnits(), loadAgents(), loadVersion(), verifyVersions()]);
 }
