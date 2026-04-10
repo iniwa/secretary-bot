@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 19
+_SCHEMA_VERSION = 20
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS llm_log (
     error     TEXT,
     tokens_per_sec REAL,
     eval_count INTEGER,
-    prompt_eval_count INTEGER
+    prompt_eval_count INTEGER,
+    instance TEXT
 );
 
 CREATE TABLE IF NOT EXISTS weather_subscriptions (
@@ -326,6 +327,9 @@ class Database:
             19: [
                 "ALTER TABLE docker_error_log ADD COLUMN level TEXT NOT NULL DEFAULT 'error'",
             ],
+            20: [
+                "ALTER TABLE llm_log ADD COLUMN instance TEXT",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -479,11 +483,12 @@ class Database:
         tokens_per_sec: float | None = None,
         eval_count: int | None = None,
         prompt_eval_count: int | None = None,
+        instance: str | None = None,
     ) -> None:
         await self.execute(
-            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count),
+            "INSERT INTO llm_log (timestamp, provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count, instance) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (jst_now(), provider, model, purpose, prompt_text, system_text, response_text, prompt_len, response_len, duration_ms, success, error, tokens_per_sec, eval_count, prompt_eval_count, instance),
         )
 
     async def get_llm_logs(

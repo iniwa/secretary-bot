@@ -5,7 +5,7 @@ import time
 from src.errors import AllLLMsUnavailableError, GeminiError, OllamaUnavailableError
 from src.flow_tracker import get_flow_tracker
 from src.llm.gemini_client import GeminiClient
-from src.llm.ollama_client import OllamaClient
+from src.llm.ollama_client import PURPOSE_PRIORITY, OllamaClient
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -23,22 +23,38 @@ class LLMRouter:
         self._config = config
         self._gemini_config = config.get("gemini", {})
 
-        # Ollama URLs を構築
-        # 1. config の llm.ollama_url（ローカル含む直接指定）
-        # 2. windows_agents のホストから自動構築
+        # Ollama URLs を優先度順に構築
+        # windows_agents の priority が小さいほど高優先
+        agents = config.get("windows_agents", [])
+        agents_sorted = sorted(agents, key=lambda a: a.get("priority", 99))
+
         ollama_urls = []
+        # 直接指定URL（ローカルOllama等）
         direct_url = config.get("llm", {}).get("ollama_url", "")
         if direct_url:
             ollama_urls.append(direct_url.rstrip("/"))
-        else:
-            # デフォルトでローカルOllamaを追加
-            ollama_urls.append("http://localhost:11434")
-        for agent in config.get("windows_agents", []):
+
+        # windows_agents から優先度順にURL構築
+        for agent in agents_sorted:
             host = agent.get("host", "")
             if host:
                 url = f"http://{host}:11434"
                 if url not in ollama_urls:
                     ollama_urls.append(url)
+
+        # URLが空の場合のみローカルフォールバック
+        if not ollama_urls:
+            ollama_urls.append("http://localhost:11434")
+
+        # URL → エージェント名のマッピング（WebGUI表示用）
+        self._url_to_name: dict[str, str] = {}
+        for agent in agents:
+            host = agent.get("host", "")
+            if host:
+                url = f"http://{host}:11434"
+                self._url_to_name[url] = agent.get("name", agent.get("id", host))
+        if direct_url:
+            self._url_to_name[direct_url.rstrip("/")] = "ローカル"
 
         model = config.get("llm", {}).get("ollama_model", "gemma4")
         timeout = int(config.get("llm", {}).get("ollama_timeout", 300))
@@ -50,6 +66,10 @@ class LLMRouter:
     def set_database(self, database) -> None:
         self._database = database
 
+    def get_url_name(self, url: str) -> str:
+        """URL からエージェント名を返す。"""
+        return self._url_to_name.get(url, url)
+
     async def _log_llm_call(
         self, provider: str, model: str, purpose: str,
         prompt_len: int, response_len: int, duration_ms: int,
@@ -59,6 +79,7 @@ class LLMRouter:
         tokens_per_sec: float | None = None,
         eval_count: int | None = None,
         prompt_eval_count: int | None = None,
+        instance: str | None = None,
     ) -> None:
         if self._database:
             try:
@@ -71,6 +92,7 @@ class LLMRouter:
                     tokens_per_sec=tokens_per_sec,
                     eval_count=eval_count,
                     prompt_eval_count=prompt_eval_count,
+                    instance=instance,
                 )
             except Exception as e:
                 log.debug("Failed to log LLM call: %s", e)
@@ -85,7 +107,6 @@ class LLMRouter:
             return False
         if not self._gemini_config.get(toggle_key, False):
             return False
-        # 月間トークン上限チェック
         limit = self._gemini_config.get("monthly_token_limit", 0)
         if limit > 0 and self.gemini.total_tokens_used >= limit:
             log.warning("Gemini monthly token limit reached")
@@ -117,13 +138,20 @@ class LLMRouter:
         if not self.ollama_available:
             await self.check_ollama()
 
+        # purpose → 優先度
+        priority = PURPOSE_PRIORITY.get(purpose, 2)
+
         # Ollama を優先
         if self.ollama_available:
             _model = ollama_model or self.ollama.model
             t0 = time.monotonic()
             try:
                 await ft.emit("OLLAMA", "active", {"model": _model}, flow_id)
-                result, metrics = await self.ollama.generate(prompt, system=system, model=ollama_model)
+                result, metrics = await self.ollama.generate(
+                    prompt, system=system, model=ollama_model,
+                    priority=priority, purpose=purpose,
+                )
+                instance = metrics.get("instance")
                 dur = int((time.monotonic() - t0) * 1000)
                 await self._log_llm_call(
                     "ollama", _model, purpose, len(prompt), len(result), dur,
@@ -131,8 +159,9 @@ class LLMRouter:
                     tokens_per_sec=metrics.get("tokens_per_sec"),
                     eval_count=metrics.get("eval_count"),
                     prompt_eval_count=metrics.get("prompt_eval_count"),
+                    instance=instance,
                 )
-                await ft.emit("OLLAMA", "done", {"model": _model}, flow_id)
+                await ft.emit("OLLAMA", "done", {"model": _model, "instance": instance}, flow_id)
                 await ft.emit("LLM_SELECT", "done", {"selected": "ollama"}, flow_id)
                 return result
             except OllamaUnavailableError as e:

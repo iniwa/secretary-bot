@@ -158,6 +158,38 @@ export function render() {
     animation: spin 0.6s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .ollama-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+  }
+  .ollama-instance-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    background: var(--bg-raised);
+  }
+  .ollama-instance-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .ollama-instance-details {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .ollama-instance-details .detail-label {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+  .ollama-queue-info {
+    grid-column: 1 / -1;
+    font-size: 0.8125rem;
+    color: var(--warning);
+    padding: 0.4rem 0;
+  }
 </style>
 
 <div class="maint-grid">
@@ -226,6 +258,19 @@ export function render() {
         <div style="color:var(--text-muted);font-size:0.8125rem">Loading...</div>
       </div>
       <div class="result-box" id="m-agents-result"></div>
+    </div>
+  </div>
+
+  <!-- Ollama Instances -->
+  <div class="card card-full">
+    <div class="card-header">
+      <h3>Ollama Instances</h3>
+      <button class="btn btn-sm" id="m-ollama-refresh">Refresh</button>
+    </div>
+    <div class="card-body">
+      <div id="m-ollama-instances">
+        <div style="color:var(--text-muted);font-size:0.8125rem">Loading...</div>
+      </div>
     </div>
   </div>
 
@@ -521,6 +566,59 @@ async function loadVersion() {
   }
 }
 
+const _PRIORITY_LABELS = ['HIGH', 'MEDIUM', 'LOW'];
+
+async function loadOllamaStatus() {
+  const container = $('m-ollama-instances');
+  if (!container) return;
+  try {
+    const data = await api('/api/ollama-status');
+    if (!_active) return;
+    const instances = data?.instances || [];
+    if (!instances.length) {
+      container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8125rem">No Ollama instances configured</div>';
+      return;
+    }
+
+    let html = '<div class="ollama-grid">';
+    for (const inst of instances) {
+      const statusClass = inst.available ? 'ok' : 'ng';
+      const statusText = inst.available ? 'Online' : 'Offline';
+      const models = (inst.models || []).map(m => esc(m)).join(', ') || '---';
+
+      let activeHtml = '<span style="color:var(--text-muted)">Idle</span>';
+      if (inst.current_request) {
+        const r = inst.current_request;
+        activeHtml = `<span style="color:var(--primary)"><strong>${esc(r.purpose || '?')}</strong> (${r.elapsed_sec}s)</span>`;
+      }
+
+      html += `<div class="ollama-instance-card">
+        <div class="ollama-instance-header">
+          <span class="check-icon ${statusClass}">${statusClass === 'ok' ? '&#10003;' : '&#10007;'}</span>
+          <strong>${esc(inst.name || inst.url)}</strong>
+          <span class="badge badge-${statusClass === 'ok' ? 'success' : 'error'}" style="margin-left:auto">${statusText}</span>
+        </div>
+        <div class="ollama-instance-details">
+          <div><span class="detail-label">Models:</span> ${models}</div>
+          <div><span class="detail-label">Status:</span> ${activeHtml}</div>
+        </div>
+      </div>`;
+    }
+
+    // キュー情報
+    const qs = data.queue_size || 0;
+    if (qs > 0) {
+      html += `<div class="ollama-queue-info">Queue: ${qs} request(s) waiting</div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (err) {
+    if (!_active) return;
+    console.error('Load Ollama status:', err);
+    container.innerHTML = '<div style="color:var(--error);font-size:0.8125rem">Failed to load</div>';
+  }
+}
+
 async function verifyVersions() {
   const statusEl = $('m-version-status');
   if (!statusEl) return;
@@ -671,6 +769,7 @@ export async function mount() {
     try {
       await api('/api/ollama-recheck', { method: 'POST' });
       toast('Ollama recheck triggered', 'success');
+      loadOllamaStatus();
     } catch (err) {
       console.error('Ollama recheck:', err);
       toast('Ollama recheck failed', 'error');
@@ -678,6 +777,9 @@ export async function mount() {
       setLoading(btn, false);
     }
   });
+
+  // Ollama Instances refresh button
+  $('m-ollama-refresh').addEventListener('click', () => loadOllamaStatus());
 
   // Submodule Update button
   // Pi 側で submodule 更新 → commit & push → 全 Agent へ git pull 反映
@@ -713,5 +815,5 @@ export async function mount() {
   });
 
   // データロード（イベントリスナー登録後に非同期実行）
-  Promise.all([loadUnits(), loadAgents(), loadVersion(), verifyVersions()]);
+  Promise.all([loadUnits(), loadAgents(), loadVersion(), verifyVersions(), loadOllamaStatus()]);
 }

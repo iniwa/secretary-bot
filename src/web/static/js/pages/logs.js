@@ -206,6 +206,7 @@ export function render() {
             <tr>
               <th>Time</th>
               <th>Provider</th>
+              <th>Instance</th>
               <th>Model</th>
               <th>Purpose</th>
               <th>Prompt</th>
@@ -323,9 +324,19 @@ function renderLlmRows(logs) {
       ? '<span class="badge badge-info">ollama</span>'
       : '<span class="badge badge-warning">gemini</span>';
 
+    // instance URL → 短縮名（ホスト部分のみ）
+    let instanceLabel = '---';
+    if (l.instance) {
+      try {
+        const u = new URL(l.instance);
+        instanceLabel = u.hostname;
+      } catch { instanceLabel = l.instance; }
+    }
+
     const mainRow = `<tr class="clickable-row" data-llm-id="${l.id}">
       <td class="mono text-xs">${fmtTime(l.timestamp)}</td>
       <td>${provBadge}</td>
+      <td class="text-xs">${esc(instanceLabel)}</td>
       <td class="text-xs">${esc(l.model || '---')}</td>
       <td>${esc(l.purpose || '---')}</td>
       <td class="mono text-xs">${l.prompt_len ?? '---'}</td>
@@ -353,7 +364,7 @@ function renderLlmRows(logs) {
     }
 
     const expandRow = expandContent.length > 0
-      ? `<tr class="log-expand-row" data-expand-for="${l.id}" style="display:none"><td colspan="9">${expandContent.join('')}</td></tr>`
+      ? `<tr class="log-expand-row" data-expand-for="${l.id}" style="display:none"><td colspan="10">${expandContent.join('')}</td></tr>`
       : '';
 
     return mainRow + expandRow;
@@ -398,7 +409,7 @@ async function loadLlm(reset = false) {
       attachLlmClickHandlers();
     }
     if (llmState.logs.length === 0 && reset) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-muted" style="text-align:center;padding:2rem">No logs found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="text-muted" style="text-align:center;padding:2rem">No logs found</td></tr>';
     }
 
     const moreWrap = $('llm-more-wrap');

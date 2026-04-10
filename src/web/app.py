@@ -199,6 +199,15 @@ def create_web_app(bot) -> FastAPI:
         models = await bot.llm_router.ollama.list_models()
         return {"models": models}
 
+    @app.get("/api/ollama-status")
+    async def ollama_status():
+        """Ollamaインスタンスの詳細ステータスを返す。"""
+        status = bot.llm_router.ollama.get_status()
+        # URL → エージェント名をマッピング
+        for inst in status["instances"]:
+            inst["name"] = bot.llm_router.get_url_name(inst["url"])
+        return status
+
     @app.post("/api/delegation-mode", )
     async def set_delegation_mode(request: Request):
         body = await request.json()
