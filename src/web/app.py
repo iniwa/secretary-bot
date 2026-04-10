@@ -41,6 +41,8 @@ def create_web_app(bot) -> FastAPI:
 
     # WebGUIはシングルユーザー想定なのでロック1つ
     _webgui_lock = asyncio.Lock()
+    # update-code / input-relay update の2重実行防止用（chatとは独立）
+    _update_lock = asyncio.Lock()
 
     @app.post("/api/chat", )
     async def chat(request: Request):
@@ -121,6 +123,35 @@ def create_web_app(bot) -> FastAPI:
     async def get_status():
         return await bot.status_collector.collect()
 
+    @app.get("/api/version", )
+    async def get_version():
+        """現在のメインリポ/サブモジュールの short hash を返す。"""
+        from src.bot import BASE_DIR
+        git_dir = os.environ.get("GIT_REPO_DIR") or (
+            os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+        )
+        try:
+            main_hash = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=git_dir,
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except Exception:
+            main_hash = "unknown"
+
+        sub_abs = os.path.join(git_dir, "windows-agent", "tools", "input-relay")
+        try:
+            input_relay_hash = subprocess.run(
+                ["git", "-C", sub_abs, "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip() or "unknown"
+        except Exception:
+            input_relay_hash = "unknown"
+
+        return {
+            "main": main_hash or "unknown",
+            "input_relay": input_relay_hash,
+        }
+
     @app.post("/api/ollama-recheck", )
     async def ollama_recheck():
         """Ollamaの接続状態を手動で再チェックする。"""
@@ -193,111 +224,116 @@ def create_web_app(bot) -> FastAPI:
         await _restart_container()
 
     async def _update_all_agents(bot) -> list[dict]:
-        """全Windows Agentに /update を呼んでコード更新させる。"""
-        results = []
+        """全Windows Agentに /update を並列で呼んでコード更新させる。
+        Agent が down していても最大8秒でタイムアウトし全体の完了を待たない。"""
         agents = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
         if not agents:
-            return results
+            return []
         token = os.environ.get("AGENT_SECRET_TOKEN", "")
         headers = {"X-Agent-Token": token} if token else {}
-        for agent in agents._agents:
+
+        async def _update_one(agent: dict) -> dict:
+            agent_id = agent.get("id", agent["host"])
             url = f"http://{agent['host']}:{agent['port']}/update"
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
+                async with httpx.AsyncClient(timeout=8) as client:
                     resp = await client.post(url, headers=headers)
                     data = resp.json()
-                results.append({"id": agent.get("id", agent["host"]), "success": True, **data})
-                log.info("Agent %s updated", agent.get("id", agent["host"]))
+                log.info("Agent %s updated", agent_id)
+                return {"id": agent_id, "name": agent.get("name"), "success": True, **data}
             except Exception as e:
-                results.append({"id": agent.get("id", agent["host"]), "success": False, "error": str(e)})
-                log.warning("Agent %s update failed: %s", agent.get("id", agent["host"]), e)
-        return results
+                log.warning("Agent %s update failed: %s", agent_id, e)
+                return {"id": agent_id, "name": agent.get("name"), "success": False, "error": str(e)}
+
+        return await asyncio.gather(*[_update_one(a) for a in agents._agents])
 
     @app.post("/api/update-code", )
     async def update_code(background_tasks: BackgroundTasks):
-        try:
-            from src.bot import BASE_DIR
-            git_dir = os.environ.get("GIT_REPO_DIR") or (
-                os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
-            )
-            # ローカルHEADハッシュ
-            hash_before = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            ).stdout.strip()
+        # 2重実行防止（ダブルクリック・中継再送対策）
+        if _update_lock.locked():
+            return {
+                "updated": False,
+                "message": "別の更新処理が実行中です",
+                "restarted": False,
+                "restart_detail": "重複実行を防止しました",
+            }
+        async with _update_lock:
+            try:
+                from src.bot import BASE_DIR
+                git_dir = os.environ.get("GIT_REPO_DIR") or (
+                    os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+                )
+                # ローカルHEADハッシュ
+                hash_before = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
 
-            # リモート名を動的取得
-            remote_name_result = subprocess.run(
-                ["git", "remote"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            remote_name = remote_name_result.stdout.strip().splitlines()[0] if remote_name_result.stdout.strip() else "origin"
+                # リモート名を動的取得
+                remote_name_result = subprocess.run(
+                    ["git", "remote"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                )
+                remote_name = remote_name_result.stdout.strip().splitlines()[0] if remote_name_result.stdout.strip() else "origin"
 
-            # 現在のリモートURL取得
-            remote_url_result = subprocess.run(
-                ["git", "remote", "get-url", remote_name], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            remote_url = remote_url_result.stdout.strip()
+                log.info("git fetch: remote=%s", remote_name)
 
-            log.info("git fetch: remote=%s", remote_name)
+                # fetch
+                fetch_result = subprocess.run(
+                    ["git", "fetch", remote_name], cwd=git_dir,
+                    capture_output=True, text=True, timeout=30,
+                )
+                if fetch_result.returncode != 0:
+                    err = fetch_result.stderr.strip()
+                    log.error("git fetch failed: %s", err)
+                    return {"updated": False, "message": f"git fetch 失敗\n{err}", "restarted": False, "restart_detail": "fetchエラー"}
 
-            # fetch
-            fetch_result = subprocess.run(
-                ["git", "fetch", remote_name], cwd=git_dir,
-                capture_output=True, text=True, timeout=30,
-            )
-            if fetch_result.returncode != 0:
-                err = fetch_result.stderr.strip()
-                log.error("git fetch failed: %s", err)
-                return {"updated": False, "message": f"git fetch 失敗\n{err}", "restarted": False, "restart_detail": "fetchエラー"}
+                # ブランチ名を取得
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                )
+                branch = branch_result.stdout.strip() or "main"
 
-            # ブランチ名を取得
-            branch_result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            branch = branch_result.stdout.strip() or "main"
+                # fetch後のリモートHEADと比較
+                remote_hash = subprocess.run(
+                    ["git", "rev-parse", "FETCH_HEAD"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
 
-            # fetch後のリモートHEADと比較
-            remote_hash = subprocess.run(
-                ["git", "rev-parse", "FETCH_HEAD"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            ).stdout.strip()
+                if hash_before == remote_hash:
+                    return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
-            if hash_before == remote_hash:
-                return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
+                # pull
+                pull_result = subprocess.run(
+                    ["git", "pull", remote_name, branch], cwd=git_dir,
+                    capture_output=True, text=True, timeout=30,
+                )
+                if pull_result.returncode != 0:
+                    err = pull_result.stderr.strip()
+                    log.error("git pull failed: %s", err)
+                    return {"updated": False, "message": f"git pull 失敗: {err}", "restarted": False, "restart_detail": "pullエラー"}
 
-            # pull
-            pull_result = subprocess.run(
-                ["git", "pull", remote_name, branch], cwd=git_dir,
-                capture_output=True, text=True, timeout=30,
-            )
-            if pull_result.returncode != 0:
-                err = pull_result.stderr.strip()
-                log.error("git pull failed: %s", err)
-                return {"updated": False, "message": f"git pull 失敗: {err}", "restarted": False, "restart_detail": "pullエラー"}
+                output = pull_result.stdout.strip()
+                log.info("Code updated: %s -> %s", hash_before[:7], remote_hash[:7])
 
-            output = pull_result.stdout.strip()
-            log.info("Code updated: %s -> %s", hash_before[:7], remote_hash[:7])
+                # サブモジュール更新
+                sub_result = subprocess.run(
+                    ["git", "submodule", "update", "--init", "--recursive"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=60,
+                )
+                if sub_result.returncode != 0:
+                    log.warning("submodule update failed: %s", sub_result.stderr.strip())
 
-            # サブモジュール更新
-            sub_result = subprocess.run(
-                ["git", "submodule", "update", "--init", "--recursive"], cwd=git_dir,
-                capture_output=True, text=True, timeout=60,
-            )
-            if sub_result.returncode != 0:
-                log.warning("submodule update failed: %s", sub_result.stderr.strip())
+                # 全Windows Agentに更新を通知（並列・8秒timeout）
+                agent_update_results = await _update_all_agents(bot)
 
-            # 全Windows Agentに更新を通知
-            agent_update_results = await _update_all_agents(bot)
-
-            # レスポンス送信後に再起動（遅延付き）
-            background_tasks.add_task(_delayed_restart, 2)
-            return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…", "agents": agent_update_results}
-        except Exception as e:
-            log.error("Code update failed: %s", e)
-            raise HTTPException(500, f"Update failed: {e}")
+                # レスポンス送信後に再起動（遅延付き）
+                background_tasks.add_task(_delayed_restart, 2)
+                return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…", "agents": agent_update_results}
+            except Exception as e:
+                log.error("Code update failed: %s", e)
+                raise HTTPException(500, f"Update failed: {e}")
 
     @app.post("/api/restart", )
     async def restart(background_tasks: BackgroundTasks):
@@ -1063,101 +1099,109 @@ def create_web_app(bot) -> FastAPI:
     async def tools_input_relay_update():
         """input-relayサブモジュールをGitHubから最新取得 → メインリポに commit & push。
         その後、全Windows Agentに /update を通知して git pull で反映させる。"""
-        try:
-            from src.bot import BASE_DIR
-            git_dir = os.environ.get("GIT_REPO_DIR") or (
-                os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
-            )
-            sub_path = "windows-agent/tools/input-relay"
-            sub_abs = os.path.join(git_dir, sub_path)
+        # 2重実行防止
+        if _update_lock.locked():
+            return {
+                "updated": False,
+                "message": "別の更新処理が実行中です",
+                "agents": [],
+            }
+        async with _update_lock:
+            try:
+                from src.bot import BASE_DIR
+                git_dir = os.environ.get("GIT_REPO_DIR") or (
+                    os.path.join(BASE_DIR, "src") if os.path.isdir(os.path.join(BASE_DIR, "src")) else BASE_DIR
+                )
+                sub_path = "windows-agent/tools/input-relay"
+                sub_abs = os.path.join(git_dir, sub_path)
 
-            # 現在のsubmoduleハッシュ
-            old_hash = subprocess.run(
-                ["git", "-C", sub_abs, "rev-parse", "--short", "HEAD"],
-                capture_output=True, text=True, timeout=10,
-            ).stdout.strip()
+                # 現在のsubmoduleハッシュ
+                old_hash = subprocess.run(
+                    ["git", "-C", sub_abs, "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
 
-            # ① GitHub（.gitmodules のURL）から submodule の最新を取得
-            sub_result = subprocess.run(
-                ["git", "submodule", "update", "--remote", sub_path], cwd=git_dir,
-                capture_output=True, text=True, timeout=60,
-            )
-            if sub_result.returncode != 0:
-                err = sub_result.stderr.strip()
-                log.error("submodule update --remote failed: %s", err)
-                raise HTTPException(500, f"submodule 更新失敗: {err}")
+                # ① GitHub（.gitmodules のURL）から submodule の最新を取得
+                sub_result = subprocess.run(
+                    ["git", "submodule", "update", "--remote", sub_path], cwd=git_dir,
+                    capture_output=True, text=True, timeout=60,
+                )
+                if sub_result.returncode != 0:
+                    err = sub_result.stderr.strip()
+                    log.error("submodule update --remote failed: %s", err)
+                    raise HTTPException(500, f"submodule 更新失敗: {err}")
 
-            new_hash = subprocess.run(
-                ["git", "-C", sub_abs, "rev-parse", "--short", "HEAD"],
-                capture_output=True, text=True, timeout=10,
-            ).stdout.strip()
+                new_hash = subprocess.run(
+                    ["git", "-C", sub_abs, "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
 
-            # ② 変化なし → commit/push 不要
-            if old_hash == new_hash:
+                # ② 変化なし → commit/push 不要
+                if old_hash == new_hash:
+                    return {
+                        "updated": False,
+                        "old_hash": old_hash,
+                        "new_hash": new_hash,
+                        "message": f"Already up to date ({new_hash})",
+                        "agents": [],
+                    }
+
+                # ③ メインリポに add + commit
+                add_result = subprocess.run(
+                    ["git", "add", sub_path], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                )
+                if add_result.returncode != 0:
+                    raise HTTPException(500, f"git add 失敗: {add_result.stderr.strip()}")
+
+                commit_msg = f"submodule: input-relay {old_hash} → {new_hash}"
+                commit_result = subprocess.run(
+                    ["git",
+                     "-c", f"user.name={os.environ.get('GIT_COMMIT_USER_NAME', 'secretary-bot')}",
+                     "-c", f"user.email={os.environ.get('GIT_COMMIT_USER_EMAIL', 'bot@iniwa.local')}",
+                     "commit", "-m", commit_msg],
+                    cwd=git_dir, capture_output=True, text=True, timeout=10,
+                )
+                if commit_result.returncode != 0:
+                    raise HTTPException(500, f"commit 失敗: {commit_result.stderr.strip()}")
+
+                # ④ 動的 remote / branch 取得して push
+                remote_name_result = subprocess.run(
+                    ["git", "remote"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                )
+                remote_name = remote_name_result.stdout.strip().splitlines()[0] if remote_name_result.stdout.strip() else "origin"
+                branch_result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_dir,
+                    capture_output=True, text=True, timeout=10,
+                )
+                branch = branch_result.stdout.strip() or "main"
+                push_result = subprocess.run(
+                    ["git", "push", remote_name, branch], cwd=git_dir,
+                    capture_output=True, text=True, timeout=30,
+                )
+                if push_result.returncode != 0:
+                    err = push_result.stderr.strip()
+                    log.error("git push failed: %s", err)
+                    raise HTTPException(500, f"push 失敗: {err}")
+
+                log.info("input-relay submodule updated: %s → %s", old_hash, new_hash)
+
+                # ⑤ 全Windows Agentに /update を通知（git pull → 新ハッシュへ追従）
+                agent_results = await _update_all_agents(bot)
+
                 return {
-                    "updated": False,
+                    "updated": True,
                     "old_hash": old_hash,
                     "new_hash": new_hash,
-                    "message": f"Already up to date ({new_hash})",
-                    "agents": [],
+                    "message": f"{old_hash} → {new_hash}",
+                    "agents": agent_results,
                 }
-
-            # ③ メインリポに add + commit
-            add_result = subprocess.run(
-                ["git", "add", sub_path], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            if add_result.returncode != 0:
-                raise HTTPException(500, f"git add 失敗: {add_result.stderr.strip()}")
-
-            commit_msg = f"submodule: input-relay {old_hash} → {new_hash}"
-            commit_result = subprocess.run(
-                ["git",
-                 "-c", f"user.name={os.environ.get('GIT_COMMIT_USER_NAME', 'secretary-bot')}",
-                 "-c", f"user.email={os.environ.get('GIT_COMMIT_USER_EMAIL', 'bot@iniwa.local')}",
-                 "commit", "-m", commit_msg],
-                cwd=git_dir, capture_output=True, text=True, timeout=10,
-            )
-            if commit_result.returncode != 0:
-                raise HTTPException(500, f"commit 失敗: {commit_result.stderr.strip()}")
-
-            # ④ 動的 remote / branch 取得して push
-            remote_name_result = subprocess.run(
-                ["git", "remote"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            remote_name = remote_name_result.stdout.strip().splitlines()[0] if remote_name_result.stdout.strip() else "origin"
-            branch_result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=git_dir,
-                capture_output=True, text=True, timeout=10,
-            )
-            branch = branch_result.stdout.strip() or "main"
-            push_result = subprocess.run(
-                ["git", "push", remote_name, branch], cwd=git_dir,
-                capture_output=True, text=True, timeout=30,
-            )
-            if push_result.returncode != 0:
-                err = push_result.stderr.strip()
-                log.error("git push failed: %s", err)
-                raise HTTPException(500, f"push 失敗: {err}")
-
-            log.info("input-relay submodule updated: %s → %s", old_hash, new_hash)
-
-            # ⑤ 全Windows Agentに /update を通知（git pull → 新ハッシュへ追従）
-            agent_results = await _update_all_agents(bot)
-
-            return {
-                "updated": True,
-                "old_hash": old_hash,
-                "new_hash": new_hash,
-                "message": f"{old_hash} → {new_hash}",
-                "agents": agent_results,
-            }
-        except HTTPException:
-            raise
-        except Exception as e:
-            log.error("input-relay update failed: %s", e)
-            raise HTTPException(500, f"Update failed: {e}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                log.error("input-relay update failed: %s", e)
+                raise HTTPException(500, f"Update failed: {e}")
 
     @app.get("/api/tools/input-relay/status", )
     async def tools_input_relay_status():

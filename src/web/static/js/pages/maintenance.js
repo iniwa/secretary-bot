@@ -120,7 +120,10 @@ export function render() {
 
   <!-- Code Update -->
   <div class="card">
-    <div class="card-header"><h3>Code Update</h3></div>
+    <div class="card-header">
+      <h3>Code Update</h3>
+      <span class="mono" id="m-current-version" style="color:var(--text-muted);font-size:0.8125rem">---</span>
+    </div>
     <div class="card-body">
       <div class="card-desc">Pull latest code from git, update submodules, and restart agents.</div>
       <div class="warning-text">Container will restart after update</div>
@@ -177,7 +180,10 @@ export function render() {
 
   <!-- Submodule Update -->
   <div class="card">
-    <div class="card-header"><h3>Submodule Update</h3></div>
+    <div class="card-header">
+      <h3>Submodule Update</h3>
+      <span class="mono" id="m-current-relay-version" style="color:var(--text-muted);font-size:0.8125rem">---</span>
+    </div>
     <div class="card-body">
       <div class="card-desc">Update the Input Relay submodule on all agents.</div>
       <button class="btn btn-primary" id="m-update-relay">Update Input Relay</button>
@@ -327,11 +333,23 @@ async function loadAgents() {
   }
 }
 
+async function loadVersion() {
+  try {
+    const v = await api('/api/version');
+    const mainEl = $('m-current-version');
+    const relayEl = $('m-current-relay-version');
+    if (mainEl) mainEl.textContent = v?.main || '---';
+    if (relayEl) relayEl.textContent = v?.input_relay || '---';
+  } catch (err) {
+    console.error('Load version:', err);
+  }
+}
+
 // ---- mount ----
 
 export async function mount() {
   // Load data in parallel
-  await Promise.all([loadUnits(), loadAgents()]);
+  await Promise.all([loadUnits(), loadAgents(), loadVersion()]);
 
   // Code Update button
   $('m-update-code').addEventListener('click', async () => {
@@ -451,6 +469,8 @@ export async function mount() {
         res.updated ? `Input Relay updated (${res.new_hash})` : 'Already up to date',
         res.updated ? 'success' : 'info'
       );
+      // 更新後の最新ハッシュを再取得して表示更新
+      loadVersion();
     } catch (err) {
       console.error('Update relay:', err);
       showResult('m-relay-result', resultItem('Error', err.message));

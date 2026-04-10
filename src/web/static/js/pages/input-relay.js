@@ -67,6 +67,10 @@ export function render() {
     color: var(--text-secondary);
     line-height: 1.5;
   }
+  .ir-version-info {
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+  }
   .ir-update-results {
     margin-top: 0.75rem;
     display: none;
@@ -221,6 +225,10 @@ export function render() {
           <div class="ir-update-desc">
             Fetch the latest Input Relay from GitHub, commit the new submodule hash to the main repo, and propagate to all agents.
           </div>
+          <div class="ir-version-info mono" id="ir-current-version">
+            <span style="color:var(--text-muted);font-size:0.75rem">main: ---</span>
+            <span style="color:var(--text-muted);font-size:0.75rem;margin-left:1rem">input-relay: ---</span>
+          </div>
         </div>
         <button class="btn btn-primary" id="ir-update-all">Update Input Relay</button>
       </div>
@@ -335,6 +343,23 @@ function populateRoleDropdown() {
   if (!currentValue && roles.length > 0) {
     select.value = roles[0];
     selectedRole = roles[0];
+  }
+}
+
+// ============================================================
+// Version display
+// ============================================================
+async function loadVersion() {
+  const el = $('ir-current-version');
+  if (!el) return;
+  try {
+    const v = await api('/api/version');
+    el.innerHTML = `
+      <span style="color:var(--text-muted);font-size:0.75rem">main: <span style="color:var(--text-secondary)">${esc(v?.main || '---')}</span></span>
+      <span style="color:var(--text-muted);font-size:0.75rem;margin-left:1rem">input-relay: <span style="color:var(--text-secondary)">${esc(v?.input_relay || '---')}</span></span>
+    `;
+  } catch (err) {
+    console.error('Load version:', err);
   }
 }
 
@@ -472,8 +497,8 @@ async function updateAllAgents() {
       res.updated ? `Input Relay updated (${res.new_hash})` : 'Already up to date',
       res.updated ? 'success' : 'info'
     );
-    // Refresh status after update
-    await loadStatus();
+    // Refresh status and version display after update
+    await Promise.all([loadStatus(), loadVersion()]);
   } catch (err) {
     console.error('Update input-relay:', err);
     resultsEl.innerHTML = `<div class="ir-result-item" style="color:var(--error)">${esc(err.message)}</div>`;
@@ -488,8 +513,8 @@ async function updateAllAgents() {
 // Mount / Unmount
 // ============================================================
 export async function mount() {
-  // Load status
-  await loadStatus();
+  // Load status and current version in parallel
+  await Promise.all([loadStatus(), loadVersion()]);
 
   // Update All button
   $('ir-update-all')?.addEventListener('click', updateAllAgents);
