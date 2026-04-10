@@ -1,5 +1,6 @@
-"""Ollama APIクライアント。"""
+"""Ollama APIクライアント（マルチインスタンス対応）。"""
 
+import asyncio
 import re
 
 import httpx
@@ -9,49 +10,94 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-DEFAULT_OLLAMA_URLS = [
-    # config.yaml の windows_agents から動的に構築される
-]
-
 
 class OllamaClient:
     def __init__(self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 300):
         self.model = model
         self.urls = urls or []
         self.timeout = timeout
-        self._available_url: str | None = None
+        # マルチインスタンス管理
+        self._available_urls: list[str] = []
+        self._active_count: dict[str, int] = {}
 
     async def check_availability(self) -> bool:
-        for url in self.urls:
-            try:
-                async with httpx.AsyncClient(timeout=5) as client:
-                    resp = await client.get(f"{url}/api/tags")
-                    if resp.status_code == 200:
-                        self._available_url = url
-                        log.info("Ollama available at %s", url)
-                        return True
-            except Exception:
-                continue
-        self._available_url = None
-        log.info("Ollama unavailable")
-        return False
+        """全URLを並列チェックし、利用可能なインスタンスを更新する。"""
+        results = await asyncio.gather(
+            *[self._check_one(url) for url in self.urls],
+            return_exceptions=True,
+        )
+        self._available_urls = []
+        for url, result in zip(self.urls, results):
+            if result is True:
+                self._available_urls.append(url)
+                if url not in self._active_count:
+                    self._active_count[url] = 0
+
+        # 到達不可になったインスタンスのカウントをクリーンアップ
+        for url in list(self._active_count):
+            if url not in self._available_urls:
+                del self._active_count[url]
+
+        if self._available_urls:
+            log.info(
+                "Ollama available at %d instance(s): %s",
+                len(self._available_urls), self._available_urls,
+            )
+        else:
+            log.info("Ollama unavailable")
+        return len(self._available_urls) > 0
+
+    async def _check_one(self, url: str) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"{url}/api/tags")
+                return resp.status_code == 200
+        except Exception:
+            return False
 
     @property
     def is_available(self) -> bool:
-        return self._available_url is not None
+        return len(self._available_urls) > 0
+
+    @property
+    def available_count(self) -> int:
+        return len(self._available_urls)
+
+    def _acquire_instance(self, exclude: list[str] | None = None) -> str:
+        """Least-connections で空いているインスタンスを選択する。"""
+        exclude = exclude or []
+        candidates = [u for u in self._available_urls if u not in exclude]
+        if not candidates:
+            raise OllamaUnavailableError("No Ollama instance available")
+        candidates.sort(key=lambda u: self._active_count.get(u, 0))
+        url = candidates[0]
+        self._active_count[url] = self._active_count.get(url, 0) + 1
+        return url
+
+    def _release_instance(self, url: str) -> None:
+        self._active_count[url] = max(0, self._active_count.get(url, 0) - 1)
+
+    def _mark_unavailable(self, url: str) -> None:
+        if url in self._available_urls:
+            self._available_urls.remove(url)
+        self._active_count.pop(url, None)
 
     async def list_models(self) -> list[str]:
-        """利用可能なOllamaモデル名一覧を返す。"""
-        if not self._available_url:
+        """利用可能な全インスタンスからモデル名一覧を返す（重複排除）。"""
+        if not self._available_urls:
             return []
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{self._available_url}/api/tags")
-                resp.raise_for_status()
-                data = resp.json()
-                return [m["name"] for m in data.get("models", [])]
-        except Exception:
-            return []
+        models = set()
+        for url in self._available_urls:
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    resp = await client.get(f"{url}/api/tags")
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for m in data.get("models", []):
+                        models.add(m["name"])
+            except Exception:
+                pass
+        return sorted(models)
 
     @staticmethod
     def _clean_response(text: str) -> str:
@@ -76,17 +122,39 @@ class OllamaClient:
     async def generate(self, prompt: str, system: str | None = None, model: str | None = None) -> tuple[str, dict]:
         """生成結果のテキストとOllamaメトリクスを返す。
 
-        /api/chat エンドポイントを使用（Ollama v0.20+ 対応）。
+        マルチインスタンス対応: least-connections で空いているインスタンスに分配する。
+        1台が失敗した場合、別のインスタンスでリトライする。
 
         Returns:
-            (text, metrics) — metricsは eval_count, eval_duration, prompt_eval_count, prompt_eval_duration, tokens_per_sec を含む
+            (text, metrics) -- metricsは eval_count, eval_duration, prompt_eval_count, prompt_eval_duration, tokens_per_sec を含む
         """
-        if not self._available_url:
+        if not self._available_urls:
             raise OllamaUnavailableError("No Ollama instance available")
 
+        url = self._acquire_instance()
+        try:
+            result = await self._do_generate(url, prompt, system, model)
+            return result
+        except OllamaUnavailableError:
+            self._release_instance(url)
+            self._mark_unavailable(url)
+            # 他のインスタンスでリトライ
+            if self._available_urls:
+                url2 = self._acquire_instance()
+                try:
+                    return await self._do_generate(url2, prompt, system, model)
+                finally:
+                    self._release_instance(url2)
+            raise
+        finally:
+            # 成功時のみ解放（エラー時は except 内で解放済み・_mark_unavailable で削除済み）
+            if url in self._active_count:
+                self._release_instance(url)
+
+    async def _do_generate(self, url: str, prompt: str, system: str | None, model: str | None) -> tuple[str, dict]:
+        """指定URLのOllamaインスタンスで生成を実行する。"""
         use_model = model or self.model
         options: dict = {}
-        # qwen系モデルの場合のみ思考モード無効化・ChatMLストップトークンを設定
         if "qwen" in use_model.lower():
             options["think"] = False
             options["stop"] = ["<|endoftext|>", "<|im_start|>", "<|im_end|>"]
@@ -105,18 +173,13 @@ class OllamaClient:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    f"{self._available_url}/api/chat",
-                    json=payload,
-                )
+                resp = await client.post(f"{url}/api/chat", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
                 text = data.get("message", {}).get("content", "")
-                # <think>...</think> タグが残っている場合は除去（qwen系）
                 if "<think>" in text:
                     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
-                # Ollamaのパフォーマンスメトリクスを抽出
                 eval_count = data.get("eval_count", 0)
                 eval_duration = data.get("eval_duration", 0)
                 prompt_eval_count = data.get("prompt_eval_count", 0)
@@ -128,9 +191,10 @@ class OllamaClient:
                     "prompt_eval_count": prompt_eval_count,
                     "prompt_eval_duration": prompt_eval_duration,
                     "tokens_per_sec": round(tokens_per_sec, 2),
+                    "instance": url,
                 }
 
+                log.debug("Ollama generate on %s: %.1f tok/s", url, tokens_per_sec)
                 return self._clean_response(text), metrics
         except Exception as e:
-            self._available_url = None
-            raise OllamaUnavailableError(f"Ollama generation failed: {e}") from e
+            raise OllamaUnavailableError(f"Ollama generation failed ({url}): {e}") from e
