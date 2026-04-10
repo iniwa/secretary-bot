@@ -331,33 +331,40 @@ class Heartbeat:
             max_id = max(m["id"] for m in messages)
             await self.bot.database.set_setting("last_compact_msg_id", str(max_id))
 
-            # ai_memory抽出（Ollama稼働中のみ）
+            # ai_memory + people_memory を並列抽出（両者は独立）
             conversation_text = "\n".join(texts)
-            try:
+
+            async def _extract_ai_memory():
                 from src.memory.ai_memory import AIMemory
                 ai_mem = AIMemory(self.bot)
                 await ai_mem.extract_and_save(conversation_text)
-                result["ai_memory"] = True
-            except Exception as e:
-                log.debug("ai_memory extraction during compact skipped: %s", e)
-                result["ai_memory"] = False
-                result["ai_memory_error"] = str(e)
 
-            # people_memory抽出（全ユニットの会話から人物情報を収集）
-            try:
+            async def _extract_people_memory():
                 from src.memory.people_memory import PeopleMemory
                 people_mem = PeopleMemory(self.bot)
-                # ユーザー発言からuser_idを取得して抽出
                 user_messages = [m for m in messages if m["role"] == "user"]
                 user_ids = {m.get("user_id", "") for m in user_messages if m.get("user_id")}
                 for uid in user_ids:
                     user_texts = [f"user: {m['content']}" for m in user_messages if m.get("user_id") == uid]
                     if user_texts:
                         await people_mem.extract_and_save("\n".join(user_texts), user_id=uid)
-                result["people_memory"] = True
-            except Exception as e:
-                log.debug("people_memory extraction during compact skipped: %s", e)
+
+            ai_res, ppl_res = await asyncio.gather(
+                _extract_ai_memory(),
+                _extract_people_memory(),
+                return_exceptions=True,
+            )
+            if isinstance(ai_res, Exception):
+                log.debug("ai_memory extraction during compact skipped: %s", ai_res)
+                result["ai_memory"] = False
+                result["ai_memory_error"] = str(ai_res)
+            else:
+                result["ai_memory"] = True
+            if isinstance(ppl_res, Exception):
+                log.debug("people_memory extraction during compact skipped: %s", ppl_res)
                 result["people_memory"] = False
+            else:
+                result["people_memory"] = True
         except Exception as e:
             log.warning("Context compaction failed: %s", e)
             result["error"] = str(e)

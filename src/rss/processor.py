@@ -1,5 +1,7 @@
 """RSSプロセッサー — 未要約記事をLLMで要約。"""
 
+import asyncio
+
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -46,9 +48,17 @@ class RSSProcessor:
         if not articles:
             return 0
 
+        # 全記事を並列にLLM要約（Ollamaマルチインスタンスで自動分配）
+        summaries = await asyncio.gather(
+            *[self._summarize_article(a) for a in articles],
+            return_exceptions=True,
+        )
+
         count = 0
-        for article in articles:
-            summary = await self._summarize_article(article)
+        for article, summary in zip(articles, summaries):
+            if isinstance(summary, Exception):
+                log.warning("RSS summary failed for article %d: %s", article["id"], summary)
+                continue
             if summary:
                 await self.bot.database.execute(
                     "UPDATE rss_articles SET summary = ? WHERE id = ?",
