@@ -33,6 +33,7 @@
 ### 残タスク
 - [ ] MainPC の Ollama 動作確認（物理アクセスが必要）
 - [x] Phase 2: アプリケーション層の並列化（ContextSource 収集 + heartbeat の STT/RSS/on_heartbeat を `asyncio.gather` で並列化）
+- [x] Phase 3: モデルルーティング、SubPC優先、優先度キュー、WebGUI状態表示、LLMログにinstance記録
 
 ---
 

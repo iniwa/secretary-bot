@@ -195,9 +195,11 @@ rss_summary, stt_summary, chat_summary = await asyncio.gather(
 - heartbeat の on_heartbeat + STT + RSS を `asyncio.gather()` で並列化
 - 変更: `src/inner_mind/context_sources/registry.py`, `src/heartbeat.py`
 
-### Phase 3: 高度な最適化
-- モデル別ルーティング（特定モデル指定時のフィルタ）
-- インスタンス別の成功率・レイテンシ追跡
-- 優先度付きキュー（ユーザー会話 > InnerMind > RSS）
-- WebGUI での Ollama 状態表示（どのPCが処理中か）
-- GPU メモリ使用量に基づく動的ルーティング
+### Phase 3: 高度な最適化 ✅（一部）
+- ✅ モデル別ルーティング（check_availability時にモデル一覧キャッシュ、_acquire_instanceでフィルタ）
+- ✅ インスタンス優先度（windows_agents.priority順、SubPC優先）
+- ✅ 優先度付きキュー（HIGH=会話 > MEDIUM=InnerMind > LOW=RSS/記憶、asyncio.Eventベースヒープ）
+- ✅ WebGUI Ollama状態表示（Maintenanceタブ、/api/ollama-status）
+- ✅ LLMログにinstance記録（llm_logテーブル + Logs画面のInstance列）
+- 未実装: インスタンス別成功率・レイテンシ追跡（運用データ蓄積後に検討）
+- 未実装: GPU メモリ使用量に基づく動的ルーティング（GPU exporter導入後に検討）
