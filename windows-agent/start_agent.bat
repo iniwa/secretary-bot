@@ -6,10 +6,6 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
-cd /d "%~dp0.."
-echo Pulling latest code...
-git pull
-
 echo Checking Ollama...
 tasklist /FI "IMAGENAME eq ollama.exe" 2>NUL | find /I "ollama.exe" >NUL
 if %ERRORLEVEL% NEQ 0 (
@@ -21,7 +17,22 @@ if %ERRORLEVEL% NEQ 0 (
     echo Ollama already running.
 )
 
-echo Starting Windows Agent...
+:loop
+cd /d "%~dp0.."
+echo.
+echo ============================================
+echo  Pulling latest code...
+echo ============================================
+git pull
+echo Updating submodules...
+git submodule update --init --recursive
+
 cd windows-agent
+echo.
+echo Starting Windows Agent...
 python agent.py
-pause
+
+echo.
+echo Agent stopped. Restarting in 3 seconds... (Ctrl+C to abort)
+timeout /t 3
+goto loop

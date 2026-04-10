@@ -223,29 +223,33 @@ def create_web_app(bot) -> FastAPI:
         await asyncio.sleep(delay_seconds)
         await _restart_container()
 
-    async def _update_all_agents(bot) -> list[dict]:
-        """全Windows Agentに /update を並列で呼んでコード更新させる。
-        Agent が down していても最大8秒でタイムアウトし全体の完了を待たない。"""
+    async def _post_all_agents(bot, path: str, timeout: float = 8) -> list[dict]:
+        """全Windows Agent の指定 path に POST を並列で発行する汎用ヘルパー。
+        Agent が down していても timeout 内に諦め、全体の完了を妨げない。"""
         agents = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
         if not agents:
             return []
         token = os.environ.get("AGENT_SECRET_TOKEN", "")
         headers = {"X-Agent-Token": token} if token else {}
 
-        async def _update_one(agent: dict) -> dict:
+        async def _post_one(agent: dict) -> dict:
             agent_id = agent.get("id", agent["host"])
-            url = f"http://{agent['host']}:{agent['port']}/update"
+            url = f"http://{agent['host']}:{agent['port']}{path}"
             try:
-                async with httpx.AsyncClient(timeout=8) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(url, headers=headers)
-                    data = resp.json()
-                log.info("Agent %s updated", agent_id)
+                    data = resp.json() if resp.content else {}
+                log.info("Agent %s POST %s OK", agent_id, path)
                 return {"id": agent_id, "name": agent.get("name"), "success": True, **data}
             except Exception as e:
-                log.warning("Agent %s update failed: %s", agent_id, e)
+                log.warning("Agent %s POST %s failed: %s", agent_id, path, e)
                 return {"id": agent_id, "name": agent.get("name"), "success": False, "error": str(e)}
 
-        return await asyncio.gather(*[_update_one(a) for a in agents._agents])
+        return await asyncio.gather(*[_post_one(a) for a in agents._agents])
+
+    async def _update_all_agents(bot) -> list[dict]:
+        """全Windows Agentに /update を並列で呼んでコード更新させる。"""
+        return await _post_all_agents(bot, "/update", timeout=8)
 
     @app.post("/api/update-code", )
     async def update_code(background_tasks: BackgroundTasks):
@@ -327,10 +331,19 @@ def create_web_app(bot) -> FastAPI:
 
                 # 全Windows Agentに更新を通知（並列・8秒timeout）
                 agent_update_results = await _update_all_agents(bot)
+                # Agent プロセスを自己再起動させてコードを反映（start_agent.bat のループが再起動担当）
+                agent_restart_results = await _post_all_agents(bot, "/restart-self", timeout=5)
 
                 # レスポンス送信後に再起動（遅延付き）
                 background_tasks.add_task(_delayed_restart, 2)
-                return {"updated": True, "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}", "restarted": True, "restart_detail": "まもなく再起動します…", "agents": agent_update_results}
+                return {
+                    "updated": True,
+                    "message": f"{hash_before[:7]} → {remote_hash[:7]}\n{output}",
+                    "restarted": True,
+                    "restart_detail": "まもなく再起動します…",
+                    "agents": agent_update_results,
+                    "agents_restart": agent_restart_results,
+                }
             except Exception as e:
                 log.error("Code update failed: %s", e)
                 raise HTTPException(500, f"Update failed: {e}")
@@ -1189,6 +1202,10 @@ def create_web_app(bot) -> FastAPI:
 
                 # ⑤ 全Windows Agentに /update を通知（git pull → 新ハッシュへ追従）
                 agent_results = await _update_all_agents(bot)
+                # ⑥ input-relay ツールを再起動させて新ファイルをロード（agent.py 本体は再起動不要）
+                agent_tool_restart = await _post_all_agents(
+                    bot, "/tools/input-relay/restart", timeout=10
+                )
 
                 return {
                     "updated": True,
@@ -1196,6 +1213,7 @@ def create_web_app(bot) -> FastAPI:
                     "new_hash": new_hash,
                     "message": f"{old_hash} → {new_hash}",
                     "agents": agent_results,
+                    "agents_tool_restart": agent_tool_restart,
                 }
             except HTTPException:
                 raise

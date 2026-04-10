@@ -1,5 +1,6 @@
 """Windows Agent — FastAPIサーバー（ポート7777）。"""
 
+import asyncio
 import os
 import socket
 import subprocess
@@ -171,6 +172,21 @@ async def update(request: Request):
         return {"success": True, "output": pull_output, "submodule": sub_output}
     except Exception as e:
         raise HTTPException(500, f"Update failed: {e}")
+
+
+@app.post("/restart-self")
+async def restart_self(request: Request):
+    """Agent プロセス自体を終了する。start_agent.bat のループが再起動を担当する前提。"""
+    _verify_token(request)
+
+    async def _exit_later():
+        # レスポンスが送出されるのを待ってから終了
+        await asyncio.sleep(1.0)
+        print("[Agent] Self-restart requested. Exiting process.", flush=True)
+        os._exit(0)
+
+    asyncio.create_task(_exit_later())
+    return {"status": "restarting"}
 
 
 @app.get("/activity")
