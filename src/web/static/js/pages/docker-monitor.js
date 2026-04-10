@@ -175,6 +175,11 @@ export function render() {
     outline: none;
     border-color: var(--accent);
   }
+  .dm-add-container {
+    flex: 1.5;
+    min-width: 120px;
+    font-family: monospace;
+  }
   .dm-add-pattern {
     flex: 2;
     min-width: 150px;
@@ -317,6 +322,7 @@ export function render() {
   <!-- Exclusions panel -->
   <div class="dm-panel" id="dm-panel-exclusions">
     <div class="dm-add-form">
+      <input type="text" class="dm-add-container" id="dm-exc-container" placeholder="コンテナ名 (空=全コンテナ)" />
       <input type="text" class="dm-add-pattern" id="dm-exc-pattern" placeholder="除外パターン (部分一致)" />
       <input type="text" class="dm-add-reason" id="dm-exc-reason" placeholder="理由 (任意)" />
       <button class="btn btn-sm" id="dm-exc-add">追加</button>
@@ -488,20 +494,30 @@ function renderExclusions() {
     return;
   }
 
-  list.innerHTML = exclusions.map(e => `
+  list.innerHTML = exclusions.map(e => {
+    const cname = e.container_name || '';
+    const containerLabel = cname
+      ? `<span class="dm-container-name" style="font-size:0.75rem">${esc(cname)}</span>`
+      : `<span style="font-size:0.7rem;color:var(--text-muted)">全コンテナ</span>`;
+    return `
     <div class="card dm-exc-card" data-exc-id="${e.id}">
       <div class="dm-exc-body">
-        <div class="dm-exc-pattern">${esc(e.pattern)}</div>
+        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+          ${containerLabel}
+          <span class="dm-exc-pattern">${esc(e.pattern)}</span>
+        </div>
         ${e.reason ? `<div class="dm-exc-reason">${esc(e.reason)}</div>` : ''}
       </div>
       <button class="btn btn-sm btn-danger" data-action="delete-exc">削除</button>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function addExclusion() {
+  const containerEl = $('dm-exc-container');
   const patternEl = $('dm-exc-pattern');
   const reasonEl = $('dm-exc-reason');
+  const container_name = containerEl?.value?.trim() || '';
   const pattern = patternEl?.value?.trim() || '';
   const reason = reasonEl?.value?.trim() || '';
   if (!pattern) {
@@ -511,9 +527,10 @@ async function addExclusion() {
   try {
     await api('/api/docker-monitor/exclusions', {
       method: 'POST',
-      body: { pattern, reason },
+      body: { container_name, pattern, reason },
     });
     toast('除外パターンを追加しました', 'success');
+    if (containerEl) containerEl.value = '';
     if (patternEl) patternEl.value = '';
     if (reasonEl) reasonEl.value = '';
     await loadExclusions();
@@ -596,6 +613,9 @@ export async function mount() {
 
   // Exclusions
   $('dm-exc-add')?.addEventListener('click', () => addExclusion());
+  $('dm-exc-container')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addExclusion();
+  });
   $('dm-exc-pattern')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') addExclusion();
   });

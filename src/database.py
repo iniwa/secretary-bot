@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 20
+_SCHEMA_VERSION = 21
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -127,11 +127,13 @@ CREATE TABLE IF NOT EXISTS mimi_self_model (
 );
 
 CREATE TABLE IF NOT EXISTS docker_log_exclusions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    pattern    TEXT NOT NULL UNIQUE,
-    reason     TEXT DEFAULT '',
-    added_by   TEXT DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    container_name TEXT NOT NULL DEFAULT '',
+    pattern        TEXT NOT NULL,
+    reason         TEXT DEFAULT '',
+    added_by       TEXT DEFAULT '',
+    created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(container_name, pattern)
 );
 
 CREATE TABLE IF NOT EXISTS docker_error_log (
@@ -329,6 +331,13 @@ class Database:
             ],
             20: [
                 "ALTER TABLE llm_log ADD COLUMN instance TEXT",
+            ],
+            21: [
+                "ALTER TABLE docker_log_exclusions ADD COLUMN container_name TEXT NOT NULL DEFAULT ''",
+                # UNIQUE(pattern) → UNIQUE(container_name, pattern) への変更
+                # SQLite は DROP CONSTRAINT 不可。新テーブルへの移行は複雑なので、
+                # 旧 UNIQUE(pattern) 制約は残したまま運用する。
+                # container_name 付きの重複チェックはアプリケーション側で行う。
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

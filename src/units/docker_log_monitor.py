@@ -159,9 +159,10 @@ class DockerLogMonitorUnit(BaseUnit):
             return "除外パターンを指定してください。"
         try:
             await self.bot.database.execute(
-                "INSERT INTO docker_log_exclusions (pattern, reason, added_by, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (pattern, reason, user_id, jst_now()),
+                "INSERT INTO docker_log_exclusions "
+                "(container_name, pattern, reason, added_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("", pattern, reason, user_id, jst_now()),
             )
             return f"除外パターンを追加しました: `{pattern}`"
         except Exception as e:
@@ -236,9 +237,15 @@ class DockerLogMonitorUnit(BaseUnit):
         self._last_check = time.time()
 
         rows = await self.bot.database.fetchall(
-            "SELECT pattern FROM docker_log_exclusions"
+            "SELECT container_name, pattern FROM docker_log_exclusions"
         )
-        exclusions = [r["pattern"] for r in rows] + _DEFAULT_IGNORES
+        # DB除外: (container_name, pattern) のタプルリスト
+        db_exclusions = [
+            (r.get("container_name", ""), r["pattern"]) for r in rows
+        ]
+        # デフォルト除外: コンテナ名なし（全コンテナに適用）
+        default_exclusions = [("", pat) for pat in _DEFAULT_IGNORES]
+        exclusions = db_exclusions + default_exclusions
 
         try:
             containers = await self._docker_api_get(f"/{_API_VERSION}/containers/json")
@@ -274,7 +281,7 @@ class DockerLogMonitorUnit(BaseUnit):
                 level = self._classify_line(line)
                 if level is None:
                     continue
-                if self._is_excluded(line, exclusions):
+                if self._is_excluded(name, line, exclusions):
                     continue
                 if not self._is_new_error(name, line):
                     continue
@@ -405,9 +412,17 @@ class DockerLogMonitorUnit(BaseUnit):
         return None
 
     @staticmethod
-    def _is_excluded(line: str, exclusions: list[str]) -> bool:
-        lower = line.lower()
-        return any(pat.lower() in lower for pat in exclusions)
+    def _is_excluded(
+        container: str, line: str, exclusions: list[tuple[str, str]]
+    ) -> bool:
+        lower_line = line.lower()
+        lower_container = container.lower()
+        for exc_container, exc_pattern in exclusions:
+            if exc_container and exc_container.lower() != lower_container:
+                continue  # コンテナ名指定あり & 不一致 → スキップ
+            if exc_pattern.lower() in lower_line:
+                return True
+        return False
 
     def _is_new_error(self, container: str, message: str) -> bool:
         """クールダウン内の同一エラーを除外。"""

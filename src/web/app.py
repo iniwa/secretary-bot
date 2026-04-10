@@ -1812,6 +1812,7 @@ def create_web_app(bot) -> FastAPI:
     @app.post("/api/docker-monitor/exclusions", dependencies=[Depends(_verify)])
     async def add_docker_exclusion(request: Request):
         data = await request.json()
+        container_name = data.get("container_name", "").strip()
         pattern = data.get("pattern", "").strip()
         reason = data.get("reason", "").strip()
         if not pattern:
@@ -1819,9 +1820,10 @@ def create_web_app(bot) -> FastAPI:
         from src.database import jst_now
         try:
             await bot.database.execute(
-                "INSERT INTO docker_log_exclusions (pattern, reason, added_by, created_at) "
-                "VALUES (?, ?, 'webgui', ?)",
-                (pattern, reason, jst_now()),
+                "INSERT INTO docker_log_exclusions "
+                "(container_name, pattern, reason, added_by, created_at) "
+                "VALUES (?, ?, ?, 'webgui', ?)",
+                (container_name, pattern, reason, jst_now()),
             )
         except Exception as e:
             if "UNIQUE" in str(e):
