@@ -24,6 +24,55 @@ _agent_role: str = "unknown"
 _agent_config: dict = {}
 
 
+def _mount_nas() -> None:
+    """config/.env から NAS 認証情報を読み込み、`net use` で接続する。
+
+    管理者権限セッションは通常ユーザーの net use マッピングを引き継がないため、
+    Python プロセス側でも明示的に認証を確立する必要がある。
+    """
+    env_path = os.path.join(os.path.dirname(__file__), "config", ".env")
+    if not os.path.exists(env_path):
+        return
+    env: dict[str, str] = {}
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"[Agent] Failed to read .env: {e}")
+        return
+
+    host = env.get("NAS_HOST")
+    share = env.get("NAS_SHARE")
+    user = env.get("NAS_USER")
+    pw = env.get("NAS_PASS")
+    if not (host and share and user and pw):
+        return
+
+    unc = rf"\\{host}\{share}"
+    try:
+        result = subprocess.run(
+            ["net", "use", unc, f"/user:{user}", pw],
+            capture_output=True, text=True, errors="replace", timeout=15,
+        )
+        if result.returncode == 0:
+            print(f"[Agent] NAS mounted: {unc}")
+        else:
+            # 既に接続済みの場合は error 1219 や "already connected" を返す → その場合は成功扱い
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            if "1219" in stderr or "already" in (stderr + stdout).lower():
+                print(f"[Agent] NAS already connected: {unc}")
+            else:
+                print(f"[Agent] NAS mount failed (rc={result.returncode}): {stderr or stdout}")
+    except Exception as e:
+        print(f"[Agent] NAS mount exception: {e}")
+
+
 def _load_agent_config() -> dict:
     """windows-agent/config/agent_config.yaml があれば読み込む。なければ空 dict。"""
     import yaml
@@ -69,6 +118,9 @@ async def lifespan(app: FastAPI):
     _agent_role = role
     _agent_config = config
     print(f"[Agent] Role: {role}")
+    # NAS 認証（Sub PC で OBS ファイル整理時に必要）
+    if role == "sub":
+        _mount_nas()
     _tool_manager = create_tool_manager(role)
     _tool_manager.start_all()
     _tool_manager.start_monitor()
