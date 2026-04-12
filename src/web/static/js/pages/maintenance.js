@@ -346,9 +346,11 @@ function breakerBadge(state) {
  * - 一度でも接続失敗 → 復帰成功を検知したらOK
  * - あるいは version (commit hash) が変わったらOK
  */
-async function waitForRestart(previousVersion, { timeoutMs = 60000, intervalMs = 1500 } = {}) {
+async function waitForRestart(previousVersion, { timeoutMs = 120000, intervalMs = 1500, stableCount = 3 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let wentDown = false;
+  let consecutiveOk = 0;
+  let newVersionSeen = false;
   // 最初に少し待つ（background_tasks の 2 秒遅延再起動に被らないように）
   await new Promise(r => setTimeout(r, 2000));
   while (Date.now() < deadline) {
@@ -356,14 +358,33 @@ async function waitForRestart(previousVersion, { timeoutMs = 60000, intervalMs =
       const res = await fetch('/health', { cache: 'no-store' });
       if (!res.ok) {
         wentDown = true;
+        consecutiveOk = 0;
       } else {
         const data = await res.json().catch(() => null);
         const version = data?.version || null;
-        if (previousVersion && version && version !== previousVersion) return true;
-        if (wentDown) return true;
+        if (previousVersion && version && version !== previousVersion) {
+          newVersionSeen = true;
+        }
+        // プロセスが一度落ちた、またはバージョンが変わったことを確認した上で、
+        // 連続して OK が返ることを要求（アプリ startup の安定化待機）
+        if (wentDown || newVersionSeen) {
+          // 静的ファイルも安定して配信できるか確認（reload 時のエラーページ防止）
+          try {
+            const staticRes = await fetch('/static/js/pages/maintenance.js', { cache: 'no-store', method: 'HEAD' });
+            if (staticRes.ok) {
+              consecutiveOk += 1;
+              if (consecutiveOk >= stableCount) return true;
+            } else {
+              consecutiveOk = 0;
+            }
+          } catch (_) {
+            consecutiveOk = 0;
+          }
+        }
       }
     } catch (e) {
       wentDown = true;
+      consecutiveOk = 0;
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
