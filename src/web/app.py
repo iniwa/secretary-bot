@@ -944,6 +944,21 @@ def create_web_app(bot) -> FastAPI:
     @app.get("/api/logs/llm", dependencies=[Depends(_verify)])
     async def get_llm_logs(limit: int = 50, offset: int = 0, provider: str | None = None):
         logs = await bot.database.get_llm_logs(limit=limit, offset=offset, provider=provider)
+        # instance を URL/IP → エージェント名に変換（過去ログ互換）
+        url_to_name = getattr(bot.llm_router, "_url_to_name", {}) or {}
+        for log_row in logs:
+            inst = log_row.get("instance")
+            if not inst:
+                continue
+            # 完全一致（新形式: URL または既に名前）
+            if inst in url_to_name:
+                log_row["instance"] = url_to_name[inst]
+                continue
+            # 部分一致（旧形式: IP やホスト名のみ）
+            for url, name in url_to_name.items():
+                if inst in url or url.find(inst) >= 0:
+                    log_row["instance"] = name
+                    break
         return {"logs": logs}
 
     # --- デバッグ: ハートビートログ ---
