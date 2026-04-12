@@ -36,7 +36,8 @@ class ChromaMemory:
             if where:
                 kwargs["where"] = where
             results = col.query(**kwargs)
-        except Exception:
+        except Exception as e:
+            log.warning("ChromaDB search failed on '%s': %s", collection_name, e)
             return []
 
         items = []
@@ -60,7 +61,8 @@ class ChromaMemory:
         col = self.get_collection(collection_name)
         try:
             results = col.get(limit=limit, offset=offset, include=["documents", "metadatas"])
-        except Exception:
+        except Exception as e:
+            log.warning("ChromaDB get_all failed on '%s': %s", collection_name, e)
             return []
         items = []
         ids = results.get("ids", [])

@@ -31,6 +31,7 @@ class TimerUnit(BaseUnit):
         self._active_timers: dict[int, asyncio.Task] = {}
         self._timer_info: dict[int, dict] = {}  # id -> {message, minutes, created_at}
         self._next_id = 1
+        self._id_lock = asyncio.Lock()
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()
@@ -52,8 +53,9 @@ class TimerUnit(BaseUnit):
             if not minutes or minutes <= 0:
                 return "タイマーの時間を指定してください。"
 
-            timer_id = self._next_id
-            self._next_id += 1
+            async with self._id_lock:
+                timer_id = self._next_id
+                self._next_id += 1
             channel_id = ctx.channel.id if ctx and hasattr(ctx, "channel") else None
 
             self._timer_info[timer_id] = {

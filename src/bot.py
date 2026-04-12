@@ -44,7 +44,8 @@ def get_commit_hash() -> str:
             cwd=_git_dir(),
             text=True,
         ).strip()
-    except Exception:
+    except Exception as e:
+        log.warning("Failed to get commit hash: %s", e)
         return "unknown"
 
 
@@ -246,11 +247,17 @@ class SecretaryBot(commands.Bot):
 
     async def graceful_shutdown(self) -> None:
         log.info("シャットダウン開始...")
-        self.heartbeat.shutdown()
-        await self.activity_detector.close()
-        await self.unit_manager.agent_pool.close()
-        await self.database.close()
-        await self.close()
+        for name, coro in [
+            ("heartbeat", lambda: asyncio.to_thread(self.heartbeat.shutdown)),
+            ("activity_detector", self.activity_detector.close),
+            ("agent_pool", self.unit_manager.agent_pool.close),
+            ("database", self.database.close),
+            ("discord", self.close),
+        ]:
+            try:
+                await coro()
+            except Exception as e:
+                log.error("Shutdown error in %s: %s", name, e)
         log.info("シャットダウン完了")
 
 

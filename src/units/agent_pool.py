@@ -1,5 +1,6 @@
 """複数Windows PCの管理・フォールバック。"""
 
+import asyncio
 import os
 import time
 
@@ -244,46 +245,49 @@ class AgentPool:
         mode = self.get_mode(aid)
         checks.append({"name": "委託モード", "ok": mode != "deny", "detail": mode})
 
-        # 4-6. メトリクス（CPU/メモリ/GPU）
+        # 4-6. メトリクス（CPU/メモリ/GPU）— 並列取得
         instance = agent.get("metrics_instance", "")
         if self._metrics_url and instance:
             thresholds = self._delegation_config.get("thresholds", {})
             http = self._get_http()
-
-            # CPU
             cpu_limit = thresholds.get("cpu_percent", 80)
-            try:
-                cpu_query = f'100 - (avg(rate(windows_cpu_time_total{{instance="{instance}",mode="idle"}}[5m])) * 100)'
-                resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": cpu_query})
-                cpu_val = float(resp.json()["data"]["result"][0]["value"][1])
-                checks.append({"name": "CPU使用率", "ok": cpu_val <= cpu_limit, "detail": f"{cpu_val:.1f}% (上限{cpu_limit}%)"})
-            except Exception:
-                checks.append({"name": "CPU使用率", "ok": True, "detail": "取得失敗"})
-
-            # メモリ
             mem_limit = thresholds.get("memory_percent", 85)
-            try:
-                mem_query = f'100 - (windows_memory_physical_free_bytes{{instance="{instance}"}} / windows_memory_physical_total_bytes{{instance="{instance}"}} * 100)'
-                resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": mem_query})
-                mem_val = float(resp.json()["data"]["result"][0]["value"][1])
-                checks.append({"name": "メモリ使用率", "ok": mem_val <= mem_limit, "detail": f"{mem_val:.1f}% (上限{mem_limit}%)"})
-            except Exception:
-                checks.append({"name": "メモリ使用率", "ok": True, "detail": "取得失敗"})
-
-            # GPU
             gpu_limit = thresholds.get("gpu_percent", 80)
-            if gpu_limit > 0:
+
+            async def _query_cpu():
                 try:
-                    gpu_query = f'nvidia_smi_utilization_gpu_ratio{{instance="{instance}"}} * 100'
-                    resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": gpu_query})
+                    q = f'100 - (avg(rate(windows_cpu_time_total{{instance="{instance}",mode="idle"}}[5m])) * 100)'
+                    resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": q})
+                    val = float(resp.json()["data"]["result"][0]["value"][1])
+                    return {"name": "CPU使用率", "ok": val <= cpu_limit, "detail": f"{val:.1f}% (上限{cpu_limit}%)"}
+                except Exception:
+                    return {"name": "CPU使用率", "ok": True, "detail": "取得失敗"}
+
+            async def _query_mem():
+                try:
+                    q = f'100 - (windows_memory_physical_free_bytes{{instance="{instance}"}} / windows_memory_physical_total_bytes{{instance="{instance}"}} * 100)'
+                    resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": q})
+                    val = float(resp.json()["data"]["result"][0]["value"][1])
+                    return {"name": "メモリ使用率", "ok": val <= mem_limit, "detail": f"{val:.1f}% (上限{mem_limit}%)"}
+                except Exception:
+                    return {"name": "メモリ使用率", "ok": True, "detail": "取得失敗"}
+
+            async def _query_gpu():
+                if gpu_limit <= 0:
+                    return {"name": "GPU使用率", "ok": True, "detail": "チェック無効"}
+                try:
+                    q = f'nvidia_smi_utilization_gpu_ratio{{instance="{instance}"}} * 100'
+                    resp = await http.get(f"{self._metrics_url}/api/v1/query", params={"query": q})
                     results = resp.json().get("data", {}).get("result", [])
                     if results:
-                        gpu_val = float(results[0]["value"][1])
-                        checks.append({"name": "GPU使用率", "ok": gpu_val <= gpu_limit, "detail": f"{gpu_val:.1f}% (上限{gpu_limit}%)"})
-                    else:
-                        checks.append({"name": "GPU使用率", "ok": True, "detail": "exporter未導入"})
+                        val = float(results[0]["value"][1])
+                        return {"name": "GPU使用率", "ok": val <= gpu_limit, "detail": f"{val:.1f}% (上限{gpu_limit}%)"}
+                    return {"name": "GPU使用率", "ok": True, "detail": "exporter未導入"}
                 except Exception:
-                    checks.append({"name": "GPU使用率", "ok": True, "detail": "取得失敗"})
+                    return {"name": "GPU使用率", "ok": True, "detail": "取得失敗"}
+
+            cpu_r, mem_r, gpu_r = await asyncio.gather(_query_cpu(), _query_mem(), _query_gpu())
+            checks.extend([cpu_r, mem_r, gpu_r])
         else:
             checks.append({"name": "CPU使用率", "ok": True, "detail": "メトリクス未設定"})
             checks.append({"name": "メモリ使用率", "ok": True, "detail": "メトリクス未設定"})

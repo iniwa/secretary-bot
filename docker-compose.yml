@@ -22,6 +22,10 @@ services:
     environment:
       - TZ=Asia/Tokyo
       - BOT_BASE_DIR=/app/repo
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
       interval: 30s

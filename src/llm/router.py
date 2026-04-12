@@ -57,7 +57,7 @@ class LLMRouter:
             self._url_to_name[direct_url.rstrip("/")] = "ローカル"
 
         model = config.get("llm", {}).get("ollama_model", "gemma4")
-        timeout = int(config.get("llm", {}).get("ollama_timeout", 300))
+        timeout = int(config.get("llm", {}).get("ollama_timeout", 150))
         self.ollama = OllamaClient(model=model, urls=ollama_urls, timeout=timeout)
         self.gemini = GeminiClient()
         self.ollama_available = False
@@ -151,7 +151,8 @@ class LLMRouter:
                     prompt, system=system, model=ollama_model,
                     priority=priority, purpose=purpose,
                 )
-                instance = metrics.get("instance")
+                instance_url = metrics.get("instance")
+                instance_name = self.get_url_name(instance_url) if instance_url else None
                 dur = int((time.monotonic() - t0) * 1000)
                 await self._log_llm_call(
                     "ollama", _model, purpose, len(prompt), len(result), dur,
@@ -159,9 +160,9 @@ class LLMRouter:
                     tokens_per_sec=metrics.get("tokens_per_sec"),
                     eval_count=metrics.get("eval_count"),
                     prompt_eval_count=metrics.get("prompt_eval_count"),
-                    instance=instance,
+                    instance=instance_name,
                 )
-                await ft.emit("OLLAMA", "done", {"model": _model, "instance": instance}, flow_id)
+                await ft.emit("OLLAMA", "done", {"model": _model, "instance": instance_name}, flow_id)
                 await ft.emit("LLM_SELECT", "done", {"selected": "ollama"}, flow_id)
                 return result
             except OllamaUnavailableError as e:

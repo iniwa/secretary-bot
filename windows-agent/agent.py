@@ -48,13 +48,14 @@ def _detect_role() -> str:
     except Exception:
         ip_set = set()
 
-    role_map = {
-        "192.168.1.210": "main",
-        "192.168.1.211": "sub",
-    }
-    for ip, r in role_map.items():
-        if ip in ip_set:
-            return r
+    # 環境変数 AGENT_ROLE_MAP で上書き可能 (例: "192.168.1.210=main,192.168.1.211=sub")
+    role_map_str = os.environ.get("AGENT_ROLE_MAP", "192.168.1.210=main,192.168.1.211=sub")
+    for entry in role_map_str.split(","):
+        entry = entry.strip()
+        if "=" in entry:
+            ip, r = entry.split("=", 1)
+            if ip.strip() in ip_set:
+                return r.strip()
 
     return "unknown"
 
@@ -162,9 +163,9 @@ async def update(request: Request):
         )
         pull_output = result.stdout.strip()
 
-        # サブモジュール更新
+        # サブモジュール更新（ローカル変更があっても強制的に合わせる）
         sub_result = subprocess.run(
-            ["git", "submodule", "update", "--init", "--recursive"],
+            ["git", "submodule", "update", "--init", "--recursive", "--force"],
             capture_output=True, text=True, errors="replace", timeout=60,
         )
         sub_output = sub_result.stdout.strip()

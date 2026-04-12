@@ -349,7 +349,7 @@ class Database:
                     try:
                         await self._db.execute(stmt)
                     except Exception as e:
-                        log.debug("Migration stmt skipped (%s): %s", e, stmt)
+                        log.warning("Migration stmt skipped (v%d): %s — %s", version, e, stmt[:80])
                 await self._db.execute(f"PRAGMA user_version = {version}")
                 await self._db.commit()
                 log.info("Database migrated to version %d", version)

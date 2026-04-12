@@ -47,7 +47,17 @@ class Heartbeat:
         finally:
             self._think_running = False
 
+    _TICK_TIMEOUT = 600  # 10分でタイムアウト
+
     async def _tick(self) -> None:
+        try:
+            await asyncio.wait_for(self._tick_inner(), timeout=self._TICK_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.error("Heartbeat tick timed out after %ds", self._TICK_TIMEOUT)
+        except Exception as e:
+            log.error("Heartbeat tick unexpected error: %s", e)
+
+    async def _tick_inner(self) -> None:
         log.info("Heartbeat tick")
         tick_log = {
             "timestamp": jst_now(),

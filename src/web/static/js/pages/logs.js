@@ -324,7 +324,7 @@ function renderLlmRows(logs) {
       ? '<span class="badge badge-info">ollama</span>'
       : '<span class="badge badge-warning">gemini</span>';
 
-    // instance URL → 短縮名（ホスト部分のみ）
+    // instance 表示（エージェント名 or URL → 短縮名）
     let instanceLabel = '---';
     if (l.instance) {
       try {

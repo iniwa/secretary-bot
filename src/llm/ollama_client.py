@@ -41,7 +41,7 @@ class _Waiter:
 
 
 class OllamaClient:
-    def __init__(self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 300):
+    def __init__(self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 150):
         self.model = model
         self.urls = urls or []
         self.timeout = timeout
@@ -97,8 +97,8 @@ class OllamaClient:
                     data = resp.json()
                     models = [m["name"] for m in data.get("models", [])]
                     return {"models": models}
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Ollama check failed for %s: %s", url, e)
         return None
 
     @property
