@@ -3,8 +3,15 @@
 2層のセッション管理:
 - game_sessions: psutil 由来の game フィールドで継続。フォアグラウンドが裏ブラウザに切り替わっても壊れない
 - foreground_sessions: GetForegroundWindow 由来で切替ごとに区切る。during_game=1 ならゲーム中の寄り道
+
+サンプリング方針:
+- 独立したasyncioタスクで poll_interval_seconds（デフォルト60秒）ごとに /activity を取得
+- agent 未応答時はスキップ（ログ抑制、連続失敗時のみINFO）
+- activity_samples は監査用、sample_retention_days（デフォルト7）で定期削除
+- game_sessions / foreground_sessions は永続（retention なし）
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from src.database import jst_now
@@ -22,10 +29,16 @@ class ActivityCollector:
         self._cur_game_session_id: int | None = None
         self._cur_fg: str | None = None
         self._cur_fg_session_id: int | None = None
+        cfg = bot.config.get("activity", {})
+        self._poll_interval = max(10, int(cfg.get("poll_interval_seconds", 60)))
+        self._retention_days = int(cfg.get("sample_retention_days", 7))
+        self._poll_task: asyncio.Task | None = None
+        self._poll_stop = asyncio.Event()
+        self._consecutive_failures = 0
 
     async def poll(self) -> dict:
         """1tickの取得→記録。戻り値は Heartbeat のデバッグログ用。"""
-        result = {"sample": False, "game_change": None, "fg_change": None}
+        result = {"sample": False, "game_change": None, "fg_change": None, "alive": False}
 
         monitor = self.bot.activity_detector._agent_monitor
         agents = self.bot.config.get("windows_agents", [])
@@ -35,7 +48,15 @@ class ActivityCollector:
 
         data = await monitor.fetch(main_agent)
         if data is None:
+            # agent 未応答: 進行中セッションは一旦 close せず保持（復帰時に継続扱い）
+            self._consecutive_failures += 1
+            if self._consecutive_failures in (1, 10, 60):
+                log.info("activity poll: Main PC agent unreachable (%d consecutive)", self._consecutive_failures)
             return result
+        if self._consecutive_failures >= 10:
+            log.info("activity poll: Main PC agent recovered after %d failures", self._consecutive_failures)
+        self._consecutive_failures = 0
+        result["alive"] = True
 
         game = data.get("game") or None
         fg = data.get("foreground_process") or None
@@ -109,6 +130,49 @@ class ActivityCollector:
             (ts, dur, self._cur_fg_session_id),
         )
         self._cur_fg_session_id = None
+
+    async def start_polling(self) -> None:
+        """独立した asyncio タスクで poll を定期実行する。"""
+        if self._poll_task and not self._poll_task.done():
+            return
+        self._poll_stop.clear()
+        self._poll_task = asyncio.create_task(self._poll_loop())
+        log.info("ActivityCollector polling started (interval=%ds)", self._poll_interval)
+
+    async def stop_polling(self) -> None:
+        self._poll_stop.set()
+        if self._poll_task:
+            try:
+                await asyncio.wait_for(self._poll_task, timeout=5)
+            except asyncio.TimeoutError:
+                self._poll_task.cancel()
+            self._poll_task = None
+
+    async def _poll_loop(self) -> None:
+        while not self._poll_stop.is_set():
+            try:
+                await self.poll()
+            except Exception as e:
+                log.warning("activity poll loop error: %s", e)
+            try:
+                await asyncio.wait_for(self._poll_stop.wait(), timeout=self._poll_interval)
+            except asyncio.TimeoutError:
+                pass
+
+    async def cleanup_old_samples(self) -> int:
+        """retention_days より古い activity_samples を削除。戻り値は参考。"""
+        if self._retention_days <= 0:
+            return 0
+        cutoff_dt = datetime.now(tz=_JST) - timedelta(days=self._retention_days)
+        cutoff = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            await self.bot.database.execute(
+                "DELETE FROM activity_samples WHERE ts < ?", (cutoff,),
+            )
+            log.info("activity_samples cleanup executed (cutoff=%s)", cutoff)
+        except Exception as e:
+            log.warning("activity_samples cleanup failed: %s", e)
+        return 0
 
     async def restore_open_sessions(self) -> None:
         """起動時: DBに end_at=NULL のセッションが残っていたら、メモリ状態として拾う。

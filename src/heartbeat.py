@@ -184,27 +184,24 @@ class Heartbeat:
     # --- Main PC アクティビティ取得・日次要約 ---
 
     async def _run_activity(self) -> dict:
-        """Main PC /activity をポーリングし sample/sessions を記録。日付変わったら前日を要約。"""
+        """ポーリングは独立タスクなのでここでは実行しない。
+        1日1回のサンプルretentionと日次要約だけを担当。"""
         result: dict = {}
         collector = getattr(self.bot, "activity_collector", None)
         if collector is None:
             return result
-        try:
-            result = await collector.poll()
-        except Exception as e:
-            log.warning("activity collector poll failed: %s", e)
-            result["error"] = str(e)
 
         today_str = datetime.now(tz=JST).strftime("%Y-%m-%d")
         if self._activity_daily_last_date != today_str:
             try:
+                await collector.cleanup_old_samples()
                 from src.activity.daily_summary import run_daily_summary
                 did = await run_daily_summary(self.bot)
                 result["daily_summary"] = did
                 self._activity_daily_last_date = today_str
             except Exception as e:
-                log.warning("activity daily summary failed: %s", e)
-                result["daily_summary_error"] = str(e)
+                log.warning("activity daily job failed: %s", e)
+                result["daily_error"] = str(e)
         return result
 
     # --- RSS 定期フェッチ・要約・ダイジェスト通知 ---

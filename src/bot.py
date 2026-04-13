@@ -253,6 +253,7 @@ class SecretaryBot(commands.Bot):
         log.info("シャットダウン開始...")
         for name, coro in [
             ("heartbeat", lambda: asyncio.to_thread(self.heartbeat.shutdown)),
+            ("activity_collector", self.activity_collector.stop_polling),
             ("activity_detector", self.activity_detector.close),
             ("agent_pool", self.unit_manager.agent_pool.close),
             ("database", self.database.close),
@@ -421,6 +422,7 @@ async def main() -> None:
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
     await bot.activity_collector.restore_open_sessions()
+    await bot.activity_collector.start_polling()
     await bot.heartbeat.sync_summaries_to_chroma()
     bot.heartbeat.start()
     await bot.heartbeat.restore_reminders()
