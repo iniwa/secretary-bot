@@ -28,6 +28,28 @@ class ConversationSource(ContextSource):
         super().__init__(bot)
         self._cache_key = None
         self._cache_summary = None
+        self._update_lock = asyncio.Lock()
+
+    async def update(self) -> None:
+        """背景でLLM要約を更新。新着メッセージが無ければスキップ。"""
+        async with self._update_lock:
+            messages = await self.bot.database.get_recent_messages(limit=30)
+            if not messages:
+                return
+            messages = [m for m in messages if m.get("unit") != "inner_mind"]
+            if not messages:
+                return
+            latest_id = messages[0].get("id")
+            if latest_id == self._cache_key and self._cache_summary:
+                return
+
+            url_contents = await self._fetch_urls(messages)
+            self._attach_url_details(messages, url_contents)
+            segments = self._segment_messages(messages)
+            summary = await self._summarize_with_llm(segments)
+
+            self._cache_key = latest_id
+            self._cache_summary = summary
 
     async def collect(self, shared: dict) -> dict | None:
         messages = await self.bot.database.get_recent_messages(limit=30)
@@ -46,17 +68,13 @@ class ConversationSource(ContextSource):
         # セグメント分割
         segments = self._segment_messages(messages)
 
-        # キャッシュチェック（最新message IDベース）
+        # キャッシュ命中ならLLM呼ばずに返す（update()が背景で更新済み）
         latest_id = messages[0].get("id")
         if latest_id == self._cache_key and self._cache_summary:
             return {"segments": segments, "summary": self._cache_summary}
 
-        # LLM要約
-        summary = await self._summarize_with_llm(segments)
-        self._cache_key = latest_id
-        self._cache_summary = summary
-
-        return {"segments": segments, "summary": summary}
+        # 背景更新がまだの場合のフォールバック
+        return {"segments": segments, "summary": self._heuristic_summary(segments)}
 
     def format_for_prompt(self, data: dict) -> str:
         """LLM要約があればそれを使用。"""

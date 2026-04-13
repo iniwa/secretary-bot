@@ -115,10 +115,11 @@ class Heartbeat:
             tasks.append(self._run_activity())
             tasks.append(self._run_memory_sweep())
             tasks.append(self._run_calendar_sync())
+            tasks.append(self._run_context_sources_update())
 
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # 結果を分解: ユニット結果 | STT | RSS | Compact | Activity | MemorySweep | CalendarSync
+            # 結果を分解: ユニット結果 | STT | RSS | Compact | Activity | MemorySweep | CalendarSync | SourcesUpdate
             n_units = len(units)
             for i, r in enumerate(all_results[:n_units]):
                 if isinstance(r, Exception):
@@ -132,12 +133,14 @@ class Heartbeat:
             activity_result = all_results[n_units + 3] if not isinstance(all_results[n_units + 3], Exception) else {"error": str(all_results[n_units + 3])}
             memory_sweep_result = all_results[n_units + 4] if not isinstance(all_results[n_units + 4], Exception) else {"error": str(all_results[n_units + 4])}
             calendar_result = all_results[n_units + 5] if not isinstance(all_results[n_units + 5], Exception) else {"error": str(all_results[n_units + 5])}
+            sources_update_result = all_results[n_units + 6] if not isinstance(all_results[n_units + 6], Exception) else {"error": str(all_results[n_units + 6])}
             tick_log["stt"] = stt_result
             tick_log["rss"] = rss_result
             tick_log["compact"] = compact_result
             tick_log["activity"] = activity_result
             tick_log["memory_sweep"] = memory_sweep_result
             tick_log["calendar"] = calendar_result
+            tick_log["sources_update"] = sources_update_result
 
             # Ollama状態を再チェックして次回間隔を調整
             available = await self.bot.llm_router.check_ollama()
@@ -233,6 +236,20 @@ class Heartbeat:
             log.warning("memory sweep failed: %s", e)
             result["error"] = str(e)
         return result
+
+    # --- InnerMind ContextSource 背景更新 ---
+
+    async def _run_context_sources_update(self) -> dict:
+        """各ContextSourceの背景更新（LLM要約等の重い処理）を実行。
+        InnerMind.think()時にはキャッシュから軽量に読むだけにする。"""
+        if not self.bot.llm_router.ollama_available:
+            return {"skipped": "ollama_unavailable"}
+        try:
+            await self.inner_mind.registry.update_all()
+            return {"ok": True}
+        except Exception as e:
+            log.warning("ContextSource update failed: %s", e)
+            return {"error": str(e)}
 
     # --- カレンダー同期 ---
 

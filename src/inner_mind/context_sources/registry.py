@@ -36,6 +36,22 @@ class ContextSourceRegistry:
             log.warning("ContextSource %s failed, skipping", source.name, exc_info=True)
         return None
 
+    async def _update_one(self, source: ContextSource) -> None:
+        try:
+            await source.update()
+        except Exception:
+            log.warning("ContextSource %s update failed", source.name, exc_info=True)
+
+    async def update_all(self) -> None:
+        """全ソースの背景更新を並列実行。ハートビートから呼ぶ。"""
+        active_sources = [s for s in self._sources if s.enabled]
+        if not active_sources:
+            return
+        await asyncio.gather(
+            *[self._update_one(s) for s in active_sources],
+            return_exceptions=True,
+        )
+
     async def collect_all(self, shared: dict) -> list[dict]:
         """全ソースから並列収集。失敗/無効なソースはスキップ。
 

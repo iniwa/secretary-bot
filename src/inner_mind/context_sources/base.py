@@ -21,3 +21,11 @@ class ContextSource:
     def format_for_prompt(self, data: dict) -> str:
         """収集データをLLMプロンプト用テキストに変換。"""
         raise NotImplementedError
+
+    async def update(self) -> None:
+        """背景更新フック（任意）。
+
+        ハートビート毎に呼ばれる。重い前処理（LLM要約等）をここで済ませ、
+        collect() は軽量なキャッシュ読取りだけに留める設計を推奨。
+        """
+        return None
