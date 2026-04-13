@@ -79,6 +79,7 @@ class SecretaryBot(commands.Bot):
         self.people_memory = PeopleMemory(self)
         self.unit_router = UnitRouter(self)
         self.heartbeat = Heartbeat(self)
+        self.inner_mind = self.heartbeat.inner_mind
         self.unit_manager = UnitManager(self)
         self.activity_detector = ActivityDetector(self, config)
         self.unit_manager.agent_pool.set_activity_detector(self.activity_detector)
