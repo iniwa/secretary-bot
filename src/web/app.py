@@ -967,6 +967,34 @@ def create_web_app(bot) -> FastAPI:
     async def debug_heartbeat_logs():
         return {"logs": list(bot.heartbeat.debug_logs)}
 
+    # --- 管理: STT要約の再生成 ---
+
+    @app.post("/api/stt/resummarize", dependencies=[Depends(_verify)])
+    async def stt_resummarize(request: Request):
+        """指定した stt_summaries 行を現在のプロンプトで作り直す。ids=[...] または all_non_japanese=true。"""
+        from src.stt.processor import STTProcessor
+        import re
+        body = await request.json()
+        processor = STTProcessor(bot)
+
+        target_ids: list[int] = []
+        if body.get("all_non_japanese"):
+            rows = await bot.database.fetchall(
+                "SELECT id, summary FROM stt_summaries"
+            )
+            non_ja = re.compile(r"[\uAC00-\uD7AF\u4E00-\u9FFF]")
+            for r in rows:
+                if non_ja.search(r["summary"]):
+                    target_ids.append(r["id"])
+        else:
+            target_ids = [int(i) for i in body.get("ids", [])]
+
+        results = []
+        for sid in target_ids:
+            ok = await processor.resummarize(sid)
+            results.append({"id": sid, "ok": ok})
+        return {"targets": target_ids, "results": results}
+
     # --- デバッグ: 楽天検索 ---
 
     @app.get("/api/debug/rakuten-search", dependencies=[Depends(_verify)])
