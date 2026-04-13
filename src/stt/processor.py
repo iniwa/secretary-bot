@@ -151,9 +151,9 @@ class STTProcessor:
         )
 
         # ChromaDB 保存
+        meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
+        meta_period_end = rows[-1]["ended_at"] if rows[-1]["ended_at"] else ""
         try:
-            meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
-            meta_period_end = rows[-1]["ended_at"] if rows[-1]["ended_at"] else ""
             doc_id = f"stt_summary_{ids[0]}_{ids[-1]}"
             self.bot.chroma.add(
                 "stt_summaries", doc_id, summary,
@@ -165,6 +165,20 @@ class STTProcessor:
             )
         except Exception as e:
             log.warning("STT summary ChromaDB save failed: %s", e)
+
+        # people_memory にも同じ要約を保存（いにわ本人の発話なので人物メモリーの一次情報として扱う）
+        try:
+            if getattr(self.bot, "people_memory", None):
+                await self.bot.people_memory.save(
+                    summary,
+                    metadata={
+                        "source": "stt",
+                        "period_start": meta_period_start,
+                        "period_end": meta_period_end,
+                    },
+                )
+        except Exception as e:
+            log.warning("STT summary people_memory save failed: %s", e)
 
         log.info(
             "STT summary created from %d transcripts (%d chars, reason=%s)",
@@ -223,10 +237,10 @@ class STTProcessor:
         )
 
         # ChromaDB 更新（doc_id は旧来の命名に合わせる、upsertなので上書き可）
+        meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
+        meta_period_end = rows[-1]["started_at"] if rows[-1]["started_at"] else ""
         try:
             doc_id = f"stt_summary_{ids[0]}_{ids[-1]}"
-            meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
-            meta_period_end = rows[-1]["started_at"] if rows[-1]["started_at"] else ""
             self.bot.chroma.add(
                 "stt_summaries", doc_id, new_summary,
                 {
@@ -237,6 +251,21 @@ class STTProcessor:
             )
         except Exception as e:
             log.warning("STT resummarize ChromaDB update failed for id=%d: %s", summary_id, e)
+
+        # people_memory も上書き（doc_id が別なので過去分が残る点は要約元が同じなので許容）
+        try:
+            if getattr(self.bot, "people_memory", None):
+                await self.bot.people_memory.save(
+                    new_summary,
+                    metadata={
+                        "source": "stt",
+                        "period_start": meta_period_start,
+                        "period_end": meta_period_end,
+                        "resummarized_from": summary_id,
+                    },
+                )
+        except Exception as e:
+            log.warning("STT resummarize people_memory save failed for id=%d: %s", summary_id, e)
 
         log.info("STT summary id=%d resummarized (%d transcripts)", summary_id, len(ids))
         return True

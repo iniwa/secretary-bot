@@ -29,6 +29,7 @@ class Heartbeat:
         self._rss_digest_sent_today: str | None = None
         self._stt_collector = None  # 遅延初期化（_last_tsを保持するため）
         self._stt_cleanup_last_date: str | None = None  # 1日1回のretention実行を制御
+        self._activity_daily_last_date: str | None = None  # 1日1回の活動要約実行を制御
 
     @property
     def _config(self) -> dict:
@@ -109,6 +110,7 @@ class Heartbeat:
             tasks.append(self._run_stt())
             tasks.append(self._run_rss())
             tasks.append(self._check_compact())
+            tasks.append(self._run_activity())
 
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -123,9 +125,11 @@ class Heartbeat:
             stt_result = all_results[n_units] if not isinstance(all_results[n_units], Exception) else {"error": str(all_results[n_units])}
             rss_result = all_results[n_units + 1] if not isinstance(all_results[n_units + 1], Exception) else {"error": str(all_results[n_units + 1])}
             compact_result = all_results[n_units + 2] if not isinstance(all_results[n_units + 2], Exception) else {"error": str(all_results[n_units + 2])}
+            activity_result = all_results[n_units + 3] if not isinstance(all_results[n_units + 3], Exception) else {"error": str(all_results[n_units + 3])}
             tick_log["stt"] = stt_result
             tick_log["rss"] = rss_result
             tick_log["compact"] = compact_result
+            tick_log["activity"] = activity_result
 
             # Ollama状態を再チェックして次回間隔を調整
             available = await self.bot.llm_router.check_ollama()
@@ -175,6 +179,32 @@ class Heartbeat:
                 self._stt_cleanup_last_date = today_str
             except Exception as e:
                 log.warning("STT cleanup failed: %s", e)
+        return result
+
+    # --- Main PC アクティビティ取得・日次要約 ---
+
+    async def _run_activity(self) -> dict:
+        """Main PC /activity をポーリングし sample/sessions を記録。日付変わったら前日を要約。"""
+        result: dict = {}
+        collector = getattr(self.bot, "activity_collector", None)
+        if collector is None:
+            return result
+        try:
+            result = await collector.poll()
+        except Exception as e:
+            log.warning("activity collector poll failed: %s", e)
+            result["error"] = str(e)
+
+        today_str = datetime.now(tz=JST).strftime("%Y-%m-%d")
+        if self._activity_daily_last_date != today_str:
+            try:
+                from src.activity.daily_summary import run_daily_summary
+                did = await run_daily_summary(self.bot)
+                result["daily_summary"] = did
+                self._activity_daily_last_date = today_str
+            except Exception as e:
+                log.warning("activity daily summary failed: %s", e)
+                result["daily_summary_error"] = str(e)
         return result
 
     # --- RSS 定期フェッチ・要約・ダイジェスト通知 ---

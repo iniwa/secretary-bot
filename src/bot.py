@@ -10,6 +10,7 @@ import discord
 import yaml
 from discord.ext import commands
 
+from src.activity.collector import ActivityCollector
 from src.activity.detector import ActivityDetector
 from src.database import Database
 from src.flow_tracker import get_flow_tracker
@@ -17,6 +18,7 @@ from src.heartbeat import Heartbeat
 from src.llm.router import LLMRouter
 from src.logger import get_logger, setup_logging
 from src.memory.chroma_client import ChromaMemory
+from src.memory.people_memory import PeopleMemory
 from src.unit_router import UnitRouter
 from src.units import UnitManager
 from src.web.app import create_web_app
@@ -74,11 +76,13 @@ class SecretaryBot(commands.Bot):
         self.database = Database(path=os.path.join(data_dir, "bot.db"))
         self.llm_router = LLMRouter(config)
         self.chroma = ChromaMemory(path=os.path.join(data_dir, "chromadb"))
+        self.people_memory = PeopleMemory(self)
         self.unit_router = UnitRouter(self)
         self.heartbeat = Heartbeat(self)
         self.unit_manager = UnitManager(self)
         self.activity_detector = ActivityDetector(self, config)
         self.unit_manager.agent_pool.set_activity_detector(self.activity_detector)
+        self.activity_collector = ActivityCollector(self)
         from src.status_collector import StatusCollector
         self.status_collector = StatusCollector(self)
         self._admin_channel_id = int(os.environ.get("DISCORD_ADMIN_CHANNEL_ID", "0"))
@@ -416,6 +420,7 @@ async def main() -> None:
     await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()
+    await bot.activity_collector.restore_open_sessions()
     await bot.heartbeat.sync_summaries_to_chroma()
     bot.heartbeat.start()
     await bot.heartbeat.restore_reminders()

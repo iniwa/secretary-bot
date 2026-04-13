@@ -1649,6 +1649,34 @@ def create_web_app(bot) -> FastAPI:
             return {"alive": False, "error": "Main PC agent not reachable"}
         return results[0]
 
+    @app.get("/api/activity/stats", dependencies=[Depends(_verify)])
+    async def activity_stats(days: int = 7):
+        """直近N日のゲーム / フォアグラウンド集計（ランキング）。"""
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _JST = _tz(_td(hours=9))
+        days = max(1, min(int(days or 7), 90))
+        cutoff = (_dt.now(tz=_JST) - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        games = await bot.database.fetchall(
+            """
+            SELECT game_name, SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
+            FROM game_sessions
+            WHERE start_at >= ? AND end_at IS NOT NULL
+            GROUP BY game_name ORDER BY sec DESC
+            """,
+            (cutoff,),
+        )
+        fg = await bot.database.fetchall(
+            """
+            SELECT process_name, during_game,
+                   SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
+            FROM foreground_sessions
+            WHERE start_at >= ? AND end_at IS NOT NULL
+            GROUP BY process_name, during_game ORDER BY sec DESC
+            """,
+            (cutoff,),
+        )
+        return {"since": cutoff, "games": games, "foreground": fg}
+
     # --- RSS フィード管理 ---
 
     @app.get("/api/rss/feeds", dependencies=[Depends(_verify)])

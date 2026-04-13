@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 22
+_SCHEMA_VERSION = 23
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -343,6 +343,35 @@ class Database:
                 # 重複除去してから UNIQUE INDEX を張る（既存データ保護）
                 "DELETE FROM stt_transcripts WHERE id NOT IN (SELECT MIN(id) FROM stt_transcripts GROUP BY started_at)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_transcripts_started_at ON stt_transcripts(started_at)",
+            ],
+            23: [
+                # Main PC アクティビティ蓄積テーブル群
+                """CREATE TABLE IF NOT EXISTS activity_samples (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts                 TEXT NOT NULL,
+                    game               TEXT,
+                    foreground_process TEXT,
+                    is_fullscreen      INTEGER DEFAULT 0
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_activity_samples_ts ON activity_samples(ts)",
+                """CREATE TABLE IF NOT EXISTS game_sessions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    game_name    TEXT NOT NULL,
+                    start_at     TEXT NOT NULL,
+                    end_at       TEXT,
+                    duration_sec INTEGER
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_game_sessions_start ON game_sessions(start_at)",
+                """CREATE TABLE IF NOT EXISTS foreground_sessions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_name TEXT NOT NULL,
+                    start_at     TEXT NOT NULL,
+                    end_at       TEXT,
+                    duration_sec INTEGER,
+                    during_game  INTEGER DEFAULT 0,
+                    game_name    TEXT
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_foreground_sessions_start ON foreground_sessions(start_at)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
