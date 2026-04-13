@@ -48,11 +48,21 @@ class RSSProcessor:
         if not articles:
             return 0
 
-        # 全記事を並列にLLM要約（Ollamaマルチインスタンスで自動分配）
-        summaries = await asyncio.gather(
-            *[self._summarize_article(a) for a in articles],
+        # 先頭1件をプローブとして逐次実行。Ollamaゾンビ状態での無駄な並列発射を回避
+        first_summary = await self._summarize_article(articles[0])
+        if first_summary is None and not self.bot.llm_router.ollama_available:
+            log.info(
+                "RSS summarize aborted: Ollama unavailable (skipped %d articles)",
+                len(articles) - 1,
+            )
+            return 0
+
+        # プローブ成功時は残りを並列実行（Ollamaマルチインスタンスで自動分配）
+        rest_summaries = await asyncio.gather(
+            *[self._summarize_article(a) for a in articles[1:]],
             return_exceptions=True,
         )
+        summaries = [first_summary, *rest_summaries]
 
         count = 0
         for article, summary in zip(articles, summaries):

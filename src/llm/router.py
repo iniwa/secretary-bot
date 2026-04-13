@@ -62,6 +62,9 @@ class LLMRouter:
         self.gemini = GeminiClient()
         self.ollama_available = False
         self._database = None  # bot.pyから設定される
+        # Ollama 500 等のゾンビ状態を検出したら一定秒クールダウン。/api/tags 誤判定を避ける
+        self._ollama_cooldown_sec = int(config.get("llm", {}).get("ollama_cooldown_sec", 60))
+        self._ollama_cooldown_until: float = 0.0
 
     def set_database(self, database) -> None:
         self._database = database
@@ -97,7 +100,11 @@ class LLMRouter:
             except Exception as e:
                 log.debug("Failed to log LLM call: %s", e)
 
-    async def check_ollama(self) -> bool:
+    async def check_ollama(self, force: bool = False) -> bool:
+        # クールダウン中は /api/tags を叩かずに False を返す（ゾンビ状態で True に戻るのを防ぐ）
+        if not force and time.monotonic() < self._ollama_cooldown_until:
+            self.ollama_available = False
+            return False
         self.ollama_available = await self.ollama.check_availability()
         return self.ollama_available
 
@@ -172,7 +179,11 @@ class LLMRouter:
                     prompt_text=prompt, system_text=system,
                 )
                 self.ollama_available = False
-                log.warning("Ollama became unavailable, checking Gemini fallback")
+                self._ollama_cooldown_until = time.monotonic() + self._ollama_cooldown_sec
+                log.warning(
+                    "Ollama became unavailable, cooldown %ds, checking Gemini fallback",
+                    self._ollama_cooldown_sec,
+                )
                 await ft.emit("OLLAMA", "error", {"reason": "unavailable"}, flow_id)
 
         if ollama_only:

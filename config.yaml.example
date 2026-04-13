@@ -2,6 +2,7 @@
 llm:
   ollama_model: "gemma4"
   ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
+  ollama_cooldown_sec: 60  # Ollama失敗検出後のクールダウン秒数。/api/tagsのゾンビ誤判定を防ぐ
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
 
 # ハートビート

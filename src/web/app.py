@@ -188,7 +188,7 @@ def create_web_app(bot) -> FastAPI:
     @app.post("/api/ollama-recheck", )
     async def ollama_recheck():
         """Ollamaの接続状態を手動で再チェックする。"""
-        available = await bot.llm_router.check_ollama()
+        available = await bot.llm_router.check_ollama(force=True)
         # ハートビート間隔も再調整
         bot.heartbeat._reschedule()
         return {"ollama_available": available}
