@@ -12,6 +12,7 @@ from src.errors import AllLLMsUnavailableError
 from src.inner_mind.context_sources import ContextSourceRegistry
 from src.inner_mind.context_sources.activity import ActivitySource
 from src.inner_mind.context_sources.conversation import ConversationSource
+from src.inner_mind.context_sources.habit import HabitSource
 from src.inner_mind.context_sources.memo import MemoSource
 from src.inner_mind.context_sources.memory import MemorySource
 from src.inner_mind.context_sources.reminder import ReminderSource
@@ -80,6 +81,7 @@ class InnerMind:
         self.registry.register(RSSSource(bot))
         self.registry.register(STTSource(bot))
         self.registry.register(ActivitySource(bot))
+        self.registry.register(HabitSource(bot))
 
     def register_source(self, source) -> None:
         """外部からコンテキストソースを追加する。"""
