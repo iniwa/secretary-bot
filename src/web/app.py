@@ -1649,33 +1649,141 @@ def create_web_app(bot) -> FastAPI:
             return {"alive": False, "error": "Main PC agent not reachable"}
         return results[0]
 
+    # --- Activity history (Main PC 過去プレイ履歴) ---
+
+    def _activity_cutoff(days: int) -> str | None:
+        """days=0 は全期間（None）。それ以外は days 日前の ISO 文字列。"""
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        if days <= 0:
+            return None
+        _JST = _tz(_td(hours=9))
+        return (_dt.now(tz=_JST) - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
     @app.get("/api/activity/stats", dependencies=[Depends(_verify)])
     async def activity_stats(days: int = 7):
-        """直近N日のゲーム / フォアグラウンド集計（ランキング）。"""
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-        _JST = _tz(_td(hours=9))
-        days = max(1, min(int(days or 7), 90))
-        cutoff = (_dt.now(tz=_JST) - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        """期間内のゲーム / フォアグラウンド集計（ランキング）。days=0 で全期間。"""
+        days = max(0, min(int(days or 7), 3650))
+        cutoff = _activity_cutoff(days)
+        where_g = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
+        params_g: tuple = (cutoff,) if cutoff else ()
         games = await bot.database.fetchall(
-            """
-            SELECT game_name, SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
-            FROM game_sessions
-            WHERE start_at >= ? AND end_at IS NOT NULL
+            f"""
+            SELECT game_name, SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions,
+                   MAX(start_at) AS last_played, MAX(COALESCE(duration_sec, 0)) AS longest_sec
+            FROM game_sessions {where_g}
             GROUP BY game_name ORDER BY sec DESC
             """,
-            (cutoff,),
+            params_g,
         )
+        where_f = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
         fg = await bot.database.fetchall(
-            """
+            f"""
             SELECT process_name, during_game,
                    SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
-            FROM foreground_sessions
-            WHERE start_at >= ? AND end_at IS NOT NULL
+            FROM foreground_sessions {where_f}
             GROUP BY process_name, during_game ORDER BY sec DESC
+            """,
+            params_g,
+        )
+        return {"since": cutoff, "days": days, "games": games, "foreground": fg}
+
+    @app.get("/api/activity/summary", dependencies=[Depends(_verify)])
+    async def activity_summary(days: int = 7):
+        """期間サマリ: 総プレイ時間・セッション数・アクティブ日数・最長セッション。"""
+        days = max(0, min(int(days or 7), 3650))
+        cutoff = _activity_cutoff(days)
+        where = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
+        params: tuple = (cutoff,) if cutoff else ()
+
+        row = await bot.database.fetchone(
+            f"""
+            SELECT COUNT(*) AS sessions,
+                   COALESCE(SUM(duration_sec), 0) AS total_sec,
+                   COALESCE(MAX(duration_sec), 0) AS longest_sec,
+                   COUNT(DISTINCT date(start_at)) AS active_days,
+                   COUNT(DISTINCT game_name) AS distinct_games
+            FROM game_sessions {where}
+            """,
+            params,
+        )
+        earliest = await bot.database.fetchone(
+            "SELECT MIN(start_at) AS earliest FROM game_sessions WHERE end_at IS NOT NULL"
+        )
+        return {
+            "days": days,
+            "since": cutoff,
+            "sessions": row["sessions"] if row else 0,
+            "total_sec": row["total_sec"] if row else 0,
+            "longest_sec": row["longest_sec"] if row else 0,
+            "active_days": row["active_days"] if row else 0,
+            "distinct_games": row["distinct_games"] if row else 0,
+            "earliest": earliest["earliest"] if earliest else None,
+        }
+
+    @app.get("/api/activity/daily", dependencies=[Depends(_verify)])
+    async def activity_daily(days: int = 30):
+        """日別のゲーム時間（ゲーム別の内訳付き）。棒グラフ / ヒートマップ用。"""
+        days = max(1, min(int(days or 30), 3650))
+        cutoff = _activity_cutoff(days)
+        rows = await bot.database.fetchall(
+            """
+            SELECT date(start_at) AS day, game_name,
+                   SUM(COALESCE(duration_sec, 0)) AS sec
+            FROM game_sessions
+            WHERE end_at IS NOT NULL AND start_at >= ?
+            GROUP BY day, game_name ORDER BY day
             """,
             (cutoff,),
         )
-        return {"since": cutoff, "games": games, "foreground": fg}
+        # 日付ごとに集約してレスポンス整形
+        by_day: dict[str, dict] = {}
+        for r in rows:
+            d = r["day"]
+            if d not in by_day:
+                by_day[d] = {"day": d, "total_sec": 0, "games": []}
+            by_day[d]["total_sec"] += int(r["sec"] or 0)
+            by_day[d]["games"].append({"game_name": r["game_name"], "sec": int(r["sec"] or 0)})
+        return {"days": days, "since": cutoff, "daily": list(by_day.values())}
+
+    @app.get("/api/activity/sessions", dependencies=[Depends(_verify)])
+    async def activity_sessions(
+        days: int = 30,
+        game: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        """個別プレイセッション一覧（新しい順）。game で絞込み、ページング対応。"""
+        days = max(0, min(int(days or 30), 3650))
+        limit = max(1, min(int(limit or 100), 500))
+        offset = max(0, int(offset or 0))
+        cutoff = _activity_cutoff(days)
+
+        where_parts = ["end_at IS NOT NULL"]
+        params: list = []
+        if cutoff:
+            where_parts.append("start_at >= ?")
+            params.append(cutoff)
+        if game:
+            where_parts.append("game_name = ?")
+            params.append(game)
+        where = "WHERE " + " AND ".join(where_parts)
+
+        total_row = await bot.database.fetchone(
+            f"SELECT COUNT(*) AS c FROM game_sessions {where}", tuple(params)
+        )
+        rows = await bot.database.fetchall(
+            f"""
+            SELECT id, game_name, start_at, end_at, duration_sec
+            FROM game_sessions {where}
+            ORDER BY start_at DESC LIMIT ? OFFSET ?
+            """,
+            tuple(params + [limit, offset]),
+        )
+        return {
+            "total": total_row["c"] if total_row else 0,
+            "limit": limit, "offset": offset,
+            "sessions": rows,
+        }
 
     # --- RSS フィード管理 ---
 

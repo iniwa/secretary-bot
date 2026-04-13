@@ -17,6 +17,7 @@ import * as innermind from './pages/innermind.js';
 import * as obs from './pages/obs.js';
 import * as inputRelay from './pages/input-relay.js';
 import * as stt from './pages/stt.js';
+import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
 
 // ============================================================
@@ -37,6 +38,7 @@ const pages = {
   obs:          { title: 'OBS',              module: obs },
   'input-relay':{ title: 'Input Relay',      module: inputRelay },
   stt:          { title: 'STT',              module: stt },
+  activity:     { title: 'Activity',         module: activity },
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
   'docker-monitor': { title: 'Docker Monitor', module: dockerMonitor },
