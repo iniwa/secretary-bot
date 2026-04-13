@@ -1659,41 +1659,76 @@ def create_web_app(bot) -> FastAPI:
         _JST = _tz(_td(hours=9))
         return (_dt.now(tz=_JST) - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
-    @app.get("/api/activity/stats", dependencies=[Depends(_verify)])
-    async def activity_stats(days: int = 7):
-        """期間内のゲーム / フォアグラウンド集計（ランキング）。days=0 で全期間。"""
-        days = max(0, min(int(days or 7), 3650))
+    def _activity_range(
+        days: int, start: str | None = None, end: str | None = None
+    ) -> tuple[list[str], list, dict]:
+        """期間指定を where 断片とパラメータに変換。
+        start/end (YYYY-MM-DD) が与えられたら優先。end は排他的終端として翌日00:00を使う。
+        """
+        from datetime import date as _date, timedelta as _td
+        parts: list[str] = []
+        params: list = []
+        meta: dict = {}
+        if start or end:
+            if start:
+                parts.append("start_at >= ?")
+                params.append(f"{start} 00:00:00")
+                meta["start"] = start
+            if end:
+                try:
+                    end_excl = (_date.fromisoformat(end) + _td(days=1)).strftime(
+                        "%Y-%m-%d 00:00:00"
+                    )
+                except ValueError:
+                    end_excl = f"{end} 23:59:59"
+                parts.append("start_at < ?")
+                params.append(end_excl)
+                meta["end"] = end
+            return parts, params, meta
         cutoff = _activity_cutoff(days)
-        where_g = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
-        params_g: tuple = (cutoff,) if cutoff else ()
+        if cutoff:
+            parts.append("start_at >= ?")
+            params.append(cutoff)
+        meta["days"] = days
+        meta["since"] = cutoff
+        return parts, params, meta
+
+    @app.get("/api/activity/stats", dependencies=[Depends(_verify)])
+    async def activity_stats(
+        days: int = 7, start: str | None = None, end: str | None = None
+    ):
+        """期間内のゲーム / フォアグラウンド集計（ランキング）。start/end (YYYY-MM-DD) が優先。"""
+        days = max(0, min(int(days or 7), 3650))
+        parts, params, meta = _activity_range(days, start, end)
+        where_clause = " AND ".join(["end_at IS NOT NULL", *parts])
         games = await bot.database.fetchall(
             f"""
             SELECT game_name, SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions,
                    MAX(start_at) AS last_played, MAX(COALESCE(duration_sec, 0)) AS longest_sec
-            FROM game_sessions {where_g}
+            FROM game_sessions WHERE {where_clause}
             GROUP BY game_name ORDER BY sec DESC
             """,
-            params_g,
+            tuple(params),
         )
-        where_f = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
         fg = await bot.database.fetchall(
             f"""
             SELECT process_name, during_game,
                    SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
-            FROM foreground_sessions {where_f}
+            FROM foreground_sessions WHERE {where_clause}
             GROUP BY process_name, during_game ORDER BY sec DESC
             """,
-            params_g,
+            tuple(params),
         )
-        return {"since": cutoff, "days": days, "games": games, "foreground": fg}
+        return {**meta, "games": games, "foreground": fg}
 
     @app.get("/api/activity/summary", dependencies=[Depends(_verify)])
-    async def activity_summary(days: int = 7):
+    async def activity_summary(
+        days: int = 7, start: str | None = None, end: str | None = None
+    ):
         """期間サマリ: 総プレイ時間・セッション数・アクティブ日数・最長セッション。"""
         days = max(0, min(int(days or 7), 3650))
-        cutoff = _activity_cutoff(days)
-        where = "WHERE end_at IS NOT NULL" + (" AND start_at >= ?" if cutoff else "")
-        params: tuple = (cutoff,) if cutoff else ()
+        parts, params, meta = _activity_range(days, start, end)
+        where_clause = " AND ".join(["end_at IS NOT NULL", *parts])
 
         row = await bot.database.fetchone(
             f"""
@@ -1702,16 +1737,15 @@ def create_web_app(bot) -> FastAPI:
                    COALESCE(MAX(duration_sec), 0) AS longest_sec,
                    COUNT(DISTINCT date(start_at)) AS active_days,
                    COUNT(DISTINCT game_name) AS distinct_games
-            FROM game_sessions {where}
+            FROM game_sessions WHERE {where_clause}
             """,
-            params,
+            tuple(params),
         )
         earliest = await bot.database.fetchone(
             "SELECT MIN(start_at) AS earliest FROM game_sessions WHERE end_at IS NOT NULL"
         )
         return {
-            "days": days,
-            "since": cutoff,
+            **meta,
             "sessions": row["sessions"] if row else 0,
             "total_sec": row["total_sec"] if row else 0,
             "longest_sec": row["longest_sec"] if row else 0,
@@ -1725,20 +1759,26 @@ def create_web_app(bot) -> FastAPI:
         days: int = 30,
         year: int | None = None,
         month: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ):
         """日別のゲーム時間（ゲーム別の内訳付き）。棒グラフ / カレンダー用。
-        year/month 指定時は指定月全日。未指定時は直近 days 日。"""
+        start/end (YYYY-MM-DD) が最優先、次に year/month、最後に直近 days 日。"""
         from datetime import date as _date
-        if year and month:
+        if start or end:
+            parts, params_list, meta = _activity_range(days, start, end)
+            where = " AND ".join(["end_at IS NOT NULL", *parts])
+            params: tuple = tuple(params_list)
+        elif year and month:
             month_start = _date(year, month, 1)
             if month == 12:
                 next_month = _date(year + 1, 1, 1)
             else:
                 next_month = _date(year, month + 1, 1)
-            start = month_start.strftime("%Y-%m-%d 00:00:00")
-            end = next_month.strftime("%Y-%m-%d 00:00:00")
+            m_start = month_start.strftime("%Y-%m-%d 00:00:00")
+            m_end = next_month.strftime("%Y-%m-%d 00:00:00")
             where = "end_at IS NOT NULL AND start_at >= ? AND start_at < ?"
-            params: tuple = (start, end)
+            params = (m_start, m_end)
             meta = {"year": year, "month": month}
         else:
             days = max(1, min(int(days or 30), 3650))
@@ -1771,11 +1811,13 @@ def create_web_app(bot) -> FastAPI:
         days: int = 30,
         game: str = "",
         day: str = "",
+        start: str | None = None,
+        end: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ):
-        """個別プレイセッション一覧（新しい順）。game / day で絞込み、ページング対応。
-        day は YYYY-MM-DD 指定で、days より優先される。"""
+        """個別プレイセッション一覧（新しい順）。game / day / start+end で絞込み。
+        優先度: day > start/end > days。"""
         days = max(0, min(int(days or 30), 3650))
         limit = max(1, min(int(limit or 100), 500))
         offset = max(0, int(offset or 0))
@@ -1785,6 +1827,10 @@ def create_web_app(bot) -> FastAPI:
         if day:
             where_parts.append("date(start_at) = ?")
             params.append(day)
+        elif start or end:
+            range_parts, range_params, _ = _activity_range(days, start, end)
+            where_parts.extend(range_parts)
+            params.extend(range_params)
         else:
             cutoff = _activity_cutoff(days)
             if cutoff:

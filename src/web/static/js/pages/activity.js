@@ -13,6 +13,8 @@ const PRESETS = [
 ];
 
 let _days = 30;
+let _rangeStart = '';             // YYYY-MM-DD。指定時は _days より優先
+let _rangeEnd = '';
 let _gameFilter = '';
 let _dayFilter = '';              // YYYY-MM-DD。カレンダーから1日絞込み
 let _sessionOffset = 0;
@@ -20,6 +22,21 @@ let _viewMode = 'bar';            // 'bar' | 'calendar'
 let _calYear = 0;
 let _calMonth = 0;                // 1〜12
 const SESSION_PAGE_SIZE = 50;
+
+function rangeParams() {
+  const p = new URLSearchParams();
+  if (_rangeStart && _rangeEnd) {
+    p.set('start', _rangeStart);
+    p.set('end', _rangeEnd);
+  } else {
+    p.set('days', String(_days));
+  }
+  return p;
+}
+
+function rangeActive() {
+  return !!(_rangeStart && _rangeEnd);
+}
 
 // ------------------------------------------------------------
 // helpers
@@ -79,6 +96,15 @@ export function render() {
       <div id="a-range-info" class="mono" style="font-size:0.8125rem;color:var(--text-muted)"></div>
     </div>
     <div id="a-period-pills" style="display:flex;gap:0.5rem;flex-wrap:wrap">${pills}</div>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.5rem">
+      <label style="font-size:0.8125rem;color:var(--text-muted)">開始</label>
+      <input type="date" id="a-range-start" class="form-input" style="min-width:140px">
+      <span style="color:var(--text-muted)">〜</span>
+      <label style="font-size:0.8125rem;color:var(--text-muted)">終了</label>
+      <input type="date" id="a-range-end" class="form-input" style="min-width:140px">
+      <button class="btn btn-sm" id="a-range-apply">適用</button>
+      <button class="btn btn-sm" id="a-range-clear" style="display:none">範囲解除</button>
+    </div>
   </section>
 
   <section class="quick-stats" id="a-summary">
@@ -186,9 +212,10 @@ async function refreshAll() {
 }
 
 async function loadSummaryAndStats() {
+  const qs = rangeParams().toString();
   const [summary, stats] = await apiBatch([
-    [`/api/activity/summary?days=${_days}`, {}],
-    [`/api/activity/stats?days=${_days}`, {}],
+    [`/api/activity/summary?${qs}`, {}],
+    [`/api/activity/stats?${qs}`, {}],
   ]);
 
   renderSummary(summary);
@@ -200,6 +227,12 @@ async function loadSummaryAndStats() {
 async function loadDaily() {
   if (_viewMode === 'calendar') {
     await loadCalendar();
+    return;
+  }
+  if (rangeActive()) {
+    const qs = rangeParams().toString();
+    const data = await api(`/api/activity/daily?${qs}`).catch(() => null);
+    renderDailyRange(data?.daily || [], _rangeStart, _rangeEnd);
     return;
   }
   // 棒グラフは最大365日に制限して視認性確保
@@ -217,11 +250,9 @@ async function loadCalendar() {
 
 async function loadSessions(reset) {
   if (reset) _sessionOffset = 0;
-  const params = new URLSearchParams({
-    days: String(_days),
-    limit: String(SESSION_PAGE_SIZE),
-    offset: String(_sessionOffset),
-  });
+  const params = rangeParams();
+  params.set('limit', String(SESSION_PAGE_SIZE));
+  params.set('offset', String(_sessionOffset));
   if (_gameFilter) params.set('game', _gameFilter);
   if (_dayFilter) params.set('day', _dayFilter);
   const data = await api(`/api/activity/sessions?${params.toString()}`).catch(() => null);
@@ -241,7 +272,9 @@ function renderSummary(s) {
 function renderRangeInfo(s) {
   const el = document.getElementById('a-range-info');
   if (!el) return;
-  if (_days === 0) {
+  if (rangeActive()) {
+    el.textContent = `${_rangeStart} 〜 ${_rangeEnd}`;
+  } else if (_days === 0) {
     const earliest = s?.earliest ? fmtDate(s.earliest) : '---';
     el.textContent = `全期間（${earliest} 〜 現在）`;
   } else {
@@ -345,6 +378,52 @@ function renderDaily(daily, expectedDays) {
   // 軸: 週間隔でラベル、それ以外は空
   axis.innerHTML = series.map((s, i) => {
     const label = (i === 0 || i === series.length - 1 || i % 7 === 0)
+      ? s.day.slice(5) : '';
+    return `<div style="flex:0 0 ${barWidth}px;text-align:center;overflow:hidden">${label}</div>`;
+  }).join('');
+}
+
+function renderDailyRange(daily, startStr, endStr) {
+  const chart = document.getElementById('a-daily-chart');
+  const axis = document.getElementById('a-daily-axis');
+  if (!chart) return;
+  const map = new Map(daily.map(d => [d.day, d]));
+  // 連続日付列を start〜end で生成
+  const series = [];
+  const start = new Date(startStr + 'T00:00:00');
+  const end = new Date(endStr + 'T00:00:00');
+  for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+    const key = new Date(t).toISOString().slice(0, 10);
+    series.push(map.get(key) || { day: key, total_sec: 0, games: [] });
+  }
+  if (!series.length) {
+    chart.innerHTML = '<div style="color:var(--text-muted);padding:1rem;margin:auto">データなし</div>';
+    axis.innerHTML = '';
+    return;
+  }
+  const max = Math.max(...series.map(s => s.total_sec || 0), 1);
+  const barWidth = Math.max(6, Math.floor(800 / series.length));
+  chart.innerHTML = series.map(s => {
+    const pct = ((s.total_sec || 0) / max) * 100;
+    const hours = (s.total_sec / 3600).toFixed(1);
+    let stack = '';
+    if (s.games?.length && s.total_sec > 0) {
+      stack = s.games.map(g => {
+        const h = (g.sec / s.total_sec) * 100;
+        return `<div style="height:${h}%;background:${gameColor(g.game_name)}" title="${escapeHtml(g.game_name)}: ${fmtDuration(g.sec)}"></div>`;
+      }).join('');
+    }
+    return `
+      <div class="daily-bar" data-day="${s.day}" title="${s.day}: ${hours}h"
+           style="flex:0 0 ${barWidth}px;height:100%;display:flex;align-items:flex-end;cursor:pointer">
+        <div style="width:100%;height:${pct}%;display:flex;flex-direction:column-reverse;background:var(--bg-elevated);border-radius:2px 2px 0 0;overflow:hidden">
+          ${stack}
+        </div>
+      </div>`;
+  }).join('');
+  const step = Math.max(1, Math.ceil(series.length / 10));
+  axis.innerHTML = series.map((s, i) => {
+    const label = (i === 0 || i === series.length - 1 || i % step === 0)
       ? s.day.slice(5) : '';
     return `<div style="flex:0 0 ${barWidth}px;text-align:center;overflow:hidden">${label}</div>`;
   }).join('');
@@ -456,9 +535,12 @@ function updateViewMode() {
 }
 
 function updatePeriodPills() {
+  const ra = rangeActive();
   document.querySelectorAll('#a-period-pills .pill').forEach(el => {
-    el.classList.toggle('active', Number(el.dataset.days) === _days);
+    el.classList.toggle('active', !ra && Number(el.dataset.days) === _days);
   });
+  const clearBtn = document.getElementById('a-range-clear');
+  if (clearBtn) clearBtn.style.display = ra ? '' : 'none';
 }
 
 // ------------------------------------------------------------
@@ -476,7 +558,35 @@ export async function mount() {
     const btn = ev.target.closest('.pill');
     if (!btn) return;
     _days = Number(btn.dataset.days);
+    _rangeStart = '';
+    _rangeEnd = '';
+    document.getElementById('a-range-start').value = '';
+    document.getElementById('a-range-end').value = '';
     refreshAll();
+  });
+
+  // 日付範囲適用
+  document.getElementById('a-range-apply').addEventListener('click', () => {
+    const s = document.getElementById('a-range-start').value;
+    const e = document.getElementById('a-range-end').value;
+    if (!s || !e) return;
+    if (s > e) { alert('開始日が終了日より後になっています'); return; }
+    _rangeStart = s;
+    _rangeEnd = e;
+    refreshAll();
+  });
+  document.getElementById('a-range-clear').addEventListener('click', () => {
+    _rangeStart = '';
+    _rangeEnd = '';
+    document.getElementById('a-range-start').value = '';
+    document.getElementById('a-range-end').value = '';
+    refreshAll();
+  });
+  // Enterキーで適用
+  ['a-range-start', 'a-range-end'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') document.getElementById('a-range-apply').click();
+    });
   });
 
   // 表示モード切替
@@ -550,6 +660,8 @@ export async function mount() {
 export function unmount() {
   _gameFilter = '';
   _dayFilter = '';
+  _rangeStart = '';
+  _rangeEnd = '';
   _sessionOffset = 0;
   _viewMode = 'bar';
 }
