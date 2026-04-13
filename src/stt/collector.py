@@ -16,6 +16,7 @@ class STTCollector:
     def __init__(self, bot):
         self.bot = bot
         self._last_ts: str | None = None
+        self._consecutive_failures: int = 0
 
     async def collect(self) -> int:
         """新規 transcript を収集し保存する。保存件数を返す。"""
@@ -42,8 +43,15 @@ class STTCollector:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=headers)
                 data = resp.json()
+            if self._consecutive_failures > 0:
+                log.info("STT collector recovered after %d failures", self._consecutive_failures)
+                self._consecutive_failures = 0
         except Exception as e:
-            log.warning("STT transcript collection failed: %s", e)
+            self._consecutive_failures += 1
+            if self._consecutive_failures == 1:
+                log.warning("STT transcript collection failed: %s", e)
+            else:
+                log.debug("STT transcript collection still failing (%d): %s", self._consecutive_failures, e)
             return 0
 
         transcripts = data.get("transcripts", [])
@@ -53,7 +61,7 @@ class STTCollector:
         saved = 0
         for t in transcripts:
             text = t.get("text", "").strip()
-            if not text:
+            if len(text) < 2:
                 continue
             started = t.get("started_at", "")
             # 重複チェック（同じ started_at が既にあればスキップ）

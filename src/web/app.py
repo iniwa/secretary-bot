@@ -967,6 +967,37 @@ def create_web_app(bot) -> FastAPI:
     async def debug_heartbeat_logs():
         return {"logs": list(bot.heartbeat.debug_logs)}
 
+    # --- STT設定 ---
+
+    _STT_CONFIG_KEYS = {
+        "summary_threshold_chars": int,
+        "silence_trigger_minutes": int,
+        "gap_split_minutes": int,
+        "min_chunk_chars": int,
+        "retention_days": int,
+    }
+
+    @app.get("/api/stt-config", dependencies=[Depends(_verify)])
+    async def get_stt_config():
+        cfg = bot.config.get("stt", {}).get("processing", {})
+        return {k: cfg.get(k) for k in _STT_CONFIG_KEYS}
+
+    @app.post("/api/stt-config", dependencies=[Depends(_verify)])
+    async def set_stt_config(request: Request):
+        body = await request.json()
+        cfg = bot.config.setdefault("stt", {}).setdefault("processing", {})
+        updated = {}
+        for key, caster in _STT_CONFIG_KEYS.items():
+            if key in body:
+                try:
+                    val = caster(body[key])
+                except (TypeError, ValueError):
+                    continue
+                cfg[key] = val
+                updated[key] = val
+                await bot.database.set_setting(f"stt.processing.{key}", json.dumps(val))
+        return {"ok": True, "updated": updated}
+
     # --- 管理: STT要約の再生成 ---
 
     @app.post("/api/stt/resummarize", dependencies=[Depends(_verify)])

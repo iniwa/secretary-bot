@@ -164,7 +164,11 @@ stt:
   batch:
     interval_minutes: 5               # バッチSTT間隔（Main PC→Sub PC）
   processing:
-    summary_threshold_chars: 2000     # この文字数を超えたらLLM要約
+    summary_threshold_chars: 1000     # この文字数を超えたらLLM要約
+    silence_trigger_minutes: 90       # 無音がこの分数続いたら溜まっている transcript を要約
+    gap_split_minutes: 120            # transcript 間の空白がこの分数以上なら別チャンクとして分割
+    min_chunk_chars: 300              # 要約対象とする最小チャンク文字数（これ未満はスキップ）
+    retention_days: 30                # stt_transcripts の保持日数（超過分は削除）
   model:
     name: "kotoba-tech/kotoba-whisper-v2.0"
     device: "cuda"

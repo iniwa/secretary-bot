@@ -1,11 +1,14 @@
 """STT transcript の LLM 要約 + ChromaDB 保存。"""
 
 import json
+from datetime import datetime, timedelta, timezone
 
 from src.database import jst_now
 from src.logger import get_logger
 
 log = get_logger(__name__)
+
+_JST = timezone(timedelta(hours=9))
 
 _SUMMARY_SYSTEM = (
     "あなたは音声ログの要約アシスタントです。"
@@ -16,6 +19,7 @@ _SUMMARY_SYSTEM = (
 
 _SUMMARY_PROMPT = """\
 以下は、いにわ（ユーザー）のマイクから取得した音声テキスト化の結果です。
+期間: {period_start} 〜 {period_end}
 片側の発話のみで、相手の声は含まれていません。
 
 ## 発話データ
@@ -23,10 +27,25 @@ _SUMMARY_PROMPT = """\
 
 ## 指示
 - 必ず日本語で出力してください
-- 箇条書き3〜5点、合計200〜300文字程度で簡潔に
+- 最初の1行で「期間: {period_start} 〜 {period_end}」を記述
+- 続けて箇条書き3〜5点、合計200〜300文字程度で簡潔に
 - 何について話していたかと、推測できる文脈（ゲーム中・作業中・通話中など）を含める
-- 前置きや見出しは不要、箇条書きのみ返す
+- 前置きや見出しは不要、期間+箇条書きのみ返す
 """
+
+
+def _parse_started_at(s: str) -> datetime | None:
+    """started_at 文字列を JST aware datetime に変換。失敗時は None。"""
+    if not s:
+        return None
+    try:
+        # ISO 8601（T区切り）も空白区切り（"YYYY-MM-DD HH:MM:SS"）も fromisoformat で扱える
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_JST)
+    return dt
 
 
 class STTProcessor:
@@ -34,20 +53,63 @@ class STTProcessor:
 
     def __init__(self, bot):
         self.bot = bot
-        self._threshold = bot.config.get("stt", {}).get(
-            "processing", {}
-        ).get("summary_threshold_chars", 2000)
+        cfg = bot.config.get("stt", {}).get("processing", {})
+        self._threshold = cfg.get("summary_threshold_chars", 2000)
+        self._silence_minutes = cfg.get("silence_trigger_minutes", 90)
+        self._gap_minutes = cfg.get("gap_split_minutes", 120)
+        self._min_chunk = cfg.get("min_chunk_chars", 300)
+        self._retention_days = cfg.get("retention_days", 30)
 
     async def process(self) -> bool:
-        """未要約の transcript を確認し、閾値を超えていたら要約する。True なら処理実行。"""
+        """未要約の transcript を確認し、ハイブリッド条件で発火したら要約する。True なら処理実行。"""
+        # Ollama 利用可否チェック（ai_memory 同様、LLM 不在時は静かにスキップ）
+        if not self.bot.llm_router.ollama_available:
+            return False
+
         rows = await self.bot.database.fetchall(
             "SELECT * FROM stt_transcripts WHERE summarized = 0 ORDER BY started_at"
         )
         if not rows:
             return False
 
+        # ギャップ分割: 先頭から走査し、連続する started_at の差が gap_minutes 以上あればそこで切る
+        gap_split = False
+        cutoff = len(rows)
+        prev_dt: datetime | None = None
+        gap_threshold = timedelta(minutes=self._gap_minutes)
+        for i, r in enumerate(rows):
+            cur_dt = _parse_started_at(r["started_at"])
+            if prev_dt is not None and cur_dt is not None:
+                if cur_dt - prev_dt >= gap_threshold:
+                    cutoff = i
+                    gap_split = True
+                    break
+            prev_dt = cur_dt
+        if gap_split:
+            rows = rows[:cutoff]
+        if not rows:
+            return False
+
         total_chars = sum(len(r["raw_text"]) for r in rows)
-        if total_chars < self._threshold:
+
+        # 発火条件判定
+        fire = False
+        reason = ""
+        if gap_split and total_chars >= self._min_chunk:
+            fire = True
+            reason = "gap_split"
+        elif total_chars >= self._threshold:
+            fire = True
+            reason = "threshold"
+        else:
+            last_dt = _parse_started_at(rows[-1]["started_at"])
+            if last_dt is not None:
+                now_dt = datetime.now(tz=_JST)
+                if now_dt - last_dt >= timedelta(minutes=self._silence_minutes) and total_chars >= self._min_chunk:
+                    fire = True
+                    reason = "silence"
+
+        if not fire:
             return False
 
         # LLM要約
@@ -57,7 +119,14 @@ class STTProcessor:
             transcript_lines.append(f"[{time_str}] {r['raw_text']}")
         transcript_text = "\n".join(transcript_lines)
 
-        prompt = _SUMMARY_PROMPT.format(transcripts=transcript_text)
+        period_start = rows[0]["started_at"][:16] if rows[0]["started_at"] else "?"
+        period_end = rows[-1]["started_at"][:16] if rows[-1]["started_at"] else "?"
+
+        prompt = _SUMMARY_PROMPT.format(
+            transcripts=transcript_text,
+            period_start=period_start,
+            period_end=period_end,
+        )
         try:
             summary = await self.bot.llm_router.generate(
                 prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary"
@@ -83,21 +152,24 @@ class STTProcessor:
 
         # ChromaDB 保存
         try:
-            period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
-            period_end = rows[-1]["ended_at"] if rows[-1]["ended_at"] else ""
+            meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
+            meta_period_end = rows[-1]["ended_at"] if rows[-1]["ended_at"] else ""
             doc_id = f"stt_summary_{ids[0]}_{ids[-1]}"
             self.bot.chroma.add(
                 "stt_summaries", doc_id, summary,
                 {
                     "transcript_ids": ",".join(str(i) for i in ids),
-                    "period_start": period_start,
-                    "period_end": period_end,
+                    "period_start": meta_period_start,
+                    "period_end": meta_period_end,
                 },
             )
         except Exception as e:
             log.warning("STT summary ChromaDB save failed: %s", e)
 
-        log.info("STT summary created from %d transcripts (%d chars)", len(ids), total_chars)
+        log.info(
+            "STT summary created from %d transcripts (%d chars, reason=%s)",
+            len(ids), total_chars, reason,
+        )
         return True
 
     async def resummarize(self, summary_id: int) -> bool:
@@ -129,7 +201,14 @@ class STTProcessor:
             transcript_lines.append(f"[{time_str}] {r['raw_text']}")
         transcript_text = "\n".join(transcript_lines)
 
-        prompt = _SUMMARY_PROMPT.format(transcripts=transcript_text)
+        period_start = rows[0]["started_at"][:16] if rows[0]["started_at"] else "?"
+        period_end = rows[-1]["started_at"][:16] if rows[-1]["started_at"] else "?"
+
+        prompt = _SUMMARY_PROMPT.format(
+            transcripts=transcript_text,
+            period_start=period_start,
+            period_end=period_end,
+        )
         try:
             new_summary = await self.bot.llm_router.generate(
                 prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary",
@@ -146,14 +225,14 @@ class STTProcessor:
         # ChromaDB 更新（doc_id は旧来の命名に合わせる、upsertなので上書き可）
         try:
             doc_id = f"stt_summary_{ids[0]}_{ids[-1]}"
-            period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
-            period_end = rows[-1]["started_at"] if rows[-1]["started_at"] else ""
+            meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
+            meta_period_end = rows[-1]["started_at"] if rows[-1]["started_at"] else ""
             self.bot.chroma.add(
                 "stt_summaries", doc_id, new_summary,
                 {
                     "transcript_ids": ",".join(str(i) for i in ids),
-                    "period_start": period_start,
-                    "period_end": period_end,
+                    "period_start": meta_period_start,
+                    "period_end": meta_period_end,
                 },
             )
         except Exception as e:
@@ -161,3 +240,22 @@ class STTProcessor:
 
         log.info("STT summary id=%d resummarized (%d transcripts)", summary_id, len(ids))
         return True
+
+    async def cleanup_old_transcripts(self) -> int:
+        """要約済みで retention_days 以上経過した transcripts を削除。戻り値は参考値（0 でも可）。"""
+        if self._retention_days <= 0:
+            return 0
+        cutoff_dt = datetime.now(tz=_JST) - timedelta(days=self._retention_days)
+        # started_at は ISO 8601（T区切り）も空白区切りも両方あり得る。
+        # lexicographic 比較で安全側に倒すため、T 区切りの代表形で cutoff を作る。
+        cutoff = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            await self.bot.database.execute(
+                "DELETE FROM stt_transcripts WHERE id IN "
+                "(SELECT id FROM stt_transcripts WHERE summarized = 1 AND started_at < ? LIMIT 1000)",
+                (cutoff,),
+            )
+            log.info("STT cleanup executed (cutoff=%s, retention_days=%d)", cutoff, self._retention_days)
+        except Exception as e:
+            log.warning("STT cleanup failed: %s", e)
+        return 0

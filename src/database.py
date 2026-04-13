@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 21
+_SCHEMA_VERSION = 22
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -338,6 +338,11 @@ class Database:
                 # SQLite は DROP CONSTRAINT 不可。新テーブルへの移行は複雑なので、
                 # 旧 UNIQUE(pattern) 制約は残したまま運用する。
                 # container_name 付きの重複チェックはアプリケーション側で行う。
+            ],
+            22: [
+                # 重複除去してから UNIQUE INDEX を張る（既存データ保護）
+                "DELETE FROM stt_transcripts WHERE id NOT IN (SELECT MIN(id) FROM stt_transcripts GROUP BY started_at)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_stt_transcripts_started_at ON stt_transcripts(started_at)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

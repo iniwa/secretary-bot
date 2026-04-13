@@ -28,6 +28,7 @@ class Heartbeat:
         self._rss_last_fetch: datetime | None = None
         self._rss_digest_sent_today: str | None = None
         self._stt_collector = None  # 遅延初期化（_last_tsを保持するため）
+        self._stt_cleanup_last_date: str | None = None  # 1日1回のretention実行を制御
 
     @property
     def _config(self) -> dict:
@@ -164,6 +165,16 @@ class Heartbeat:
         except Exception as e:
             log.warning("STT processing failed: %s", e)
             result["summary_error"] = str(e)
+
+        # 1日1回のretentionクリーンアップ（要約済みで古いtranscriptsを削除）
+        today_str = datetime.now(tz=JST).strftime("%Y-%m-%d")
+        if self._stt_cleanup_last_date != today_str:
+            try:
+                from src.stt.processor import STTProcessor as _P
+                await _P(self.bot).cleanup_old_transcripts()
+                self._stt_cleanup_last_date = today_str
+            except Exception as e:
+                log.warning("STT cleanup failed: %s", e)
         return result
 
     # --- RSS 定期フェッチ・要約・ダイジェスト通知 ---
