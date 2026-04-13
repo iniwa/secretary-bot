@@ -11,6 +11,13 @@ heartbeat:
   interval_without_ollama_minutes: 180
   compact_threshold_messages: 20
 
+# Memory（ChromaDB）管理
+memory:
+  dedup_skip_threshold: 0.92    # 類似度がこれ以上なら保存しない
+  dedup_merge_threshold: 0.80   # この閾値以上なら既存を更新
+  sweep_stale_days: 90          # ヒット無しでこの日数経過したら削除
+  sweep_enabled: true
+
 # アクティビティ検出
 activity:
   enabled: true

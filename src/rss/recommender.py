@@ -1,9 +1,17 @@
-"""RSSレコメンダー — フィードバック履歴ベースのスコアリング・ランキング。"""
+"""RSSレコメンダー — フィードバック履歴 + 興味タグベースのスコアリング・ランキング。
+
+スコアリング方針:
+    total = _score * feedback_weight + _interest_score * interest_weight
+    - _score: フィードバック履歴（feed単位の評価合計）
+    - _interest_score: people_memoryの【タグ】行から抽出した興味とのマッチスコア
+    重み付けは config.yaml の rss.feedback_weight / rss.interest_weight で調整可能。
+"""
 
 from datetime import datetime, timedelta
 
 from src.database import JST
 from src.logger import get_logger
+from src.memory.interest_extractor import extract_interest_tags, score_text_by_interests
 
 log = get_logger(__name__)
 
@@ -17,8 +25,17 @@ class RSSRecommender:
 
         Returns:
             [{"category": str, "label": str, "articles": [dict]}]
+
+        記事にはソート用の以下のフィールドが付与される:
+            _score            : フィードバック由来のスコア
+            _interest_score   : 興味タグベースのスコア
+            _matched_tags     : ヒットした興味タグのリスト
         """
-        max_per_cat = self.bot.config.get("rss", {}).get("max_articles_per_category", 5)
+        rss_cfg = self.bot.config.get("rss", {})
+        max_per_cat = rss_cfg.get("max_articles_per_category", 5)
+        # 重み: 既存config構造を壊さず追加のみ
+        feedback_weight = float(rss_cfg.get("feedback_weight", 1.0))
+        interest_weight = float(rss_cfg.get("interest_weight", 2.0))
 
         # ユーザーのフィードバック集計（feed_id → score合計）
         feedback_scores = await self._get_feedback_scores(user_id)
@@ -27,8 +44,15 @@ class RSSRecommender:
         disabled_cats, disabled_feeds = await self._get_disabled(user_id)
 
         # カテゴリラベルマップ
-        presets = self.bot.config.get("rss", {}).get("presets", {})
+        presets = rss_cfg.get("presets", {})
         cat_labels = {k: v.get("label", k) for k, v in presets.items()}
+
+        # 興味タグは一度だけ取得（全記事で共用）
+        try:
+            interest_tags = await extract_interest_tags(self.bot)
+        except Exception as e:
+            log.debug("interest_tags extraction failed: %s", e)
+            interest_tags = []
 
         # 直近24時間 + 要約済みの記事を取得（JST基準でカットオフを計算）
         cutoff = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -50,16 +74,35 @@ class RSSRecommender:
                 continue
             if a["feed_id"] in disabled_feeds:
                 continue
-            score = feedback_scores.get(a["feed_id"], 0)
-            a["_score"] = score
+            a["_score"] = feedback_scores.get(a["feed_id"], 0)
+
+            # 興味スコア: title + summary で判定
+            text = f"{a.get('title') or ''} {a.get('summary') or ''}"
+            try:
+                interest_score, matched = await score_text_by_interests(
+                    self.bot, text, interest_tags=interest_tags,
+                )
+            except Exception as e:
+                log.debug("interest scoring failed: %s", e)
+                interest_score, matched = 0.0, []
+            a["_interest_score"] = interest_score
+            a["_matched_tags"] = matched
+
             buckets.setdefault(cat, []).append(a)
 
         result = []
         for cat in sorted(buckets.keys()):
             items = buckets[cat]
-            # Pythonの安定ソートを利用: 第二キー(published_at降順) → 第一キー(score降順)
+            # 合計スコア: feedback * feedback_weight + interest * interest_weight
+            # Pythonの安定ソート: 第二キー(published_at降順) → 第一キー(total降順)
             items.sort(key=lambda x: x.get("published_at") or "", reverse=True)
-            items.sort(key=lambda x: x["_score"], reverse=True)
+            items.sort(
+                key=lambda x: (
+                    x.get("_score", 0) * feedback_weight
+                    + x.get("_interest_score", 0.0) * interest_weight
+                ),
+                reverse=True,
+            )
             result.append({
                 "category": cat,
                 "label": cat_labels.get(cat, cat),

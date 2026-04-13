@@ -4,7 +4,6 @@ import hashlib
 import json
 import random
 import re
-import uuid
 from datetime import datetime
 
 from src.database import JST, jst_now
@@ -504,19 +503,19 @@ class InnerMind:
         if energy:
             await self.bot.database.upsert_self_model("energy_level", energy)
 
-        # memory_update があれば ChromaDB に保存（重複検出付き）
+        # memory_update があれば AIMemory.save() 経由で保存（dedupはsave側が自動処理）
         mem_update = thought.get("memory_update")
         if mem_update and mem_update != "null":
-            existing = self.bot.chroma.search("ai_memory", query=mem_update, n_results=1)
-            if existing and existing[0].get("distance", 1.0) < 0.3:
-                log.info("InnerMind: memory_update too similar to existing, skipped")
-            else:
-                doc_id = uuid.uuid4().hex[:16]
-                self.bot.chroma.add(
-                    "ai_memory", doc_id, mem_update,
+            try:
+                from src.memory.ai_memory import AIMemory
+                ai_mem = AIMemory(self.bot)
+                await ai_mem.save(
+                    mem_update,
                     {"source": "inner_mind", "created_at": jst_now()},
                 )
                 log.info("InnerMind: memory updated: %s", mem_update[:80])
+            except Exception as e:
+                log.warning("InnerMind: memory_update save failed: %s", e)
 
         log.info(
             "InnerMind: thought saved (mood=%s, lens=%s): %s",

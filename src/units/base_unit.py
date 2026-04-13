@@ -1,5 +1,6 @@
 """BaseUnit — 全ユニットの基底クラス。discord.py の Cog を継承。"""
 
+import asyncio
 import os
 import re
 
@@ -86,6 +87,86 @@ class BaseUnit(commands.Cog):
 
     # --- キャラクター変換 ---
 
+    async def _persona_with_memories(
+        self, user_message: str, max_memories: int = 3,
+    ) -> str:
+        """character.persona + 関連ai_memory + 関連people_memory を結合した system prompt を返す。
+
+        - Ollama稼働中でない、またはpersonaが空なら空文字を返す
+        - user_message が短すぎ（10文字未満）ならmemoryは取得せずpersonaのみ返す
+        - distance >= 0.75（類似度 <= 0.25）のものは除外してノイズカット
+        - 各メモリ抜粋は100文字で切り詰め
+        """
+        if not self.bot.llm_router.ollama_available:
+            return ""
+        persona = self.bot.config.get("character", {}).get("persona", "")
+        if not persona:
+            return ""
+
+        # 短すぎるメッセージはmemory取得をスキップ（コスト削減・精度低下防止）
+        if not user_message or len(user_message) < 10:
+            return persona
+
+        ai_mem = getattr(self.bot, "ai_memory", None)
+        people_mem = getattr(self.bot, "people_memory", None)
+        tasks = []
+        if ai_mem is not None:
+            tasks.append(asyncio.to_thread(ai_mem.recall, user_message, max_memories))
+        else:
+            tasks.append(asyncio.sleep(0, result=[]))
+        if people_mem is not None:
+            tasks.append(asyncio.to_thread(people_mem.recall, user_message, max_memories))
+        else:
+            tasks.append(asyncio.sleep(0, result=[]))
+
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            log.debug("memory recall gather failed: %s", e)
+            return persona
+
+        ai_items = results[0] if not isinstance(results[0], BaseException) else []
+        people_items = results[1] if not isinstance(results[1], BaseException) else []
+
+        ai_excerpts = self._format_memory_excerpts(ai_items, max_memories)
+        people_excerpts = self._format_memory_excerpts(people_items, max_memories)
+
+        parts = [persona]
+        if ai_excerpts:
+            parts.append("## あなた(ミミ)の関連記憶\n" + "\n".join(f"- {e}" for e in ai_excerpts))
+        if people_excerpts:
+            parts.append("## いにわに関する関連情報\n" + "\n".join(f"- {e}" for e in people_excerpts))
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_memory_excerpts(items, limit: int) -> list[str]:
+        """chroma search結果から抜粋リストを作る。distance >= 0.75は除外・100文字で切り詰め。"""
+        if not items or not isinstance(items, list):
+            return []
+        out: list[str] = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            dist = it.get("distance")
+            # distance が None の場合は一応採用（safe側）
+            if dist is not None:
+                try:
+                    if float(dist) >= 0.75:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            # document / text 両キー対応
+            doc = it.get("document") or it.get("text") or ""
+            doc = doc.strip()
+            if not doc:
+                continue
+            if len(doc) > 100:
+                doc = doc[:100] + "…"
+            out.append(doc)
+            if len(out) >= limit:
+                break
+        return out
+
     async def personalize(self, raw_result: str, user_message: str, flow_id: str | None = None) -> str:
         """Ollama稼働中のみペルソナを注入して返答を生成。省エネ時は定型文をそのまま返す。"""
         ft = get_flow_tracker()
@@ -100,8 +181,12 @@ class BaseUnit(commands.Cog):
             await ft.emit("SKIP_PERSONA", "done", {}, flow_id)
             return raw_result
         await ft.emit("PERSONA_GEN", "active", {}, flow_id)
+        # Ollama稼働中 かつ persona 非空のためここで記憶注入版を組み立てる
+        persona_block = await self._persona_with_memories(user_message)
+        if not persona_block:
+            persona_block = persona
         system = (
-            f"{persona}\n\n"
+            f"{persona_block}\n\n"
             "以下の処理結果をユーザーに伝えてください。"
             "内容・事実は変えず、キャラクターらしい口調で自然に伝えてください。"
         )
@@ -126,8 +211,12 @@ class BaseUnit(commands.Cog):
             await ft.emit("PERSONA", "done", {"skipped": True, "reason": "no_persona"}, flow_id)
             return formatted_list
         await ft.emit("PERSONA_GEN", "active", {}, flow_id)
+        # Ollama稼働中 かつ persona 非空のためここで記憶注入版を組み立てる
+        persona_block = await self._persona_with_memories(user_message)
+        if not persona_block:
+            persona_block = persona
         system = (
-            f"{persona}\n\n"
+            f"{persona_block}\n\n"
             "ユーザーのリスト表示リクエストに対して、リストを渡す前の一言コメントだけを生成してください。"
             "リストの内容そのものは出力しないでください。1〜2文で簡潔に。"
         )
