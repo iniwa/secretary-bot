@@ -52,6 +52,10 @@ class MicCapture:
         self._volume_threshold = config.get("volume_threshold_rms", 300)
         self._silence_threshold = config.get("silence_threshold_seconds", 1.5)
         self._min_utterance = config.get("min_utterance_seconds", 1.0)
+        # ハルシネーション抑制: 発話区間のVAD=True比率がこの値未満なら破棄
+        self._voiced_ratio_threshold = config.get("voiced_ratio_threshold", 0.5)
+        # ハルシネーション抑制: 連続N有声フレームで初めて発話開始とみなす
+        self._speech_start_consecutive = max(1, config.get("speech_start_consecutive", 3))
 
         self._running = False
         self._stream = None
@@ -67,9 +71,14 @@ class MicCapture:
 
         # 発話バッファ
         self._current_frames: list[bytes] = []
+        self._current_vad_flags: list[bool] = []
         self._speech_start: str | None = None
         self._silent_frames = 0
         self._max_silent_frames = int(self._silence_threshold * 1000 / _FRAME_DURATION_MS)
+        # 発話開始前の連続有声フレームの一時バッファ
+        self._pending_speech_frames: list[bytes] = []
+        # 破棄カウンタ（ハルシネーション抑制でドロップした utterance 数）
+        self._total_dropped_low_voiced = 0
 
         # 確定済み utterance キュー
         self._utterances: deque[Utterance] = deque(maxlen=200)
@@ -96,6 +105,8 @@ class MicCapture:
         self._vad = webrtcvad.Vad(self._vad_aggressiveness)
         self._running = True
         self._current_frames = []
+        self._current_vad_flags = []
+        self._pending_speech_frames = []
         self._speech_start = None
         self._silent_frames = 0
         self._resample_buf = np.array([], dtype=np.int16)
@@ -137,6 +148,7 @@ class MicCapture:
             "running": self._running,
             "buffer_utterances": len(self._utterances),
             "total_captured": self._total_captured,
+            "total_dropped_low_voiced": self._total_dropped_low_voiced,
         }
 
     def _resample_to_16k(self, samples: np.ndarray) -> np.ndarray:
@@ -168,30 +180,40 @@ class MicCapture:
     def _process_frame(self, frame: np.ndarray) -> None:
         raw = frame.tobytes()
 
-        # 音量チェック（RMS）
+        # 音量チェック（RMS）— 下回ったら VAD 問わず非発話扱い
         rms = np.sqrt(np.mean(frame.astype(np.float64) ** 2))
         if rms < self._volume_threshold:
-            self._handle_silence()
-            # 発話中の短い無音はフレームに含める
-            if self._speech_start is not None:
-                self._current_frames.append(raw)
-            return
-
-        # VAD判定
-        try:
-            is_speech = self._vad.is_speech(raw, _TARGET_RATE)
-        except Exception:
-            return
+            is_speech = False
+        else:
+            try:
+                is_speech = self._vad.is_speech(raw, _TARGET_RATE)
+            except Exception:
+                return
 
         if is_speech:
             if self._speech_start is None:
-                self._speech_start = datetime.now(JST).isoformat()
-            self._current_frames.append(raw)
-            self._silent_frames = 0
-        else:
-            self._handle_silence()
-            if self._speech_start is not None:
+                # 発話未開始: 連続有声フレームを一時バッファに溜める
+                self._pending_speech_frames.append(raw)
+                if len(self._pending_speech_frames) >= self._speech_start_consecutive:
+                    # 閾値到達 → 発話開始として pending を current に flush
+                    self._speech_start = datetime.now(JST).isoformat()
+                    for f in self._pending_speech_frames:
+                        self._current_frames.append(f)
+                        self._current_vad_flags.append(True)
+                    self._pending_speech_frames = []
+                    self._silent_frames = 0
+            else:
                 self._current_frames.append(raw)
+                self._current_vad_flags.append(True)
+                self._silent_frames = 0
+        else:
+            if self._speech_start is None:
+                # 連続性が途切れた単発スパイク → pending を破棄
+                self._pending_speech_frames = []
+            else:
+                self._handle_silence()
+                self._current_frames.append(raw)
+                self._current_vad_flags.append(False)
 
     def _handle_silence(self) -> None:
         if self._speech_start is None:
@@ -203,19 +225,42 @@ class MicCapture:
     def _finalize_utterance(self) -> None:
         if not self._current_frames or self._speech_start is None:
             self._current_frames = []
+            self._current_vad_flags = []
             self._speech_start = None
             self._silent_frames = 0
             return
 
-        audio = b"".join(self._current_frames)
-        ended_at = datetime.now(JST).isoformat()
-        utt = Utterance(audio, self._speech_start, ended_at)
+        # 末尾の無音（VAD=False）フレームをトリミング
+        # — ノイズ抑制で無音化された区間に Whisper が字幕系フレーズを幻視するのを防ぐ
+        while self._current_vad_flags and not self._current_vad_flags[-1]:
+            self._current_vad_flags.pop()
+            self._current_frames.pop()
 
-        if utt.duration_seconds >= self._min_utterance:
-            with self._lock:
-                self._utterances.append(utt)
-                self._total_captured += 1
+        reset_reason: str | None = None
+        if not self._current_frames:
+            reset_reason = "empty_after_trim"
+        else:
+            # VAD有声率チェック — 大半が無音/ノイズ抑制区間なら破棄
+            voiced_ratio = (
+                sum(self._current_vad_flags) / len(self._current_vad_flags)
+                if self._current_vad_flags else 0.0
+            )
+            if voiced_ratio < self._voiced_ratio_threshold:
+                reset_reason = f"low_voiced_ratio={voiced_ratio:.2f}"
+                self._total_dropped_low_voiced += 1
+
+        if reset_reason is None:
+            audio = b"".join(self._current_frames)
+            ended_at = datetime.now(JST).isoformat()
+            utt = Utterance(audio, self._speech_start, ended_at)
+            if utt.duration_seconds >= self._min_utterance:
+                with self._lock:
+                    self._utterances.append(utt)
+                    self._total_captured += 1
+        else:
+            print(f"[MicCapture] Utterance dropped: {reset_reason}")
 
         self._current_frames = []
+        self._current_vad_flags = []
         self._speech_start = None
         self._silent_frames = 0

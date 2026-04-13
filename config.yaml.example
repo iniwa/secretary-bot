@@ -177,6 +177,8 @@ stt:
     volume_threshold_rms: 300         # 音量閾値（RMS値、これ以下は無視）
     silence_threshold_seconds: 1.5    # 無音でutterance区切り
     min_utterance_seconds: 1.0        # 短すぎるutteranceを無視
+    voiced_ratio_threshold: 0.5       # 発話区間のVAD=True比率がこの値未満なら破棄（ハルシネーション抑制）
+    speech_start_consecutive: 3       # 連続Nフレーム有声で発話開始（スパイク誤起動抑制）
   batch:
     interval_minutes: 5               # バッチSTT間隔（Main PC→Sub PC）
   processing:

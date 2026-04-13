@@ -35,6 +35,10 @@ stt:
     volume_threshold_rms: 300
     silence_threshold_seconds: 1.5
     min_utterance_seconds: 1.0
+    # ハルシネーション抑制: 発話区間のVAD=True比率がこの値未満なら破棄（0.0-1.0）
+    voiced_ratio_threshold: 0.5
+    # ハルシネーション抑制: 連続Nフレーム有声で発話開始とみなす（30ms/フレーム）
+    speech_start_consecutive: 3
   sub_pc_url: "http://192.168.1.211:7777"
   batch:
     interval_minutes: 5
