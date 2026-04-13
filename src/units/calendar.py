@@ -3,18 +3,14 @@
 import asyncio
 import functools
 import json
-import os
 from datetime import datetime, timedelta
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from src.database import JST, jst_now
 from src.flow_tracker import get_flow_tracker
+from src.gcal.service import build_calendar_service, get_service_account_email
 from src.units.base_unit import BaseUnit
-
-_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
 _WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -25,14 +21,21 @@ _EXTRACT_PROMPT = """\
 
 ## アクション一覧
 - create: 予定の登録（events 配列が必要）
-- register_calendar: カレンダーIDの登録（calendar_id が必要）
+- register_calendar: 書き込み先カレンダーIDの登録（calendar_id が必要）
+- register_read_calendar: 読み取り専用カレンダーの登録（ミミに予定を読ませるため）。calendar_id、display_name、is_private を指定
+- list_read_calendars: 登録済み読み取りカレンダーの一覧表示
+- remove_read_calendar: 読み取りカレンダーの削除（calendar_id が必要）
 - help: 使い方やカレンダーIDの確認方法などの質問
 
 ## create の events 配列の各要素
 {{"summary": "予定名", "location": "場所(任意)", "description": "詳細(任意)", "start_date": "YYYY-MM-DD", "start_time": "HH:MM(終日ならnull)", "end_date": "YYYY-MM-DD(省略可)", "end_time": "HH:MM(省略可)"}}
 
+## register_read_calendar の判定ルール
+- 「Private」「非公開」「機密」「秘密」「内緒」などの語が含まれる、またはカレンダー名が "Private" の場合 → is_private: true
+- それ以外は is_private: false
+
 ## 出力形式（厳守）
-{{"action": "アクション名", "events": [...], "calendar_id": "xxx@group.calendar.google.com"}}
+{{"action": "アクション名", "events": [...], "calendar_id": "xxx@group.calendar.google.com", "display_name": "表示名(任意)", "is_private": false}}
 
 - 不要なフィールドは省略してください。
 - 「今日」「明日」等の相対日付は必ずYYYY-MM-DD形式に変換してください。
@@ -70,15 +73,16 @@ _EXTRACT_WITH_PENDING_PROMPT = """\
 
 class CalendarUnit(BaseUnit):
     UNIT_NAME = "calendar"
-    UNIT_DESCRIPTION = "Googleカレンダーへの予定登録。「明日14時から会議」「来週月曜に歯医者」など。"
+    UNIT_DESCRIPTION = (
+        "Googleカレンダーへの予定登録と、ミミに予定を読ませる"
+        "読み取りカレンダー（Private含む）の登録・一覧・削除。"
+        "「明日14時から会議」「xxxを読み取り登録（Private）」「読み取りカレンダー一覧」など。"
+    )
 
     def __init__(self, bot):
         super().__init__(bot)
         cfg = bot.config.get("units", {}).get("calendar", {})
         self._timezone = cfg.get("timezone", "Asia/Tokyo")
-        self._sa_file = os.environ.get(
-            "GOOGLE_SERVICE_ACCOUNT_FILE", "/app/data/service_account.json"
-        )
         self._service = None
         # チャネルごとの保留予定（カレンダーID未登録時やデータ不足時に一時保存）
         self._pending: dict[str, dict] = {}
@@ -88,25 +92,12 @@ class CalendarUnit(BaseUnit):
     def _get_service(self):
         """Google Calendar APIサービスを遅延初期化して返す。"""
         if self._service is None:
-            if not os.path.exists(self._sa_file):
-                raise FileNotFoundError(
-                    f"サービスアカウントファイルが見つかりません: {self._sa_file}"
-                )
-            with open(self._sa_file) as f:
-                creds_data = json.load(f)
-            creds = service_account.Credentials.from_service_account_info(
-                creds_data, scopes=_SCOPES
-            )
-            self._service = build("calendar", "v3", credentials=creds)
+            self._service = build_calendar_service()
         return self._service
 
     def _get_service_account_email(self) -> str | None:
         """サービスアカウントのメールアドレスを取得する。"""
-        try:
-            with open(self._sa_file) as f:
-                return json.load(f).get("client_email")
-        except (FileNotFoundError, json.JSONDecodeError):
-            return None
+        return get_service_account_email()
 
     # ---- execute ----
 
@@ -182,6 +173,18 @@ class CalendarUnit(BaseUnit):
                 self.session_done = True
             elif action == "register_calendar":
                 result = await self._register_calendar(extracted, user_id)
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
+            elif action == "register_read_calendar":
+                result = await self._register_read_calendar(extracted)
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
+            elif action == "list_read_calendars":
+                result = await self._list_read_calendars()
+                result = await self.personalize(result, message, flow_id)
+                self.session_done = True
+            elif action == "remove_read_calendar":
+                result = await self._remove_read_calendar(extracted)
                 result = await self.personalize(result, message, flow_id)
                 self.session_done = True
             else:
@@ -309,10 +312,94 @@ class CalendarUnit(BaseUnit):
         msg += "\n【使い方の例】\n"
         msg += "- 「明日14時から会議を登録して」\n"
         msg += "- 「来週月曜は終日休み」\n"
-        msg += "- 「明日10時に打ち合わせ、15時に歯医者」"
+        msg += "- 「明日10時に打ち合わせ、15時に歯医者」\n"
+        msg += "\n【読み取りカレンダー（ミミに予定を読ませる）】\n"
+        msg += "- 登録: 「abc@group.calendar.google.com を読み取り登録（Private）」\n"
+        msg += "- 一覧: 「読み取りカレンダーを教えて」\n"
+        msg += "- 削除: 「abc@group.calendar.google.com を読み取りから外して」\n"
+        msg += "※ Private 指定した予定はタイトル非公開、時間帯のみ扱われます。"
         return msg
 
     # ---- カレンダーID登録 ----
+
+    async def _register_read_calendar(self, extracted: dict) -> str:
+        """読み取り専用カレンダーを calendar_read_sources に登録する。"""
+        calendar_id = (extracted.get("calendar_id") or "").strip()
+        if not calendar_id:
+            return (
+                "読み取り用カレンダーIDを教えてください。\n"
+                "例: 「abc@group.calendar.google.com を読み取り登録（Private）」"
+            )
+        display_name = (extracted.get("display_name") or "").strip() or None
+        is_private = bool(extracted.get("is_private", False))
+
+        # サービスアカウントが本当にアクセスできるか確認
+        try:
+            service = self._get_service()
+        except FileNotFoundError as e:
+            return str(e)
+
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                functools.partial(
+                    service.events().list(
+                        calendarId=calendar_id, maxResults=1, singleEvents=True,
+                    ).execute
+                ),
+            )
+        except HttpError as e:
+            sa_email = self._get_service_account_email()
+            msg = f"このカレンダーにアクセスできません（HTTP {e.resp.status}）。\n"
+            if sa_email:
+                msg += f"Googleカレンダーの共有設定で `{sa_email}` に「予定の表示」権限を付与してください。"
+            return msg
+
+        await self.bot.database.execute(
+            "INSERT INTO calendar_read_sources "
+            "(calendar_id, display_name, is_private, enabled) "
+            "VALUES (?, ?, ?, 1) "
+            "ON CONFLICT(calendar_id) DO UPDATE SET "
+            "display_name = excluded.display_name, is_private = excluded.is_private, enabled = 1",
+            (calendar_id, display_name, 1 if is_private else 0),
+        )
+
+        label = f"{display_name} " if display_name else ""
+        privacy = "Private（内容非公開）" if is_private else "通常（タイトル公開）"
+        return f"読み取りカレンダー {label}`{calendar_id}` を {privacy} として登録しました。"
+
+    async def _list_read_calendars(self) -> str:
+        rows = await self.bot.database.fetchall(
+            "SELECT calendar_id, display_name, is_private, enabled, last_synced_at "
+            "FROM calendar_read_sources ORDER BY created_at"
+        )
+        if not rows:
+            return "読み取りカレンダーはまだ登録されていません。"
+        lines = ["【読み取りカレンダー一覧】"]
+        for r in rows:
+            privacy = "Private" if r["is_private"] else "通常"
+            status = "有効" if r["enabled"] else "無効"
+            name = r["display_name"] or "(名前未設定)"
+            synced = r["last_synced_at"] or "未同期"
+            lines.append(f"- {name} [{privacy}/{status}] {r['calendar_id']} 最終同期: {synced}")
+        return "\n".join(lines)
+
+    async def _remove_read_calendar(self, extracted: dict) -> str:
+        calendar_id = (extracted.get("calendar_id") or "").strip()
+        if not calendar_id:
+            return "削除するカレンダーIDを指定してください。"
+        rowcount = await self.bot.database.execute_returning_rowcount(
+            "DELETE FROM calendar_read_sources WHERE calendar_id = ?",
+            (calendar_id,),
+        )
+        if rowcount == 0:
+            return f"`{calendar_id}` は登録されていません。"
+        await self.bot.database.execute(
+            "DELETE FROM calendar_events WHERE calendar_id = ?",
+            (calendar_id,),
+        )
+        return f"読み取りカレンダー `{calendar_id}` を削除しました。"
 
     async def _register_calendar(self, extracted: dict, user_id: str) -> str:
         calendar_id = extracted.get("calendar_id", "").strip()

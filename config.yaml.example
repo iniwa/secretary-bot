@@ -158,6 +158,16 @@ rss:
         - url: "https://rss.itmedia.co.jp/rss/2.0/itmedia_all.xml"
           title: "ITmedia"
 
+# Googleカレンダー読み取り同期（ミミの文脈に予定を注入）
+# 書き込み側（予定登録）は units.calendar 参照。こちらは読み取り専用の同期ジョブ。
+# calendar_read_sources テーブルに登録されたカレンダーから events.list で取得する。
+calendar:
+  read_sync:
+    enabled: false                  # 有効化するとheartbeatで定期同期
+    sync_interval_minutes: 10       # 同期頻度
+    lookahead_days: 60              # 何日先までの予定を取得するか
+    inject_hours: 24                # InnerMindに何時間先までの予定を注入するか
+
 # Docker ログ監視
 docker_monitor:
   enabled: true
@@ -245,6 +255,7 @@ character:
     - 感情的になりすぎない
     - 一人称を「私」にしない
     - 絵文字を使わない
+    - 「非公開の予定」と表示されているカレンダー予定は、タイトルや場所を絶対に推測・言及しない。時間帯のみ触れる。
   ollama_only: true
 
 # SearXNG（ネット検索）

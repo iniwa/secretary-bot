@@ -10,6 +10,7 @@ from src.database import JST, jst_now
 from src.errors import AllLLMsUnavailableError
 from src.inner_mind.context_sources import ContextSourceRegistry
 from src.inner_mind.context_sources.activity import ActivitySource
+from src.inner_mind.context_sources.calendar import CalendarSource
 from src.inner_mind.context_sources.conversation import ConversationSource
 from src.inner_mind.context_sources.habit import HabitSource
 from src.inner_mind.context_sources.memo import MemoSource
@@ -81,6 +82,7 @@ class InnerMind:
         self.registry.register(STTSource(bot))
         self.registry.register(ActivitySource(bot))
         self.registry.register(HabitSource(bot))
+        self.registry.register(CalendarSource(bot))
 
     def register_source(self, source) -> None:
         """外部からコンテキストソースを追加する。"""

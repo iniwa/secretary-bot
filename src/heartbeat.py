@@ -31,6 +31,7 @@ class Heartbeat:
         self._stt_cleanup_last_date: str | None = None  # 1日1回のretention実行を制御
         self._activity_daily_last_date: str | None = None  # 1日1回の活動要約実行を制御
         self._memory_sweep_last_date: str | None = None  # 1日1回のChromaDBメモリsweepを制御
+        self._calendar_last_sync: datetime | None = None  # カレンダー同期の間隔制御
 
     @property
     def _config(self) -> dict:
@@ -113,10 +114,11 @@ class Heartbeat:
             tasks.append(self._check_compact())
             tasks.append(self._run_activity())
             tasks.append(self._run_memory_sweep())
+            tasks.append(self._run_calendar_sync())
 
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # 結果を分解: ユニット結果 | STT | RSS | Compact | Activity | MemorySweep
+            # 結果を分解: ユニット結果 | STT | RSS | Compact | Activity | MemorySweep | CalendarSync
             n_units = len(units)
             for i, r in enumerate(all_results[:n_units]):
                 if isinstance(r, Exception):
@@ -129,11 +131,13 @@ class Heartbeat:
             compact_result = all_results[n_units + 2] if not isinstance(all_results[n_units + 2], Exception) else {"error": str(all_results[n_units + 2])}
             activity_result = all_results[n_units + 3] if not isinstance(all_results[n_units + 3], Exception) else {"error": str(all_results[n_units + 3])}
             memory_sweep_result = all_results[n_units + 4] if not isinstance(all_results[n_units + 4], Exception) else {"error": str(all_results[n_units + 4])}
+            calendar_result = all_results[n_units + 5] if not isinstance(all_results[n_units + 5], Exception) else {"error": str(all_results[n_units + 5])}
             tick_log["stt"] = stt_result
             tick_log["rss"] = rss_result
             tick_log["compact"] = compact_result
             tick_log["activity"] = activity_result
             tick_log["memory_sweep"] = memory_sweep_result
+            tick_log["calendar"] = calendar_result
 
             # Ollama状態を再チェックして次回間隔を調整
             available = await self.bot.llm_router.check_ollama()
@@ -229,6 +233,32 @@ class Heartbeat:
             log.warning("memory sweep failed: %s", e)
             result["error"] = str(e)
         return result
+
+    # --- カレンダー同期 ---
+
+    async def _run_calendar_sync(self) -> dict:
+        """読み取り対象カレンダーから予定を取得し calendar_events にキャッシュ。"""
+        cal_cfg = self.bot.config.get("calendar", {}).get("read_sync", {})
+        if not cal_cfg.get("enabled", False):
+            return {}
+
+        interval = int(cal_cfg.get("sync_interval_minutes", 10))
+        now = datetime.now(JST)
+        if (
+            self._calendar_last_sync is not None
+            and (now - self._calendar_last_sync).total_seconds() < interval * 60
+        ):
+            return {}
+
+        try:
+            from src.gcal.sync import sync_all_sources
+            lookahead = int(cal_cfg.get("lookahead_days", 60))
+            result = await sync_all_sources(self.bot, lookahead_days=lookahead)
+            self._calendar_last_sync = now
+            return result
+        except Exception as e:
+            log.warning("Calendar sync failed: %s", e)
+            return {"error": str(e)}
 
     # --- RSS 定期フェッチ・要約・ダイジェスト通知 ---
 

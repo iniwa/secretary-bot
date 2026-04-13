@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 23
+_SCHEMA_VERSION = 24
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -372,6 +372,31 @@ class Database:
                     game_name    TEXT
                 )""",
                 "CREATE INDEX IF NOT EXISTS idx_foreground_sessions_start ON foreground_sessions(start_at)",
+            ],
+            24: [
+                # Googleカレンダー読み取り元の登録
+                """CREATE TABLE IF NOT EXISTS calendar_read_sources (
+                    calendar_id   TEXT PRIMARY KEY,
+                    display_name  TEXT,
+                    is_private    INTEGER NOT NULL DEFAULT 0,
+                    enabled       INTEGER NOT NULL DEFAULT 1,
+                    last_synced_at TEXT,
+                    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # 読み取ったカレンダーイベントのキャッシュ
+                # is_private=1 の場合 title/location/description は NULL 保存
+                """CREATE TABLE IF NOT EXISTS calendar_events (
+                    event_id      TEXT PRIMARY KEY,
+                    calendar_id   TEXT NOT NULL,
+                    title         TEXT,
+                    start_at      TEXT NOT NULL,
+                    end_at        TEXT NOT NULL,
+                    is_all_day    INTEGER NOT NULL DEFAULT 0,
+                    is_private    INTEGER NOT NULL DEFAULT 0,
+                    fetched_at    TEXT NOT NULL
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at)",
+                "CREATE INDEX IF NOT EXISTS idx_calendar_events_cal ON calendar_events(calendar_id)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
