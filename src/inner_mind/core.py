@@ -12,13 +12,16 @@ from src.inner_mind.context_sources import ContextSourceRegistry
 from src.inner_mind.context_sources.activity import ActivitySource
 from src.inner_mind.context_sources.calendar import CalendarSource
 from src.inner_mind.context_sources.conversation import ConversationSource
+from src.inner_mind.context_sources.github import GitHubSource
 from src.inner_mind.context_sources.habit import HabitSource
 from src.inner_mind.context_sources.memo import MemoSource
 from src.inner_mind.context_sources.memory import MemorySource
 from src.inner_mind.context_sources.reminder import ReminderSource
 from src.inner_mind.context_sources.rss import RSSSource
 from src.inner_mind.context_sources.stt import STTSource
+from src.inner_mind.context_sources.tavily_news import TavilyNewsSource
 from src.inner_mind.context_sources.weather import WeatherSource
+from src.inner_mind.discord_activity import DiscordActivityMonitor
 from src.inner_mind.prompts import (
     EXTRACT_PROMPT,
     EXTRACT_SYSTEM,
@@ -66,6 +69,7 @@ class InnerMind:
     def __init__(self, bot):
         self.bot = bot
         self.registry = ContextSourceRegistry()
+        self.activity_monitor = DiscordActivityMonitor(bot)
 
         # レンズローテーション用の追跡リスト
         self._last_used_lenses: list[str] = []
@@ -83,6 +87,8 @@ class InnerMind:
         self.registry.register(ActivitySource(bot))
         self.registry.register(HabitSource(bot))
         self.registry.register(CalendarSource(bot))
+        self.registry.register(GitHubSource(bot))
+        self.registry.register(TavilyNewsSource(bot))
 
     def register_source(self, source) -> None:
         """外部からコンテキストソースを追加する。"""
@@ -123,6 +129,23 @@ class InnerMind:
 
         enabled = await self._get_setting("enabled", False)
         if not _to_bool(enabled):
+            return
+
+        # Discord アクティビティ検出による収集/思考分離
+        activity_state = await self.activity_monitor.get_state()
+        self._last_activity_state = activity_state
+        mode = activity_state.get("mode", "full")
+        if mode == "stop":
+            log.info(
+                "InnerMind: skipped (reason=%s, status=%s)",
+                activity_state.get("reason"), activity_state.get("status"),
+            )
+            return
+        if mode == "collect_only":
+            log.info(
+                "InnerMind: collect-only mode (reason=%s); skipping think phase",
+                activity_state.get("reason"),
+            )
             return
 
         log.info("InnerMind: think cycle started")
@@ -306,6 +329,12 @@ class InnerMind:
         dt_str = now.strftime("%Y-%m-%d %H:%M") + f"（{weekdays[now.weekday()]}曜日）"
 
         discord_status = await self._get_user_status()
+        # アクティビティ情報を status に付加
+        activity_state = getattr(self, "_last_activity_state", None)
+        if activity_state and activity_state.get("activities"):
+            act_text = DiscordActivityMonitor.format_activities(activity_state["activities"])
+            if act_text:
+                discord_status = f"{discord_status}（{act_text}）"
         last_mono = await self.bot.database.get_last_monologue()
         self_model = await self.bot.database.get_self_model()
 

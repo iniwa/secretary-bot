@@ -41,7 +41,10 @@ class _Waiter:
 
 
 class OllamaClient:
-    def __init__(self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 150):
+    def __init__(
+        self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 150,
+        gpu_monitor=None,
+    ):
         self.model = model
         self.urls = urls or []
         self.timeout = timeout
@@ -55,6 +58,8 @@ class OllamaClient:
         self._seq = itertools.count()
         # アクティブリクエスト追跡（WebGUI表示用）
         self._active_requests: dict[str, dict] = {}  # url → {purpose, started_at}
+        # GPUメモリ監視（他プロセスがGPUを占有中のインスタンスを除外）
+        self.gpu_monitor = gpu_monitor
 
     # --- ヘルスチェック ---
 
@@ -124,15 +129,29 @@ class OllamaClient:
     # --- インスタンス取得・解放（優先度キュー） ---
 
     def _try_acquire(self, exclude: frozenset = frozenset(), model: str | None = None) -> str | None:
-        """空きインスタンスを取得する（ノンブロッキング）。_available_urlsの順序で優先。"""
+        """空きインスタンスを取得する（ノンブロッキング）。_available_urlsの順序で優先。
+
+        GPUメモリ監視が有効かつ閾値超のインスタンスはスキップする。ただし
+        「空きが他に無い」状況ではフォールバックとして使用を許可する（全滅防止）。
+        """
+        fallback: str | None = None
         for url in self._available_urls:
             if url in exclude:
                 continue
             if model and not self._has_model(url, model):
                 continue
-            if self._active_count.get(url, 0) == 0:
-                self._active_count[url] = 1
-                return url
+            if self._active_count.get(url, 0) != 0:
+                continue
+            if self.gpu_monitor and self.gpu_monitor.is_busy(url):
+                if fallback is None:
+                    fallback = url
+                continue
+            self._active_count[url] = 1
+            return url
+        if fallback is not None:
+            log.info("GPU busy on all free instances, falling back to %s", fallback)
+            self._active_count[fallback] = 1
+            return fallback
         return None
 
     async def _acquire_instance(

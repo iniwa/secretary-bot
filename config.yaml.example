@@ -4,6 +4,9 @@ llm:
   ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
   ollama_cooldown_sec: 60  # Ollama失敗検出後のクールダウン秒数。/api/tagsのゾンビ誤判定を防ぐ
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
+  # GPUメモリ使用量がこのバイト数を超えたインスタンスは他プロセス占有中とみなしOllamaから除外。
+  # nvidia_gpu_exporter + metrics.victoria_metrics_url が必須。0 / 未設定で無効。
+  gpu_memory_skip_bytes: 2500000000  # 2.5GB
 
 # ハートビート
 heartbeat:
@@ -215,6 +218,19 @@ inner_mind:
   min_speak_interval_minutes: 0   # 最低発言インターバル（分）。0=制限なし
   speak_channel_id: ""            # 自発発言を送るDiscordチャンネルID
   target_user_id: ""              # Discordステータスを監視するユーザーID
+  # 収集/思考分離: 直近この分数にユーザー発言があれば think() をスキップ（収集のみ）
+  active_threshold_minutes: 10
+  # GitHub活動コンテキスト（GITHUB_TOKEN 必須、usernameが空なら無効）
+  github:
+    username: ""           # 監視対象のGitHubユーザー名
+    lookback_hours: 24     # 何時間前までの活動を取得するか
+    max_items: 8           # コンテキスト注入する最大件数
+  # Webニュースコンテキスト（TAVILY_API_KEY 必須、queries が空なら無効）
+  tavily_news:
+    queries: []            # 例: ["生成AI", "ゲーム業界"]
+    max_results_per_query: 3
+    lookback_days: 2
+    topic: "news"
 
 # Geminiトグル（WebGUIで動的に変更可能・ここは初期値）
 gemini:

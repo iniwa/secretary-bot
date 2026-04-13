@@ -1304,6 +1304,11 @@ def create_web_app(bot) -> FastAPI:
         interval = await bot.database.get_setting("inner_mind.min_speak_interval_minutes")
         channel_id = await bot.database.get_setting("inner_mind.speak_channel_id")
         user_id = await bot.database.get_setting("inner_mind.target_user_id")
+        tavily_raw = await bot.database.get_setting("inner_mind.tavily_news.queries")
+        if tavily_raw:
+            tavily_queries = [s.strip() for s in tavily_raw.split(",") if s.strip()]
+        else:
+            tavily_queries = list(im_cfg.get("tavily_news", {}).get("queries", []) or [])
         return {
             "enabled": (enabled == "true") if enabled is not None else im_cfg.get("enabled", False),
             "speak_probability": float(prob) if prob is not None else im_cfg.get("speak_probability", 0.20),
@@ -1311,6 +1316,7 @@ def create_web_app(bot) -> FastAPI:
             "thinking_interval_ticks": im_cfg.get("thinking_interval_ticks", 2),
             "speak_channel_id": channel_id if channel_id is not None else im_cfg.get("speak_channel_id", ""),
             "target_user_id": user_id if user_id is not None else im_cfg.get("target_user_id", ""),
+            "tavily_queries": tavily_queries,
         }
 
     @app.post("/api/inner-mind/settings", dependencies=[Depends(_verify)])
@@ -1345,6 +1351,17 @@ def create_web_app(bot) -> FastAPI:
             val = str(body["target_user_id"])
             im_cfg["target_user_id"] = val
             await bot.database.set_setting("inner_mind.target_user_id", val)
+
+        if "tavily_queries" in body:
+            raw = body["tavily_queries"]
+            if isinstance(raw, list):
+                items = [str(s).strip() for s in raw if str(s).strip()]
+            else:
+                items = [s.strip() for s in str(raw).split(",") if s.strip()]
+            # CSV形式で保存（内部カンマを含むクエリは想定外）
+            csv = ",".join(items)
+            im_cfg.setdefault("tavily_news", {})["queries"] = items
+            await bot.database.set_setting("inner_mind.tavily_news.queries", csv)
 
         return {"ok": True}
 

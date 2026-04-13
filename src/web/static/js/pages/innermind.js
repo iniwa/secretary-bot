@@ -336,6 +336,11 @@ export function render() {
         <label class="form-label">Target User ID</label>
         <input type="text" id="im-s-user" class="form-input" placeholder="Discord user ID to monitor">
       </div>
+      <div class="form-group im-toggle-row">
+        <label class="form-label">Tavily News Queries</label>
+        <input type="text" id="im-s-tavily" class="form-input" placeholder="生成AI, VTuber">
+        <div class="form-hint">カンマ区切りで複数指定可。TAVILY_API_KEY が必須</div>
+      </div>
     </div>
     <div class="card-footer">
       <button class="btn btn-primary btn-sm" id="im-s-save">Save</button>
@@ -430,6 +435,7 @@ async function loadSettings() {
     $('im-s-think-ticks').value = data.thinking_interval_ticks ?? '';
     $('im-s-channel').value = data.speak_channel_id || '';
     $('im-s-user').value = data.target_user_id || '';
+    $('im-s-tavily').value = (data.tavily_queries || []).join(', ');
   } catch (err) {
     console.error('Load InnerMind settings:', err);
     toast('Failed to load InnerMind settings', 'error');
@@ -462,6 +468,7 @@ async function saveSettings() {
         thinking_interval_ticks: Number($('im-s-think-ticks').value),
         speak_channel_id: $('im-s-channel').value,
         target_user_id: $('im-s-user').value,
+        tavily_queries: $('im-s-tavily').value.split(',').map(s => s.trim()).filter(Boolean),
       },
     });
     toast('InnerMind settings saved', 'success');

@@ -5,6 +5,7 @@ import time
 from src.errors import AllLLMsUnavailableError, GeminiError, OllamaUnavailableError
 from src.flow_tracker import get_flow_tracker
 from src.llm.gemini_client import GeminiClient
+from src.llm.gpu_monitor import GpuMemoryMonitor
 from src.llm.ollama_client import PURPOSE_PRIORITY, OllamaClient
 from src.logger import get_logger
 
@@ -58,7 +59,22 @@ class LLMRouter:
 
         model = config.get("llm", {}).get("ollama_model", "gemma4")
         timeout = int(config.get("llm", {}).get("ollama_timeout", 150))
-        self.ollama = OllamaClient(model=model, urls=ollama_urls, timeout=timeout)
+
+        # GPUメモリ監視: 他プロセスがGPUを占有中のインスタンスをOllamaから除外
+        metrics_url = config.get("metrics", {}).get("victoria_metrics_url", "")
+        gpu_threshold = int(config.get("llm", {}).get("gpu_memory_skip_bytes", 0))
+        url_to_instance: dict[str, str] = {}
+        for agent in agents:
+            host = agent.get("host", "")
+            inst = agent.get("metrics_instance", "")
+            if host and inst:
+                url_to_instance[f"http://{host}:11434"] = inst
+        self.gpu_monitor = GpuMemoryMonitor(metrics_url, url_to_instance, gpu_threshold)
+
+        self.ollama = OllamaClient(
+            model=model, urls=ollama_urls, timeout=timeout,
+            gpu_monitor=self.gpu_monitor,
+        )
         self.gemini = GeminiClient()
         self.ollama_available = False
         self._database = None  # bot.pyから設定される

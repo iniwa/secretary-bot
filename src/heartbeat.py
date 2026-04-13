@@ -116,6 +116,7 @@ class Heartbeat:
             tasks.append(self._run_memory_sweep())
             tasks.append(self._run_calendar_sync())
             tasks.append(self._run_context_sources_update())
+            tasks.append(self._run_gpu_monitor_update())
 
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -134,6 +135,7 @@ class Heartbeat:
             memory_sweep_result = all_results[n_units + 4] if not isinstance(all_results[n_units + 4], Exception) else {"error": str(all_results[n_units + 4])}
             calendar_result = all_results[n_units + 5] if not isinstance(all_results[n_units + 5], Exception) else {"error": str(all_results[n_units + 5])}
             sources_update_result = all_results[n_units + 6] if not isinstance(all_results[n_units + 6], Exception) else {"error": str(all_results[n_units + 6])}
+            gpu_monitor_result = all_results[n_units + 7] if not isinstance(all_results[n_units + 7], Exception) else {"error": str(all_results[n_units + 7])}
             tick_log["stt"] = stt_result
             tick_log["rss"] = rss_result
             tick_log["compact"] = compact_result
@@ -141,6 +143,7 @@ class Heartbeat:
             tick_log["memory_sweep"] = memory_sweep_result
             tick_log["calendar"] = calendar_result
             tick_log["sources_update"] = sources_update_result
+            tick_log["gpu_monitor"] = gpu_monitor_result
 
             # Ollama状態を再チェックして次回間隔を調整
             available = await self.bot.llm_router.check_ollama()
@@ -249,6 +252,20 @@ class Heartbeat:
             return {"ok": True}
         except Exception as e:
             log.warning("ContextSource update failed: %s", e)
+            return {"error": str(e)}
+
+    # --- GPUメモリ監視更新 ---
+
+    async def _run_gpu_monitor_update(self) -> dict:
+        """OllamaインスタンスのGPUメモリ使用量を背景更新。"""
+        monitor = getattr(self.bot.llm_router, "gpu_monitor", None)
+        if monitor is None or not monitor.enabled:
+            return {"skipped": "disabled"}
+        try:
+            await monitor.update()
+            return {"ok": True, "snapshot": monitor.snapshot()}
+        except Exception as e:
+            log.warning("GPU monitor update failed: %s", e)
             return {"error": str(e)}
 
     # --- カレンダー同期 ---
