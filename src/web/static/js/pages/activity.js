@@ -95,15 +95,15 @@ export function render() {
       <h3>期間</h3>
       <div id="a-range-info" class="mono" style="font-size:0.8125rem;color:var(--text-muted)"></div>
     </div>
-    <div id="a-period-pills" style="display:flex;gap:0.5rem;flex-wrap:wrap">${pills}</div>
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-top:0.5rem">
-      <label style="font-size:0.8125rem;color:var(--text-muted)">開始</label>
-      <input type="date" id="a-range-start" class="form-input" style="min-width:140px">
-      <span style="color:var(--text-muted)">〜</span>
-      <label style="font-size:0.8125rem;color:var(--text-muted)">終了</label>
-      <input type="date" id="a-range-end" class="form-input" style="min-width:140px">
-      <button class="btn btn-sm" id="a-range-apply">適用</button>
-      <button class="btn btn-sm" id="a-range-clear" style="display:none">範囲解除</button>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+      <div id="a-period-pills" style="display:flex;gap:0.5rem;flex-wrap:wrap">${pills}</div>
+      <div style="display:flex;gap:0.25rem;align-items:center;margin-left:auto">
+        <input type="date" id="a-range-start" class="form-input" style="width:130px;padding:0.25rem 0.4rem;font-size:0.8125rem">
+        <span style="color:var(--text-muted);font-size:0.8125rem">〜</span>
+        <input type="date" id="a-range-end" class="form-input" style="width:130px;padding:0.25rem 0.4rem;font-size:0.8125rem">
+        <button class="btn btn-sm" id="a-range-apply">適用</button>
+        <button class="btn btn-sm" id="a-range-clear" style="display:none">解除</button>
+      </div>
     </div>
   </section>
 

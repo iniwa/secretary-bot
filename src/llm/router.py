@@ -54,7 +54,7 @@ class LLMRouter:
                 url = f"http://{host}:11434"
                 self._url_to_name[url] = agent.get("name", agent.get("id", host))
         if direct_url:
-            self._url_to_name[direct_url.rstrip("/")] = "ローカル"
+            self._url_to_name[direct_url.rstrip("/")] = "サブPC"
 
         model = config.get("llm", {}).get("ollama_model", "gemma4")
         timeout = int(config.get("llm", {}).get("ollama_timeout", 150))
