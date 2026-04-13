@@ -14,7 +14,11 @@ const PRESETS = [
 
 let _days = 30;
 let _gameFilter = '';
+let _dayFilter = '';              // YYYY-MM-DD。カレンダーから1日絞込み
 let _sessionOffset = 0;
+let _viewMode = 'bar';            // 'bar' | 'calendar'
+let _calYear = 0;
+let _calMonth = 0;                // 1〜12
 const SESSION_PAGE_SIZE = 50;
 
 // ------------------------------------------------------------
@@ -88,10 +92,40 @@ export function render() {
   <section class="card">
     <div class="card-header">
       <h3>日別プレイ時間</h3>
-      <span class="stat-label" id="a-daily-hint" style="font-size:0.75rem;color:var(--text-muted)">積み上げはゲーム別</span>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <div id="a-view-toggle" style="display:flex;gap:0.25rem">
+          <button class="pill" data-view="bar">棒グラフ</button>
+          <button class="pill" data-view="calendar">カレンダー</button>
+        </div>
+      </div>
     </div>
-    <div id="a-daily-chart" style="display:flex;align-items:flex-end;gap:2px;height:180px;overflow-x:auto;padding:0.5rem 0;border-bottom:1px solid var(--border)"></div>
-    <div id="a-daily-axis" style="display:flex;gap:2px;font-size:0.65rem;color:var(--text-muted);padding-top:4px;overflow-x:auto"></div>
+
+    <!-- 棒グラフビュー -->
+    <div id="a-view-bar">
+      <div id="a-daily-chart" style="display:flex;align-items:flex-end;gap:2px;height:180px;overflow-x:auto;padding:0.5rem 0;border-bottom:1px solid var(--border)"></div>
+      <div id="a-daily-axis" style="display:flex;gap:2px;font-size:0.65rem;color:var(--text-muted);padding-top:4px;overflow-x:auto"></div>
+    </div>
+
+    <!-- カレンダービュー -->
+    <div id="a-view-calendar" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+        <button class="btn btn-sm" id="a-cal-prev">← 前月</button>
+        <div id="a-cal-title" style="font-weight:600"></div>
+        <button class="btn btn-sm" id="a-cal-next">次月 →</button>
+      </div>
+      <div class="activity-calendar" id="a-cal-grid"></div>
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted)">
+        <span>強度:</span>
+        <span style="display:flex;align-items:center;gap:2px">
+          <span class="cal-legend" style="background:var(--bg-elevated)"></span>
+          <span class="cal-legend" style="background:hsla(210,60%,50%,0.25)"></span>
+          <span class="cal-legend" style="background:hsla(210,60%,50%,0.5)"></span>
+          <span class="cal-legend" style="background:hsla(210,60%,50%,0.75)"></span>
+          <span class="cal-legend" style="background:hsla(210,60%,50%,1)"></span>
+        </span>
+        <span style="margin-left:auto" id="a-cal-month-total"></span>
+      </div>
+    </div>
   </section>
 
   <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem">
@@ -164,10 +198,21 @@ async function loadSummaryAndStats() {
 }
 
 async function loadDaily() {
-  // 全期間でも棒グラフは最大 365 日に制限して視認性確保
+  if (_viewMode === 'calendar') {
+    await loadCalendar();
+    return;
+  }
+  // 棒グラフは最大365日に制限して視認性確保
   const days = _days === 0 ? 365 : _days;
   const data = await api(`/api/activity/daily?days=${days}`).catch(() => null);
   renderDaily(data?.daily || [], days);
+}
+
+async function loadCalendar() {
+  const data = await api(
+    `/api/activity/daily?year=${_calYear}&month=${_calMonth}`
+  ).catch(() => null);
+  renderCalendar(data?.daily || []);
 }
 
 async function loadSessions(reset) {
@@ -178,6 +223,7 @@ async function loadSessions(reset) {
     offset: String(_sessionOffset),
   });
   if (_gameFilter) params.set('game', _gameFilter);
+  if (_dayFilter) params.set('day', _dayFilter);
   const data = await api(`/api/activity/sessions?${params.toString()}`).catch(() => null);
   renderSessions(data || { sessions: [], total: 0 });
 }
@@ -304,6 +350,66 @@ function renderDaily(daily, expectedDays) {
   }).join('');
 }
 
+function renderCalendar(daily) {
+  const grid = document.getElementById('a-cal-grid');
+  const title = document.getElementById('a-cal-title');
+  const totalEl = document.getElementById('a-cal-month-total');
+  if (!grid) return;
+
+  title.textContent = `${_calYear}年${_calMonth}月`;
+
+  const dailyMap = new Map(daily.map(d => [d.day, d]));
+  const monthTotal = daily.reduce((s, d) => s + (d.total_sec || 0), 0);
+  totalEl.textContent = `月合計: ${fmtDuration(monthTotal)}`;
+
+  const monthMax = Math.max(...daily.map(d => d.total_sec || 0), 1);
+
+  // 月初の曜日（日曜=0）
+  const first = new Date(_calYear, _calMonth - 1, 1);
+  const daysInMonth = new Date(_calYear, _calMonth, 0).getDate();
+  const startDow = first.getDay();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const WEEK_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+  let html = WEEK_LABELS.map(l =>
+    `<div class="cal-head">${l}</div>`
+  ).join('');
+
+  for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${_calYear}-${String(_calMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const info = dailyMap.get(dateStr);
+    const sec = info?.total_sec || 0;
+    const intensity = sec > 0 ? Math.min(1, sec / monthMax) : 0;
+    const bg = sec > 0 ? `hsla(210,60%,50%,${0.25 + intensity * 0.75})` : 'var(--bg-elevated)';
+    const isSelected = _dayFilter === dateStr;
+    const isToday = dateStr === todayStr;
+
+    const games = info?.games || [];
+    const topGame = games[0];
+    const stripes = games.slice(0, 3).map(g => {
+      const pct = (g.sec / sec) * 100;
+      return `<div style="height:3px;width:${pct}%;background:${gameColor(g.game_name)};display:inline-block"></div>`;
+    }).join('');
+
+    const tooltip = games.length
+      ? `${dateStr}: ${fmtDuration(sec)}\n` + games.map(g => `・${g.game_name}: ${fmtDuration(g.sec)}`).join('\n')
+      : `${dateStr}: データなし`;
+
+    html += `
+      <div class="cal-cell ${isSelected ? 'cal-selected' : ''} ${isToday ? 'cal-today' : ''}"
+           data-day="${dateStr}" title="${escapeHtml(tooltip)}"
+           style="background:${bg};cursor:${sec > 0 ? 'pointer' : 'default'}">
+        <div class="cal-date">${d}</div>
+        <div class="cal-sec">${sec > 0 ? fmtDuration(sec) : ''}</div>
+        <div class="cal-stripes" style="display:flex;gap:1px;margin-top:2px">${stripes}</div>
+      </div>`;
+  }
+
+  grid.innerHTML = html;
+}
+
 function renderSessions(data) {
   const tbody = document.getElementById('a-session-rows');
   const meta = document.getElementById('a-session-meta');
@@ -325,8 +431,11 @@ function renderSessions(data) {
   }
 
   if (meta) {
-    const filter = _gameFilter ? `「${_gameFilter}」のみ` : '';
-    meta.textContent = `${data.total} 件 ${filter}`.trim();
+    const filters = [];
+    if (_dayFilter) filters.push(_dayFilter);
+    if (_gameFilter) filters.push(`「${_gameFilter}」`);
+    const filterText = filters.length ? ` (${filters.join(' / ')})` : '';
+    meta.textContent = `${data.total} 件${filterText}`;
   }
   if (pager) {
     const from = sessions.length ? _sessionOffset + 1 : 0;
@@ -335,7 +444,15 @@ function renderSessions(data) {
   }
   document.getElementById('a-session-prev').disabled = _sessionOffset <= 0;
   document.getElementById('a-session-next').disabled = _sessionOffset + sessions.length >= data.total;
-  document.getElementById('a-clear-filter').style.display = _gameFilter ? '' : 'none';
+  document.getElementById('a-clear-filter').style.display = (_gameFilter || _dayFilter) ? '' : 'none';
+}
+
+function updateViewMode() {
+  document.querySelectorAll('#a-view-toggle .pill').forEach(el => {
+    el.classList.toggle('active', el.dataset.view === _viewMode);
+  });
+  document.getElementById('a-view-bar').style.display = _viewMode === 'bar' ? '' : 'none';
+  document.getElementById('a-view-calendar').style.display = _viewMode === 'calendar' ? '' : 'none';
 }
 
 function updatePeriodPills() {
@@ -348,12 +465,51 @@ function updatePeriodPills() {
 // mount
 // ------------------------------------------------------------
 export async function mount() {
+  // 初期月 = 今月
+  const now = new Date();
+  _calYear = now.getFullYear();
+  _calMonth = now.getMonth() + 1;
+  updateViewMode();
+
   // 期間pill
   document.getElementById('a-period-pills').addEventListener('click', ev => {
     const btn = ev.target.closest('.pill');
     if (!btn) return;
     _days = Number(btn.dataset.days);
     refreshAll();
+  });
+
+  // 表示モード切替
+  document.getElementById('a-view-toggle').addEventListener('click', ev => {
+    const btn = ev.target.closest('.pill');
+    if (!btn) return;
+    _viewMode = btn.dataset.view;
+    updateViewMode();
+    loadDaily();
+  });
+
+  // カレンダー月ナビ
+  document.getElementById('a-cal-prev').addEventListener('click', () => {
+    _calMonth--;
+    if (_calMonth < 1) { _calMonth = 12; _calYear--; }
+    loadCalendar();
+  });
+  document.getElementById('a-cal-next').addEventListener('click', () => {
+    _calMonth++;
+    if (_calMonth > 12) { _calMonth = 1; _calYear++; }
+    loadCalendar();
+  });
+
+  // カレンダーセルクリック → その日のみに絞込み
+  document.getElementById('a-cal-grid').addEventListener('click', ev => {
+    const cell = ev.target.closest('.cal-cell');
+    if (!cell || cell.classList.contains('cal-empty')) return;
+    const day = cell.dataset.day;
+    if (!day) return;
+    _dayFilter = (_dayFilter === day) ? '' : day;
+    loadCalendar();
+    loadSessions(true);
+    document.getElementById('a-session-table').scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 
   // ゲームランキングクリックでフィルタ
@@ -371,8 +527,10 @@ export async function mount() {
   // フィルタ解除
   document.getElementById('a-clear-filter').addEventListener('click', () => {
     _gameFilter = '';
+    _dayFilter = '';
     loadSessions(true);
     loadSummaryAndStats();
+    if (_viewMode === 'calendar') loadCalendar();
   });
 
   // ページング
@@ -391,5 +549,7 @@ export async function mount() {
 
 export function unmount() {
   _gameFilter = '';
+  _dayFilter = '';
   _sessionOffset = 0;
+  _viewMode = 'bar';
 }

@@ -1721,21 +1721,42 @@ def create_web_app(bot) -> FastAPI:
         }
 
     @app.get("/api/activity/daily", dependencies=[Depends(_verify)])
-    async def activity_daily(days: int = 30):
-        """日別のゲーム時間（ゲーム別の内訳付き）。棒グラフ / ヒートマップ用。"""
-        days = max(1, min(int(days or 30), 3650))
-        cutoff = _activity_cutoff(days)
+    async def activity_daily(
+        days: int = 30,
+        year: int | None = None,
+        month: int | None = None,
+    ):
+        """日別のゲーム時間（ゲーム別の内訳付き）。棒グラフ / カレンダー用。
+        year/month 指定時は指定月全日。未指定時は直近 days 日。"""
+        from datetime import date as _date
+        if year and month:
+            month_start = _date(year, month, 1)
+            if month == 12:
+                next_month = _date(year + 1, 1, 1)
+            else:
+                next_month = _date(year, month + 1, 1)
+            start = month_start.strftime("%Y-%m-%d 00:00:00")
+            end = next_month.strftime("%Y-%m-%d 00:00:00")
+            where = "end_at IS NOT NULL AND start_at >= ? AND start_at < ?"
+            params: tuple = (start, end)
+            meta = {"year": year, "month": month}
+        else:
+            days = max(1, min(int(days or 30), 3650))
+            cutoff = _activity_cutoff(days)
+            where = "end_at IS NOT NULL AND start_at >= ?"
+            params = (cutoff,)
+            meta = {"days": days, "since": cutoff}
+
         rows = await bot.database.fetchall(
-            """
+            f"""
             SELECT date(start_at) AS day, game_name,
                    SUM(COALESCE(duration_sec, 0)) AS sec
             FROM game_sessions
-            WHERE end_at IS NOT NULL AND start_at >= ?
+            WHERE {where}
             GROUP BY day, game_name ORDER BY day
             """,
-            (cutoff,),
+            params,
         )
-        # 日付ごとに集約してレスポンス整形
         by_day: dict[str, dict] = {}
         for r in rows:
             d = r["day"]
@@ -1743,26 +1764,32 @@ def create_web_app(bot) -> FastAPI:
                 by_day[d] = {"day": d, "total_sec": 0, "games": []}
             by_day[d]["total_sec"] += int(r["sec"] or 0)
             by_day[d]["games"].append({"game_name": r["game_name"], "sec": int(r["sec"] or 0)})
-        return {"days": days, "since": cutoff, "daily": list(by_day.values())}
+        return {**meta, "daily": list(by_day.values())}
 
     @app.get("/api/activity/sessions", dependencies=[Depends(_verify)])
     async def activity_sessions(
         days: int = 30,
         game: str = "",
+        day: str = "",
         limit: int = 100,
         offset: int = 0,
     ):
-        """個別プレイセッション一覧（新しい順）。game で絞込み、ページング対応。"""
+        """個別プレイセッション一覧（新しい順）。game / day で絞込み、ページング対応。
+        day は YYYY-MM-DD 指定で、days より優先される。"""
         days = max(0, min(int(days or 30), 3650))
         limit = max(1, min(int(limit or 100), 500))
         offset = max(0, int(offset or 0))
-        cutoff = _activity_cutoff(days)
 
         where_parts = ["end_at IS NOT NULL"]
         params: list = []
-        if cutoff:
-            where_parts.append("start_at >= ?")
-            params.append(cutoff)
+        if day:
+            where_parts.append("date(start_at) = ?")
+            params.append(day)
+        else:
+            cutoff = _activity_cutoff(days)
+            if cutoff:
+                where_parts.append("start_at >= ?")
+                params.append(cutoff)
         if game:
             where_parts.append("game_name = ?")
             params.append(game)
