@@ -139,7 +139,7 @@ secretary-bot/
 - 省エネモード時: ペルソナ注入なし、`people_memory` のみ注入
 
 ### LLM並列化ガイドライン
-OllamaClientは複数インスタンス対応（least-connections分配）。同時にLLM呼び出しが発生すれば自動的に空きインスタンスへ分配される。設計詳細は `docs/design/parallel_llm.md` 参照。
+OllamaClientは複数インスタンス対応（least-connections分配）。同時にLLM呼び出しが発生すれば自動的に空きインスタンスへ分配される。
 
 **新しいLLM呼び出しを追加する際の原則:**
 - 独立した複数のLLM呼び出しは `asyncio.gather()` で並列実行すること
