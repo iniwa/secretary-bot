@@ -23,8 +23,8 @@ activity:
     gaming_on_main: false     # MainPCゲーム中 → 許可（Ollama on Subは動かしてOK）
     discord_vc: false         # VC接続中 → 許可
   habit:
-    daily_lookback_days: 14        # デイリー判定: 過去何日見るか
-    daily_min_active_days: 10      # 毎日系認定の最低プレイ日数
+    profile_lookback_days: 14      # プレイ頻度プロフィールの観測期間
+    profile_top_n: 10              # LLMに渡す上位N件（活性度は連続値で）
     regular_lookback_days: 60      # 長期継続判定の観測期間
     regular_min_hours: 10          # 長期認定の最低累計時間
     regular_min_weekly_sessions: 3 # 長期認定の最低週セッション数

@@ -29,49 +29,59 @@ def _parse_dt(s: str) -> datetime | None:
         return None
 
 
-async def detect_daily_habits(
+async def get_activity_profile(
     bot,
     lookback_days: int | None = None,
-    min_active_days: int | None = None,
+    top_n: int | None = None,
 ) -> list[dict]:
-    """過去 lookback_days 日のうち min_active_days 日以上プレイされたゲームを抽出。
+    """過去 lookback_days 日で最もプレイされたゲーム上位 top_n 件を活性度付きで返す。
 
-    返り値: [{game_name, active_days, total_sec, last_played_at}, ...]（合計時間降順）
+    二値判定せず連続値をそのまま返す。選別/発言判断は呼び出し側（LLM）に委ねる。
+
+    返り値: [{game_name, active_days, lookback_days, activity_ratio,
+              total_sec, last_played_at, played_today}, ...]（合計時間降順）
+    - activity_ratio: active_days / lookback_days（0.0〜1.0）
+    - played_today: 今日（JST）にプレイ済みか
     """
     cfg = _get_habit_config(bot)
     if lookback_days is None:
-        lookback_days = int(cfg.get("daily_lookback_days", 14))
-    if min_active_days is None:
-        min_active_days = int(cfg.get("daily_min_active_days", 10))
+        lookback_days = int(cfg.get("profile_lookback_days", 14))
+    if top_n is None:
+        top_n = int(cfg.get("profile_top_n", 10))
 
     now = datetime.now(tz=_JST)
+    today_str = now.strftime("%Y-%m-%d")
     cutoff = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d %H:%M:%S")
 
-    # date(start_at) で重複日を畳んで active_days を数える。duration_sec は NULL を 0 扱い。
     rows = await bot.database.fetchall(
         """
         SELECT game_name,
                COUNT(DISTINCT date(start_at)) AS active_days,
                SUM(COALESCE(duration_sec, 0)) AS total_sec,
-               MAX(start_at) AS last_played_at
+               MAX(start_at) AS last_played_at,
+               MAX(CASE WHEN date(start_at) = ? THEN 1 ELSE 0 END) AS played_today
         FROM game_sessions
         WHERE start_at >= ?
         GROUP BY game_name
-        HAVING active_days >= ?
         ORDER BY total_sec DESC
+        LIMIT ?
         """,
-        (cutoff, min_active_days),
+        (today_str, cutoff, top_n),
     )
 
-    return [
-        {
+    result: list[dict] = []
+    for r in rows:
+        active_days = int(r["active_days"] or 0)
+        result.append({
             "game_name": r["game_name"],
-            "active_days": int(r["active_days"] or 0),
+            "active_days": active_days,
+            "lookback_days": lookback_days,
+            "activity_ratio": round(active_days / lookback_days, 3) if lookback_days else 0.0,
             "total_sec": int(r["total_sec"] or 0),
             "last_played_at": r["last_played_at"],
-        }
-        for r in rows
-    ]
+            "played_today": bool(r["played_today"]),
+        })
+    return result
 
 
 async def detect_regular_games(
@@ -169,49 +179,37 @@ async def detect_regular_games(
 
 
 async def check_missed_today(bot) -> list[dict]:
-    """デイリー習慣のうち、今日（JST）まだプレイしていないゲームを返す。
+    """活性度付きプロフィールから「今日未プレイ」のゲームを返す。
 
-    返り値: [{game_name, last_played_at, streak_days}, ...]
-    streak_days: 連続未プレイ日数（今日プレイしていないので最低 1）
+    二値判定はせず、プロフィール全件の活性度をそのまま渡す。
+    「触れるに値するか」は呼び出し側（LLM）が activity_ratio を見て判断する。
+
+    返り値: [{game_name, activity_ratio, active_days, lookback_days,
+              last_played_at, streak_days, total_sec}, ...]
+    活性度降順（= 本来よくやっているゲームほど上位）
     """
-    habits = await detect_daily_habits(bot)
-    if not habits:
+    profile = await get_activity_profile(bot)
+    if not profile:
         return []
 
     today = datetime.now(tz=_JST).date()
-    today_str = today.strftime("%Y-%m-%d")
-    game_names = [h["game_name"] for h in habits]
-
-    # 今日プレイしたゲームをまとめて取得
-    placeholders = ",".join("?" * len(game_names))
-    rows = await bot.database.fetchall(
-        f"""
-        SELECT DISTINCT game_name
-        FROM game_sessions
-        WHERE game_name IN ({placeholders})
-          AND date(start_at) = ?
-        """,
-        (*game_names, today_str),
-    )
-    played_today = {r["game_name"] for r in rows}
-
     missed: list[dict] = []
-    for h in habits:
-        if h["game_name"] in played_today:
+    for p in profile:
+        if p["played_today"]:
             continue
-        last_dt = _parse_dt(h["last_played_at"])
-        if last_dt is None:
-            streak_days = 1
-        else:
-            streak_days = max((today - last_dt.date()).days, 1)
+        last_dt = _parse_dt(p["last_played_at"])
+        streak_days = max((today - last_dt.date()).days, 1) if last_dt else 1
         missed.append({
-            "game_name": h["game_name"],
-            "last_played_at": h["last_played_at"],
+            "game_name": p["game_name"],
+            "activity_ratio": p["activity_ratio"],
+            "active_days": p["active_days"],
+            "lookback_days": p["lookback_days"],
+            "last_played_at": p["last_played_at"],
             "streak_days": streak_days,
+            "total_sec": p["total_sec"],
         })
 
-    # 連続未プレイが長い順（注目度高い順）
-    missed.sort(key=lambda x: x["streak_days"], reverse=True)
+    missed.sort(key=lambda x: x["activity_ratio"], reverse=True)
     return missed
 
 
