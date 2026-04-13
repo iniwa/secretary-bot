@@ -101,11 +101,14 @@ class GitHubSource(ContextSource):
         payload = ev.get("payload", {}) or {}
         if etype == "PushEvent":
             commits = payload.get("commits", []) or []
-            n = len(commits)
-            first = commits[0].get("message", "").splitlines()[0][:100] if commits else ""
-            if n == 0:
-                return None
-            return f"[push] {repo} ({n} commits): {first}"
+            ref = (payload.get("ref", "") or "").replace("refs/heads/", "")
+            size = payload.get("size") or payload.get("distinct_size") or len(commits)
+            if commits:
+                first = commits[0].get("message", "").splitlines()[0][:100]
+                return f"[push] {repo}@{ref} ({size} commits): {first}"
+            if size:
+                return f"[push] {repo}@{ref} ({size} commits)"
+            return f"[push] {repo}@{ref}"
         if etype == "PullRequestEvent":
             action = payload.get("action", "")
             pr = payload.get("pull_request", {}) or {}
