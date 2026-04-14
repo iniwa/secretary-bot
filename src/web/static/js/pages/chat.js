@@ -31,6 +31,8 @@ function renderMarkdown(text) {
   html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
   // links
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // bare URLs (skip those already inside href="..." or anchor text)
+  html = linkify(html);
   // line breaks (but not inside pre)
   html = html.replace(/(?<!\n)\n(?!\n)/g, '<br>');
   // paragraphs (double newline)
@@ -41,6 +43,15 @@ function renderMarkdown(text) {
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function linkify(html) {
+  // Match bare http(s) URLs not already inside href attribute or anchor text.
+  // Negative lookbehind excludes quote/angle/paren/equal before the URL.
+  return html.replace(
+    /(?<!["'(=>])https?:\/\/[^\s<>"'()]+/g,
+    (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`,
+  );
 }
 
 function fmtTime(ts) {
@@ -121,7 +132,7 @@ export function unmount() {
 // ============================================================
 // Message Display
 // ============================================================
-function appendMessage(role, text, unit, channel, channelName) {
+function appendMessage(role, text, unit, channel, channelName, replyTo) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
 
@@ -144,7 +155,20 @@ function appendMessage(role, text, unit, channel, channelName) {
     replyBtn.addEventListener('click', () => setReply(unit, text));
     el.appendChild(replyBtn);
   } else {
-    el.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+    if (replyTo) {
+      const quote = document.createElement('div');
+      quote.className = 'chat-msg-reply-to';
+      const unitLabel = replyTo.unit
+        ? `<span class="reply-to-unit">[${escapeHtml(replyTo.unit)}]</span>`
+        : '';
+      const preview = escapeHtml(replyTo.preview || '');
+      quote.innerHTML = `<span class="reply-to-icon">&#8617;</span>${unitLabel}<span class="reply-to-preview">${preview}</span>`;
+      el.appendChild(quote);
+    }
+    const body = document.createElement('div');
+    body.className = 'chat-msg-body';
+    body.innerHTML = linkify(escapeHtml(text).replace(/\n/g, '<br>'));
+    el.appendChild(body);
   }
 
   // Badges
@@ -217,7 +241,10 @@ async function sendMessage(input, sendBtn) {
   chatBusy = true;
   sendBtn.disabled = true;
 
-  appendMessage('user', msg);
+  const userReplyTo = replyContext
+    ? { unit: replyContext.unit, preview: replyContext.preview }
+    : null;
+  appendMessage('user', msg, null, null, null, userReplyTo);
   const thinking = appendThinking();
 
   const payload = { message: msg };

@@ -452,6 +452,30 @@ tr:hover td { background: var(--bg-raised); }
   margin-top: 0.35rem;
 }
 
+/* Reply-to indicator on user messages */
+.chat-msg-reply-to {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.4rem;
+  border-left: 3px solid var(--accent-hover);
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  max-width: 100%;
+}
+.chat-msg-reply-to .reply-to-icon { color: var(--accent-hover); }
+.chat-msg-reply-to .reply-to-unit { color: var(--accent-hover); font-weight: 600; }
+.chat-msg-reply-to .reply-to-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
 /* Thinking animation */
 .chat-thinking {
   display: flex;
