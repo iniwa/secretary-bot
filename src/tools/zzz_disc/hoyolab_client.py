@@ -74,8 +74,18 @@ _ROLL_VALUES_S_L15 = {
     "攻撃力": 19.0,  "攻撃力%": 3.0,
     "防御力": 15.0,  "防御力%": 4.8,
     "会心率%": 2.4,  "会心ダメージ%": 4.8,
-    "異常マスタリー": 9.0,
+    # Anomaly 系は翻訳ゆれ対策で両方登録（HoYoLAB がどちらを返しても OK）
+    "異常マスタリー": 9.0, "異常掌握": 9.0,
     "貫通値": 9.0,   "貫通率%": 2.4,
+}
+# 名前ゆれ正規化: 空白除去 + 一部の別表記を統一
+_NAME_ALIASES = {
+    "HPパーセンテージ": "HP%",
+    "攻撃力パーセンテージ": "攻撃力%",
+    "防御力パーセンテージ": "防御力%",
+    "会心率パーセンテージ": "会心率%",
+    "会心ダメージパーセンテージ": "会心ダメージ%",
+    "貫通率パーセンテージ": "貫通率%",
 }
 # Lv15 S ディスクの総ロール数は常に 8（初期 3〜4 + 強化 4〜5）。
 # 例: 攻撃力9%(3) + 会心率4.8%(2) + HP3%(1) + 異常マスタリー18(2) = 8 ロール
@@ -92,7 +102,8 @@ def _rolls_for(name: str, value: float, rarity: str | None, level: int) -> int:
         return 0
     if value is None or value <= 0:
         return 0
-    per = _ROLL_VALUES_S_L15.get(name)
+    canonical = _NAME_ALIASES.get(name, name)
+    per = _ROLL_VALUES_S_L15.get(canonical)
     if not per:
         return 0
     ratio = value / per
@@ -109,10 +120,12 @@ def _extract_substats(disc_obj) -> list[dict]:
     rarity = str(_pick(disc_obj, "rarity", default="") or "").upper() or None
     level = int(_pick(disc_obj, "level", default=0) or 0)
     result = []
+    # 名前からは flat/percent が確定する常時パーセント系
+    _ALWAYS_PERCENT = {"会心率", "会心ダメージ", "貫通率"}
     for s in subs:
         raw_val = _pick(s, "value", "base", default=0)
         name = str(_pick(s, "name", "property_name", default="") or "")
-        is_percent = _is_percent_value(raw_val)
+        is_percent = _is_percent_value(raw_val) or (name in _ALWAYS_PERCENT)
         if is_percent and not name.endswith("%"):
             name = name + "%"
         value = _parse_value(raw_val)
