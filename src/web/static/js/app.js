@@ -187,9 +187,10 @@ function formatUptime(sec) {
 // Init
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-  // Nav clicks
+  // Nav clicks（data-page を持たない外部リンク（target=_blank 等）はブラウザの既定挙動に任せる）
   document.querySelectorAll('.nav-item').forEach(el => {
     el.addEventListener('click', (e) => {
+      if (!el.dataset.page) return;
       e.preventDefault();
       navigate(el.dataset.page);
     });
