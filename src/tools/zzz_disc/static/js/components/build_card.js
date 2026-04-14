@@ -22,6 +22,7 @@ const STATS_ORDER = [
 export function renderBuildCard({ character, build, actions = [] }) {
   if (!build) return '';
   const stats = build.stats || {};
+  const recommended = new Set(character?.recommended_substats || []);
   const portraitStyle = character?.icon_url ? `background-image:url(${escapeHtml(character.icon_url)});` : '';
   const rank = build.rank || '';
   const synced = build.synced_at ? formatDate(build.synced_at) : null;
@@ -52,7 +53,7 @@ export function renderBuildCard({ character, build, actions = [] }) {
       </div>
 
       <div class="disc-grid">
-        ${renderDiscs(build.slots || [])}
+        ${renderDiscs(build.slots || [], recommended)}
       </div>
     </div>
   `;
@@ -106,7 +107,7 @@ function renderStats(stats) {
   }).join('');
 }
 
-function renderDiscs(slots) {
+function renderDiscs(slots, recommended = new Set()) {
   // 1..6 の空セルを埋める
   const map = new Map();
   for (const s of slots) {
@@ -119,12 +120,12 @@ function renderDiscs(slots) {
       cells.push(`<div class="disc-tile empty" data-slot="${slot}">部位 ${slot} 未装備</div>`);
       continue;
     }
-    cells.push(renderDiscTile(entry));
+    cells.push(renderDiscTile(entry, recommended));
   }
   return cells.join('');
 }
 
-function renderDiscTile(entry) {
+function renderDiscTile(entry, recommended = new Set()) {
   const d = entry.disc || {};
   const shared = Array.isArray(entry.shared_with) ? entry.shared_with.filter(x => x) : [];
   const sharedCount = shared.length;
@@ -150,18 +151,19 @@ function renderDiscTile(entry) {
         <span class="value">${escapeHtml(formatStatValue(d.main_stat_name, d.main_stat_value))}</span>
       </div>
       <div class="disc-subs">
-        ${subs.map(renderSubRow).join('')}
+        ${subs.map(s => renderSubRow(s, recommended)).join('')}
       </div>
     </div>
   `;
 }
 
-function renderSubRow(s) {
+function renderSubRow(s, recommended = new Set()) {
   if (!s || !s.name) return '';
   const upgrades = Number(s.upgrades || 0);
   const dots = upgrades > 0 ? `<span class="sub-dots">${'<span class="dot"></span>'.repeat(upgrades)}</span>` : '';
+  const isRec = recommended.has(s.name);
   return `
-    <div class="disc-sub-row">
+    <div class="disc-sub-row ${isRec ? 'recommended' : ''}">
       <span class="sub-name">${escapeHtml(statLabel(s.name))}</span>
       ${dots}
       <span class="sub-value">${escapeHtml(formatStatValue(s.name, s.value))}</span>

@@ -794,3 +794,49 @@ h3 { font-size: 1rem; font-weight: 600; }
   background: var(--accent);
   transition: width 200ms ease;
 }
+
+/* === Recommended substats editor === */
+.recommended-editor {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.rec-sub-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rec-sub-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85rem;
+  background: var(--bg-overlay);
+}
+.rec-sub-chip input { display: none; }
+.rec-sub-chip.on {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* === Highlight recommended sub-stats on disc tiles === */
+.disc-sub-row.recommended {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left: 2px solid var(--accent);
+  padding-left: 4px;
+  border-radius: 2px;
+}
+.disc-sub-row.recommended .sub-name,
+.disc-sub-row.recommended .sub-value {
+  color: var(--accent);
+  font-weight: 600;
+}

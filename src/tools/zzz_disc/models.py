@@ -132,6 +132,7 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "icon_url", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "name", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
+    await _maybe_add_column(db, "zzz_characters", "recommended_substats_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "email", "TEXT")
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "password", "TEXT")
@@ -292,10 +293,31 @@ async def find_or_create_set_by_name(db, name_ja: str, *,
 
 # ---------- 参照系 ----------
 
+def _decode_char_row(row: dict) -> dict:
+    if row is None:
+        return row
+    raw = row.pop("recommended_substats_json", None)
+    try:
+        row["recommended_substats"] = json.loads(raw) if raw else []
+    except Exception:
+        row["recommended_substats"] = []
+    return row
+
+
 async def list_characters(db) -> list[dict]:
-    return await db.fetchall(
-        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
+    rows = await db.fetchall(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id, recommended_substats_json "
         "FROM zzz_characters ORDER BY display_order, id"
+    )
+    return [_decode_char_row(r) for r in rows]
+
+
+async def update_character_recommended_substats(db, character_id: int,
+                                                stats: list[str]) -> int:
+    payload = json.dumps(list(stats), ensure_ascii=False)
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET recommended_substats_json = ? WHERE id = ?",
+        (payload, character_id),
     )
 
 
@@ -321,17 +343,19 @@ async def list_characters_with_build_stats(db) -> list[dict]:
 
 
 async def get_character(db, character_id: int) -> dict | None:
-    return await db.fetchone(
-        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
+    row = await db.fetchone(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id, recommended_substats_json "
         "FROM zzz_characters WHERE id = ?", (character_id,),
     )
+    return _decode_char_row(dict(row)) if row else None
 
 
 async def get_character_by_slug(db, slug: str) -> dict | None:
-    return await db.fetchone(
-        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
+    row = await db.fetchone(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id, recommended_substats_json "
         "FROM zzz_characters WHERE slug = ?", (slug,),
     )
+    return _decode_char_row(dict(row)) if row else None
 
 
 async def list_set_masters(db) -> list[dict]:

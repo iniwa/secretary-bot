@@ -43,9 +43,62 @@ async function load(slug) {
   }
 }
 
+const SUB_STAT_CANDIDATES = [
+  'HP', 'HP%', '攻撃力', '攻撃力%', '防御力', '防御力%',
+  '会心率%', '会心ダメージ%', '異常マスタリー', '貫通値', '貫通率%',
+];
+
+function renderRecommendedEditor() {
+  const recommended = new Set(state.character?.recommended_substats || []);
+  const boxes = SUB_STAT_CANDIDATES.map(name => `
+    <label class="rec-sub-chip ${recommended.has(name) ? 'on' : ''}">
+      <input type="checkbox" data-sub="${escapeHtml(name)}" ${recommended.has(name) ? 'checked' : ''} />
+      <span>${escapeHtml(name)}</span>
+    </label>
+  `).join('');
+  return `
+    <div class="recommended-editor">
+      <h3 class="mb-1">★ 推奨サブステ</h3>
+      <div class="text-muted text-sm mb-1">ここで選択したサブステは、各ディスクで目立つようハイライトされます</div>
+      <div class="rec-sub-chips">${boxes}</div>
+      <div class="mt-1"><button class="btn btn-sm btn-primary" id="save-recommended">保存</button></div>
+    </div>
+  `;
+}
+
+function wireRecommendedEditor() {
+  const wrap = document.querySelector('.recommended-editor');
+  if (!wrap) return;
+  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+    });
+  });
+  const btn = document.getElementById('save-recommended');
+  btn?.addEventListener('click', async () => {
+    const picked = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+      .map(cb => cb.dataset.sub);
+    btn.disabled = true;
+    try {
+      const res = await api(`/characters/${state.character.id}/recommended-substats`, {
+        method: 'PUT', body: { stats: picked },
+      });
+      state.character = res.character || { ...state.character, recommended_substats: picked };
+      toast('推奨サブステを保存しました', 'success');
+      renderBody();
+    } catch (err) {
+      toast(`保存失敗: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 function renderBody() {
   const el = document.getElementById('detail-body');
   const chunks = [];
+
+  chunks.push(renderRecommendedEditor());
 
   // 現在の装備
   chunks.push('<h3 class="mb-1">● 現在の装備</h3>');
@@ -72,6 +125,7 @@ function renderBody() {
   }
 
   el.innerHTML = chunks.join('');
+  wireRecommendedEditor();
   wireUp();
 }
 

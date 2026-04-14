@@ -139,6 +139,18 @@ def build_router(bot, config: dict) -> APIRouter:
         ]
         return build
 
+    @router.put("/api/characters/{character_id}/recommended-substats")
+    async def put_recommended_substats(character_id: int, payload: dict):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        stats = payload.get("stats") or []
+        if not isinstance(stats, list) or not all(isinstance(s, str) for s in stats):
+            raise HTTPException(400, "stats must be list[str]")
+        await models.update_character_recommended_substats(db, character_id, stats)
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
     @router.get("/api/characters/{character_id}/builds")
     async def get_character_builds(character_id: int):
         ch = await models.get_character(db, character_id)

@@ -56,6 +56,7 @@ class CharacterOut(BaseModel):
     icon_url: str | None = None
     display_order: int = 0
     hoyolab_agent_id: str | None = None
+    recommended_substats: list[str] = Field(default_factory=list)
 
 
 class SetMasterOut(BaseModel):
