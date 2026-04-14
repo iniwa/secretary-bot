@@ -48,6 +48,9 @@ echo Ollama started.
 
 cd windows-agent
 echo.
+echo Installing Python requirements...
+python -m pip install --disable-pip-version-check -r requirements.txt
+echo.
 echo Starting Windows Agent...
 python agent.py
 
