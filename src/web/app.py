@@ -1874,11 +1874,18 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/activity/stats", dependencies=[Depends(_verify)])
     async def activity_stats(
-        days: int = 7, start: str | None = None, end: str | None = None
+        days: int = 7, start: str | None = None, end: str | None = None,
+        day: str = "",
     ):
-        """期間内のゲーム / フォアグラウンド集計（ランキング）。start/end (YYYY-MM-DD) が優先。"""
+        """期間内のゲーム / フォアグラウンド集計（ランキング）。
+        優先度: day > start/end > days。"""
         days = max(0, min(int(days or 7), 3650))
-        parts, params, meta = _activity_range(days, start, end)
+        if day:
+            parts = ["date(start_at) = ?"]
+            params: list = [day]
+            meta = {"day": day}
+        else:
+            parts, params, meta = _activity_range(days, start, end)
         where_clause = " AND ".join(["end_at IS NOT NULL", *parts])
         games = await bot.database.fetchall(
             f"""
@@ -1902,11 +1909,18 @@ def create_web_app(bot) -> FastAPI:
 
     @app.get("/api/activity/summary", dependencies=[Depends(_verify)])
     async def activity_summary(
-        days: int = 7, start: str | None = None, end: str | None = None
+        days: int = 7, start: str | None = None, end: str | None = None,
+        day: str = "",
     ):
-        """期間サマリ: 総プレイ時間・セッション数・アクティブ日数・最長セッション。"""
+        """期間サマリ: 総プレイ時間・セッション数・アクティブ日数・最長セッション。
+        優先度: day > start/end > days。"""
         days = max(0, min(int(days or 7), 3650))
-        parts, params, meta = _activity_range(days, start, end)
+        if day:
+            parts = ["date(start_at) = ?"]
+            params: list = [day]
+            meta = {"day": day}
+        else:
+            parts, params, meta = _activity_range(days, start, end)
         where_clause = " AND ".join(["end_at IS NOT NULL", *parts])
 
         row = await bot.database.fetchone(

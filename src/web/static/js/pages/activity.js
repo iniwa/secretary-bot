@@ -63,6 +63,14 @@ function fmtDate(iso) {
   return iso.slice(0, 10);
 }
 
+// ローカルタイム基準の YYYY-MM-DD（toISOString は UTC なので JST では日付がズレる）
+function ymdLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function escapeHtml(s) {
   if (s === null || s === undefined) return '';
   return String(s)
@@ -212,7 +220,9 @@ async function refreshAll() {
 }
 
 async function loadSummaryAndStats() {
-  const qs = rangeParams().toString();
+  const params = rangeParams();
+  if (_dayFilter) params.set('day', _dayFilter);
+  const qs = params.toString();
   const [summary, stats] = await apiBatch([
     [`/api/activity/summary?${qs}`, {}],
     [`/api/activity/stats?${qs}`, {}],
@@ -222,6 +232,18 @@ async function loadSummaryAndStats() {
   renderGameRanking(stats?.games || []);
   renderFgRanking(stats?.foreground || []);
   renderRangeInfo(summary);
+  updateSectionTitles();
+}
+
+const DAY_TITLE_TARGETS = new Set(['ゲーム別ランキング', 'ゲーム中以外の作業アプリ', 'セッション履歴']);
+function updateSectionTitles() {
+  document.querySelectorAll('.activity-page .card .card-header h3').forEach(h3 => {
+    if (!h3.dataset.baseTitle) h3.dataset.baseTitle = h3.textContent;
+    const base = h3.dataset.baseTitle;
+    if (DAY_TITLE_TARGETS.has(base)) {
+      h3.textContent = _dayFilter ? `${base}（${_dayFilter}）` : base;
+    }
+  });
 }
 
 async function loadDaily() {
@@ -272,7 +294,9 @@ function renderSummary(s) {
 function renderRangeInfo(s) {
   const el = document.getElementById('a-range-info');
   if (!el) return;
-  if (rangeActive()) {
+  if (_dayFilter) {
+    el.textContent = `${_dayFilter}（1日指定）`;
+  } else if (rangeActive()) {
     el.textContent = `${_rangeStart} 〜 ${_rangeEnd}`;
   } else if (_days === 0) {
     const earliest = s?.earliest ? fmtDate(s.earliest) : '---';
@@ -349,7 +373,7 @@ function renderDaily(daily, expectedDays) {
   for (let i = expectedDays - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    const key = ymdLocal(d);
     series.push(map.get(key) || { day: key, total_sec: 0, games: [] });
   }
   const max = Math.max(...series.map(s => s.total_sec || 0), 1);
@@ -393,7 +417,7 @@ function renderDailyRange(daily, startStr, endStr) {
   const start = new Date(startStr + 'T00:00:00');
   const end = new Date(endStr + 'T00:00:00');
   for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
-    const key = new Date(t).toISOString().slice(0, 10);
+    const key = ymdLocal(new Date(t));
     series.push(map.get(key) || { day: key, total_sec: 0, games: [] });
   }
   if (!series.length) {
@@ -447,7 +471,7 @@ function renderCalendar(daily) {
   const first = new Date(_calYear, _calMonth - 1, 1);
   const daysInMonth = new Date(_calYear, _calMonth, 0).getDate();
   const startDow = first.getDay();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = ymdLocal(new Date());
 
   const WEEK_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
   let html = WEEK_LABELS.map(l =>
@@ -560,6 +584,7 @@ export async function mount() {
     _days = Number(btn.dataset.days);
     _rangeStart = '';
     _rangeEnd = '';
+    _dayFilter = '';
     document.getElementById('a-range-start').value = '';
     document.getElementById('a-range-end').value = '';
     refreshAll();
@@ -573,11 +598,13 @@ export async function mount() {
     if (s > e) { alert('開始日が終了日より後になっています'); return; }
     _rangeStart = s;
     _rangeEnd = e;
+    _dayFilter = '';
     refreshAll();
   });
   document.getElementById('a-range-clear').addEventListener('click', () => {
     _rangeStart = '';
     _rangeEnd = '';
+    _dayFilter = '';
     document.getElementById('a-range-start').value = '';
     document.getElementById('a-range-end').value = '';
     refreshAll();
@@ -610,16 +637,25 @@ export async function mount() {
     loadCalendar();
   });
 
-  // カレンダーセルクリック → その日のみに絞込み
+  // カレンダーセル / 棒グラフの棒クリック → その日のみに絞込み（サマリ・ランキング・セッション全部）
+  const selectDay = (day) => {
+    if (!day) return;
+    _dayFilter = (_dayFilter === day) ? '' : day;
+    _gameFilter = '';
+    _sessionOffset = 0;
+    loadSummaryAndStats();
+    loadSessions(true);
+    if (_viewMode === 'calendar') loadCalendar();
+  };
   document.getElementById('a-cal-grid').addEventListener('click', ev => {
     const cell = ev.target.closest('.cal-cell');
     if (!cell || cell.classList.contains('cal-empty')) return;
-    const day = cell.dataset.day;
-    if (!day) return;
-    _dayFilter = (_dayFilter === day) ? '' : day;
-    loadCalendar();
-    loadSessions(true);
-    document.getElementById('a-session-table').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    selectDay(cell.dataset.day);
+  });
+  document.getElementById('a-daily-chart').addEventListener('click', ev => {
+    const bar = ev.target.closest('.daily-bar');
+    if (!bar) return;
+    selectDay(bar.dataset.day);
   });
 
   // ゲームランキングクリックでフィルタ
