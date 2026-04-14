@@ -54,42 +54,58 @@ def _as_dict(obj) -> dict:
             if not k.startswith("_") and not callable(getattr(obj, k, None))}
 
 
-# ZZZ S-rank ディスクの 1 ロール（1 強化）あたりの増分値（日本語名ベース）。
-# 参考: 公式データベース / 有志検証値。同じ name でも is_percent で意味が変わるため
-# キーは `name(+%)` で引く。初期値 ≒ 1ロール分と扱えるため総ロール = round(value/per_roll)。
-_ROLL_VALUES_S = {
-    "HP%": 3.0, "攻撃力%": 3.0, "防御力%": 4.8,
-    "会心率": 2.4, "会心ダメージ": 4.8,
+# ZZZ S-rank Lv15 ディスクの 1 ロール（初期値 = 1 強化分）あたりの増分値。
+# user の実データ 156 枚を実測検証した結果、全値が base × 整数 に完全一致:
+#   HP      : 112   (112 / 224 / 336 / 448)
+#   HP%     : 3.0   (3.0 / 6.0 / 9.0 / 12.0)
+#   攻撃力    : 19    (19 / 38 / 57 / 76)
+#   攻撃力%   : 3.0   (3.0 / 6.0 / 9.0 / 12.0)
+#   防御力    : 15    (15 / 30 / 45 / 60)
+#   防御力%   : 4.8   (4.8 / 9.6 / 14.4 / 19.2)
+#   会心率%   : 2.4   (2.4 / 4.8 / 7.2 / 9.6)
+#   会心ダメージ%: 4.8   (4.8 / 9.6 / 14.4 / 19.2 / 24.0)
+#   異常マスタリー: 9     (9 / 18 / 27 / 36)
+#   貫通値    : 9     (9 / 18 / 27 / 36)
+# 貫通率% は実測データに観測されなかったが ZZZ 公式仕様で 2.4% 固定。
+_ROLL_VALUES_S_L15 = {
+    "HP": 112.0,    "HP%": 3.0,
+    "攻撃力": 19.0,  "攻撃力%": 3.0,
+    "防御力": 15.0,  "防御力%": 4.8,
+    "会心率%": 2.4,  "会心ダメージ%": 4.8,
     "異常マスタリー": 9.0,
-    "貫通率": 2.4, "貫通値": 9.0,
-    "HP": 112.0, "攻撃力": 19.0, "防御力": 15.0,
+    "貫通値": 9.0,   "貫通率%": 2.4,
 }
-# A/B は S のおおよそ 0.75 / 0.5 倍（近似値。厳密ではないが整数化すれば十分実用）
-_ROLL_VALUES_A = {k: round(v * 0.75, 3) for k, v in _ROLL_VALUES_S.items()}
-_ROLL_VALUES_B = {k: round(v * 0.50, 3) for k, v in _ROLL_VALUES_S.items()}
+# Lv15 S ディスクの総ロール数は常に 8（初期 3〜4 + 強化 4〜5）。
+# 例: 攻撃力9%(3) + 会心率4.8%(2) + HP3%(1) + 異常マスタリー18(2) = 8 ロール
+_ROLL_TOTAL_S_L15 = 8
 
 
-def _rolls_for(name: str, value: float, rarity: str | None) -> int:
-    """サブステの value から強化回数（初期 1 + 上昇回数）を逆算。
-    不明な name / value=0 の場合は 0。"""
+def _rolls_for(name: str, value: float, rarity: str | None, level: int) -> int:
+    """サブステの value から強化回数を逆算（S ランク Lv15 のみ対応）。
+
+    他のランク/レベルは HoYoLAB が roll 回数を公開しておらず、かつ 1 ロール値が
+    レベル依存で確定しないため 0（不明）を返す。
+    """
+    if rarity != "S" or level != 15:
+        return 0
     if value is None or value <= 0:
         return 0
-    table = _ROLL_VALUES_S
-    if rarity == "A":
-        table = _ROLL_VALUES_A
-    elif rarity == "B":
-        table = _ROLL_VALUES_B
-    per = table.get(name)
+    per = _ROLL_VALUES_S_L15.get(name)
     if not per:
         return 0
-    # 四捨五入で近い整数（誤差 0.05 程度を許容）
-    return max(1, int(round(value / per)))
+    ratio = value / per
+    nearest = round(ratio)
+    # 割り切れない値は未知フォーマットの可能性 → 0 で返す（誤表示防止）
+    if abs(ratio - nearest) > 0.05 or nearest < 1:
+        return 0
+    return nearest
 
 
 def _extract_substats(disc_obj) -> list[dict]:
     # genshin.py v1.7+: disc.properties (list of ZZZProperty with name/value/type)
     subs = _pick(disc_obj, "properties", "sub_properties", "substats", "sub_stats", default=[]) or []
     rarity = str(_pick(disc_obj, "rarity", default="") or "").upper() or None
+    level = int(_pick(disc_obj, "level", default=0) or 0)
     result = []
     for s in subs:
         raw_val = _pick(s, "value", "base", default=0)
@@ -99,7 +115,8 @@ def _extract_substats(disc_obj) -> list[dict]:
             name = name + "%"
         value = _parse_value(raw_val)
         # HoYoLAB API は roll 回数を公開していないため、値から逆算する
-        rolls = _rolls_for(name, value, rarity)
+        # (S-rank Lv15 のみ精度保証。それ以外は 0=不明 を返す)
+        rolls = _rolls_for(name, value, rarity, level)
         result.append({
             "name": name,
             "value": value,
