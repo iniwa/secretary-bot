@@ -14,3 +14,7 @@ transformers>=4.36
 torch>=2.1
 accelerate>=0.25
 soundfile>=0.12
+# ZZZ Disc tool: 画面キャプチャ + VLM 抽出
+mss>=9.0
+obs-websocket-py>=1.0
+Pillow>=10.0

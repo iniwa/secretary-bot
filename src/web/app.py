@@ -2149,6 +2149,13 @@ def create_web_app(bot) -> FastAPI:
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 
+    # ZZZ Disc Manager（同居ツール）: tools.zzz_disc.enabled=true のときのみ有効
+    try:
+        from src.tools.zzz_disc import register as register_zzz_disc
+        register_zzz_disc(app, bot)
+    except Exception as e:
+        log.warning(f"ZZZ Disc Manager register failed: {e}")
+
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")

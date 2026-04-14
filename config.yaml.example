@@ -104,6 +104,27 @@ units:
   docker_log_monitor:
     enabled: true
 
+# Tools（同居サブツール：BOT本体とは疎結合でホスティング）
+tools:
+  zzz_disc:
+    enabled: true                      # デフォルト ON
+    vlm_model: "gemma4"                # Windows Agent 側 Ollama に pull 済みのモデル
+    delegate_to: "windows"             # AgentPool role
+    match_threshold: 3.0               # マッチングスコアの候補閾値
+    capture:
+      backend: "mss"                   # "mss" | "obs"
+      mss:
+        monitor: 1                     # プライマリ=1
+        crop: null                     # {top, left, width, height} でトリミング可
+      obs:
+        host: "192.168.1.211"
+        port: 4455
+        password_env: "OBS_WEBSOCKET_PASSWORD"
+        source_name: "Game Capture"
+    queue:
+      max_concurrent: 1                # Ollama同時推論数
+      history_retention: 200           # 完了ジョブ保持件数
+
 # RSS フィーダー
 rss:
   fetch_interval_minutes: 60        # フェッチ間隔（分）

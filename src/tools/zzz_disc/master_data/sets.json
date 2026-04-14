@@ -1,0 +1,114 @@
+[
+  {
+    "slug": "polar-metal",
+    "name_ja": "極地ハンターXv",
+    "aliases": ["極地ハンター", "polar metal", "polar hunter"],
+    "two_pc_effect": "氷属性ダメージ+10%",
+    "four_pc_effect": "強攻撃および強攻撃Exが与える氷属性ダメージが20%アップ"
+  },
+  {
+    "slug": "woodpecker-electro",
+    "name_ja": "啄木鳥のエレクトロ",
+    "aliases": ["啄木鳥エレクトロ", "woodpecker"],
+    "two_pc_effect": "会心率+8%",
+    "four_pc_effect": "攻撃ヒット時に会心率+9%"
+  },
+  {
+    "slug": "inferno-metal",
+    "name_ja": "炎獄のヒートロック",
+    "aliases": ["炎獄ヒートロック", "inferno metal"],
+    "two_pc_effect": "炎属性ダメージ+10%",
+    "four_pc_effect": "通常攻撃が与える炎属性ダメージ+28%"
+  },
+  {
+    "slug": "swing-jazz",
+    "name_ja": "スイングジャズ",
+    "aliases": ["swing jazz"],
+    "two_pc_effect": "エネルギー自動回復+20%",
+    "four_pc_effect": "連携スキル/ディフェンシブスキル/チェーンスキル発動時、チーム全員のダメージ+15%"
+  },
+  {
+    "slug": "chaos-jazz",
+    "name_ja": "混沌のジャズ",
+    "aliases": ["混沌ジャズ", "chaos jazz"],
+    "two_pc_effect": "異常マスタリー+30",
+    "four_pc_effect": "属性異常状態の敵へのダメージ+20%"
+  },
+  {
+    "slug": "thunder-metal",
+    "name_ja": "霹靂の噛み付き",
+    "aliases": ["霹靂の噛みつき", "霹靂噛みつき", "thunder metal"],
+    "two_pc_effect": "電気属性ダメージ+10%",
+    "four_pc_effect": "敵の感電状態時、ダメージ+15%"
+  },
+  {
+    "slug": "puffer-electro",
+    "name_ja": "強音のDJ",
+    "aliases": ["強音DJ", "puffer electro"],
+    "two_pc_effect": "貫通率+8%",
+    "four_pc_effect": "Exスキル発動時、攻撃力+15%"
+  },
+  {
+    "slug": "hormone-punk",
+    "name_ja": "獣の本性",
+    "aliases": ["獣本性", "hormone punk"],
+    "two_pc_effect": "攻撃力+10%",
+    "four_pc_effect": "登場時に攻撃力+25%"
+  },
+  {
+    "slug": "proto-punk",
+    "name_ja": "英雄の余談",
+    "aliases": ["英雄余談", "proto punk"],
+    "two_pc_effect": "シールド効果+15%",
+    "four_pc_effect": "ディフェンシブスキル発動時チーム全員のダメージ+15%"
+  },
+  {
+    "slug": "fanged-metal",
+    "name_ja": "不死のワルツ",
+    "aliases": ["不死ワルツ", "fanged metal"],
+    "two_pc_effect": "物理属性ダメージ+10%",
+    "four_pc_effect": "複数の敵と交戦時、物理属性ダメージ+35%"
+  },
+  {
+    "slug": "soul-rock",
+    "name_ja": "棘の心",
+    "aliases": ["soul rock"],
+    "two_pc_effect": "シールド値+10%",
+    "four_pc_effect": "敵の強靱値減少効果+20%"
+  },
+  {
+    "slug": "freedom-blues",
+    "name_ja": "自由のブルース",
+    "aliases": ["自由ブルース", "freedom blues"],
+    "two_pc_effect": "異常マスタリー+30",
+    "four_pc_effect": "Exスキル時、敵に属性異常蓄積値+20%"
+  },
+  {
+    "slug": "shockstar-disco",
+    "name_ja": "衝撃のスター",
+    "aliases": ["衝撃スター", "shockstar disco"],
+    "two_pc_effect": "衝撃力+6%",
+    "four_pc_effect": "攻撃ヒット時チーム全員の衝撃力+15%"
+  },
+  {
+    "slug": "branch-blade-song",
+    "name_ja": "羊の雨月",
+    "aliases": ["羊雨月", "branch and blade song"],
+    "two_pc_effect": "異常マスタリー+30",
+    "four_pc_effect": "氷属性異常の蓄積時、会心率+10%"
+  },
+  {
+    "slug": "astral-voice",
+    "name_ja": "幻海的瞳",
+    "aliases": ["幻海的の瞳", "astral voice"],
+    "two_pc_effect": "攻撃力+10%",
+    "four_pc_effect": "連携スキル発動時、チーム全員の攻撃力+20%"
+  },
+  {
+    "slug": "phaethon-melody",
+    "name_ja": "交響詩のマッドネス",
+    "aliases": ["phaethon melody"],
+    "two_pc_effect": "エネルギー回復+20%",
+    "four_pc_effect": "援軍攻撃時、チームのダメージ+15%"
+  }
+]

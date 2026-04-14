@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZZZ Disc Manager</title>
+  <link rel="stylesheet" href="static/css/zzz_disc.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <a href="/" class="back-link" title="Botへ戻る">&larr; Bot</a>
+      <h1 class="topbar-title">🎮 ZZZ Disc Manager</h1>
+      <div id="topbar-status" class="topbar-status"></div>
+    </header>
+
+    <div class="layout">
+      <nav class="sidebar">
+        <a href="#/capture" class="nav-item" data-page="capture">
+          <span class="nav-icon">🎯</span><span>解析ワークベンチ</span>
+        </a>
+        <a href="#/discs" class="nav-item" data-page="discs">
+          <span class="nav-icon">💿</span><span>ディスク一覧</span>
+        </a>
+        <a href="#/upload" class="nav-item" data-page="upload">
+          <span class="nav-icon">📤</span><span>アップロード</span>
+        </a>
+        <a href="#/presets" class="nav-item" data-page="presets">
+          <span class="nav-icon">👤</span><span>プリセット</span>
+        </a>
+        <a href="#/conflicts" class="nav-item" data-page="conflicts">
+          <span class="nav-icon">⚠️</span><span>競合ビュー</span>
+        </a>
+      </nav>
+
+      <main id="main-content" class="main-content"></main>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+
+  <script type="module" src="static/js/app.js"></script>
+</body>
+</html>

@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from activity.game_detector import get_activity as get_game_activity, reload_process_map
 from activity.obs_manager import OBSManager, create_obs_manager
 from tools.tool_manager import ToolManager, create_tool_manager
+from tools.zzz_disc import router as zzz_disc_router
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _tool_manager: ToolManager | None = None
@@ -175,6 +176,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Windows Agent", lifespan=lifespan)
+app.include_router(zzz_disc_router, prefix="/tools/zzz-disc")
 
 
 def _verify_token(request: Request):
