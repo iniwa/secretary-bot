@@ -58,7 +58,6 @@ CREATE TABLE IF NOT EXISTS zzz_discs (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_zzz_discs_fingerprint ON zzz_discs(fingerprint) WHERE fingerprint IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS zzz_builds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,7 +118,10 @@ async def _maybe_add_column(db, table: str, column: str, coldef: str) -> None:
 
 
 async def init_schema(db) -> None:
-    """CREATE TABLE IF NOT EXISTS + 既存 DB へのカラム追加。"""
+    """CREATE TABLE IF NOT EXISTS + 既存 DB へのカラム追加 + インデックス。
+
+    インデックス作成は fingerprint 列が確実に存在した後に行う。
+    """
     await db.db.executescript(_SCHEMA_SQL)
     await db.db.commit()
     # 既存環境への追加カラム（fingerprint等は Phase 1 時点では無かった）
@@ -128,6 +130,12 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "fingerprint", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
+    # fingerprint 用 UNIQUE インデックスは列追加後に作成
+    await db.db.executescript(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_zzz_discs_fingerprint "
+        "ON zzz_discs(fingerprint) WHERE fingerprint IS NOT NULL;"
+    )
+    await db.db.commit()
     # 既存ディスクに fingerprint を埋める
     await _backfill_fingerprints(db)
 
