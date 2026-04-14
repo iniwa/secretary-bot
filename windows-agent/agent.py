@@ -224,7 +224,21 @@ async def update(request: Request):
         )
         sub_output = sub_result.stdout.strip()
 
-        return {"success": True, "output": pull_output, "submodule": sub_output}
+        # windows-agent/requirements.txt を pip install（依存追加に追従）
+        pip_output = ""
+        req_path = os.path.join(os.path.dirname(__file__), "requirements.txt")
+        if os.path.exists(req_path):
+            try:
+                pip_result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+                     "-r", req_path],
+                    capture_output=True, text=True, errors="replace", timeout=300,
+                )
+                pip_output = (pip_result.stdout or pip_result.stderr or "").strip()[-500:]
+            except Exception as e:
+                pip_output = f"pip install failed: {e}"
+
+        return {"success": True, "output": pull_output, "submodule": sub_output, "pip": pip_output}
     except Exception as e:
         raise HTTPException(500, f"Update failed: {e}")
 
