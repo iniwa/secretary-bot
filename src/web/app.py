@@ -1362,7 +1362,6 @@ def create_web_app(bot) -> FastAPI:
         im_cfg = bot.config.get("inner_mind", {})
         # DB保存値を優先読み込み
         enabled = await bot.database.get_setting("inner_mind.enabled")
-        prob = await bot.database.get_setting("inner_mind.speak_probability")
         interval = await bot.database.get_setting("inner_mind.min_speak_interval_minutes")
         channel_id = await bot.database.get_setting("inner_mind.speak_channel_id")
         user_id = await bot.database.get_setting("inner_mind.target_user_id")
@@ -1373,7 +1372,6 @@ def create_web_app(bot) -> FastAPI:
             tavily_queries = list(im_cfg.get("tavily_news", {}).get("queries", []) or [])
         return {
             "enabled": (enabled == "true") if enabled is not None else im_cfg.get("enabled", False),
-            "speak_probability": float(prob) if prob is not None else im_cfg.get("speak_probability", 0.20),
             "min_speak_interval_minutes": int(interval) if interval is not None else im_cfg.get("min_speak_interval_minutes", 0),
             "thinking_interval_ticks": im_cfg.get("thinking_interval_ticks", 2),
             "speak_channel_id": channel_id if channel_id is not None else im_cfg.get("speak_channel_id", ""),
@@ -1390,13 +1388,6 @@ def create_web_app(bot) -> FastAPI:
             val = bool(body["enabled"])
             im_cfg["enabled"] = val
             await bot.database.set_setting("inner_mind.enabled", str(val).lower())
-
-        if "speak_probability" in body:
-            val = float(body["speak_probability"])
-            if not 0 <= val <= 1:
-                raise HTTPException(400, "speak_probability must be 0.0-1.0")
-            im_cfg["speak_probability"] = val
-            await bot.database.set_setting("inner_mind.speak_probability", str(val))
 
         if "min_speak_interval_minutes" in body:
             val = int(body["min_speak_interval_minutes"])

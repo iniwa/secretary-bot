@@ -299,6 +299,13 @@ function renderEntry(m) {
       </div>`
     : '';
   const contextBlock = renderContextBlock(m.context_json);
+  const actionBlock = (m.action && m.action !== 'no_op')
+    ? `<div class="mono-action">
+        <span class="badge badge-accent">${esc(m.action)}</span>
+        ${m.reasoning ? `<span class="mono-reasoning">${esc(m.reasoning)}</span>` : ''}
+        ${m.pending_id ? `<span class="badge badge-warning">pending #${m.pending_id}</span>` : ''}
+      </div>`
+    : '';
 
   return `<div class="mono-entry${spokeClass}">
     <div class="mono-card">
@@ -308,6 +315,7 @@ function renderEntry(m) {
         <span class="mono-time" title="${esc(fullDatetime(m.created_at))}">${timeAgo(m.created_at)}</span>
       </div>
       <p class="mono-text">${esc(m.monologue)}</p>
+      ${actionBlock}
       ${notifiedBlock}
       ${contextBlock}
     </div>

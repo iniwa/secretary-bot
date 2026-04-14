@@ -23,10 +23,10 @@ from src.inner_mind.context_sources.tavily_news import TavilyNewsSource
 from src.inner_mind.context_sources.weather import WeatherSource
 from src.inner_mind.discord_activity import DiscordActivityMonitor
 from src.inner_mind.prompts import (
+    DECIDE_PROMPT,
+    DECIDE_SYSTEM,
     EXTRACT_PROMPT,
     EXTRACT_SYSTEM,
-    SPEAK_PROMPT,
-    SPEAK_SYSTEM,
     THINK_PROMPT,
     THINK_SYSTEM,
 )
@@ -42,15 +42,6 @@ THINKING_LENSES = [
     ("curiosity", "好奇心の深掘り — コンテキストの中で気になった1つのことについて少しだけ考えてみて。"),
     ("reflection", "振り返り — 最近の出来事やユーザーとのやりとりを軽く振り返ってみて。"),
     ("rest", "休息モード — 今は静かに待機する時間。「特になし」と書いてOK。無理に考えなくていい。"),
-]
-
-# 発言ヒントのカテゴリ
-SPEAK_HINT_CATEGORIES = [
-    "挨拶・声かけ",
-    "話題へのコメント",
-    "軽い質問",
-    "ねぎらい",
-    "自分の考えの共有",
 ]
 
 # mood → energy_level マッピング
@@ -191,11 +182,29 @@ class InnerMind:
             if not thought:
                 return
 
-            # 保存
-            monologue_id = await self._save_thought(thought, context)
+            # 保存（decision 結果も一緒に記録するため、先に decide する）
+            decision = await self._decide_phase(thought, context)
+            monologue_id = await self._save_thought(thought, context, decision)
 
-            # 発言フェーズ
-            await self._speak_phase(thought, monologue_id, context)
+            # Actuator に決定を委譲
+            if decision and decision.get("action") not in (None, "", "no_op"):
+                try:
+                    dispatch_result = await self.bot.actuator.dispatch(
+                        decision, monologue_id=monologue_id,
+                    )
+                    log.info(
+                        "InnerMind: dispatched action=%s status=%s",
+                        decision.get("action"), dispatch_result.get("status"),
+                    )
+                    # pending 化した場合は pending_id を monologue に記録
+                    pid = dispatch_result.get("pending_id")
+                    if pid:
+                        await self.bot.database.execute(
+                            "UPDATE mimi_monologue SET pending_id = ? WHERE id = ?",
+                            (pid, monologue_id),
+                        )
+                except Exception:
+                    log.error("InnerMind: actuator dispatch failed", exc_info=True)
         except AllLLMsUnavailableError:
             log.warning("InnerMind: LLM unavailable during think cycle")
         except Exception:
@@ -251,33 +260,6 @@ class InnerMind:
         if 20 <= hour < 23:
             return "夜"
         return "深夜"
-
-    # --- 発言ヒント生成 ---
-
-    @staticmethod
-    def _build_speak_hint(recent_speaks: list[dict]) -> str:
-        """直近の発言パターンを分析し、使われていないカテゴリを提案する。"""
-        if not recent_speaks:
-            return "まだ自発発言がないので、自由に話しかけてOK"
-
-        # 直近発言のテキストからカテゴリを簡易推定
-        used_categories: set[str] = set()
-        for s in recent_speaks:
-            msg = s.get("notified_message", "") or ""
-            if any(w in msg for w in ["おはよう", "おつかれ", "おやすみ", "こんにち", "こんばん"]):
-                used_categories.add("挨拶・声かけ")
-            if any(w in msg for w in ["？", "?", "何", "どう"]):
-                used_categories.add("軽い質問")
-            if any(w in msg for w in ["頑張", "お疲れ", "無理しないで", "休憩"]):
-                used_categories.add("ねぎらい")
-            if any(w in msg for w in ["考えてた", "思った", "気になった"]):
-                used_categories.add("自分の考えの共有")
-
-        # 未使用カテゴリを提案
-        unused = [c for c in SPEAK_HINT_CATEGORIES if c not in used_categories]
-        if unused:
-            return f"今回は「{unused[0]}」系の発言を試してみて"
-        return "バリエーションを意識して、最近と違うトーンで"
 
     # --- モノローグのサニタイズ ---
 
@@ -496,8 +478,11 @@ class InnerMind:
 
     # --- 思考保存 ---
 
-    async def _save_thought(self, thought: dict, context: dict | None = None) -> int:
-        """モノローグ・自己モデル・記憶をDBに保存。"""
+    async def _save_thought(
+        self, thought: dict, context: dict | None = None,
+        decision: dict | None = None,
+    ) -> int:
+        """モノローグ・自己モデル・記憶をDBに保存。decision があれば action/reasoning も一緒に。"""
         monologue = thought.get("monologue", "")
         mood = thought.get("mood", "unknown")
 
@@ -513,7 +498,15 @@ class InnerMind:
                 ensure_ascii=False,
             )
 
-        monologue_id = await self.bot.database.save_monologue(monologue, mood, context_json=context_json)
+        action = (decision or {}).get("action") or None
+        reasoning = (decision or {}).get("reasoning") or None
+        params = (decision or {}).get("params")
+        action_params = json.dumps(params, ensure_ascii=False) if params else None
+
+        monologue_id = await self.bot.database.save_monologue(
+            monologue, mood, context_json=context_json,
+            action=action, reasoning=reasoning, action_params=action_params,
+        )
 
         # 自己モデル更新（mood）
         if mood and mood != "unknown":
@@ -554,59 +547,15 @@ class InnerMind:
         )
         return monologue_id
 
-    # --- 発言フェーズ ---
+    # --- 決定フェーズ ---
 
-    async def _speak_phase(self, thought: dict, monologue_id: int, context: dict) -> None:
-        """条件を満たした場合にDiscordに自発発言する。"""
-        if not await self._check_speak_conditions(context):
-            return
+    async def _decide_phase(self, thought: dict, context: dict) -> dict | None:
+        """モノローグ・コンテキストから次の行動を決める。autonomy.mode=off ならスキップ。"""
+        mode = await self.bot.database.get_setting("inner_mind.autonomy.mode")
+        if not mode or mode == "off":
+            return None
 
-        message = await self._generate_message(thought, context)
-        if message:
-            await self._send_to_discord(message, monologue_id)
-
-    async def _check_speak_conditions(self, context: dict) -> bool:
-        """発言条件をチェック: インターバル × オンライン状態 × 確率。"""
-        # 最低発言インターバル
-        min_interval = await self._get_setting_int("min_speak_interval_minutes", 0)
-        if min_interval > 0:
-            last_speak = await self.bot.database.get_monologues(limit=1, did_notify_only=True)
-            if last_speak:
-                last_time = datetime.fromisoformat(last_speak[0]["created_at"])
-                if last_time.tzinfo is None:
-                    last_time = last_time.replace(tzinfo=JST)
-                elapsed = (datetime.now(JST) - last_time).total_seconds() / 60
-                if elapsed < min_interval:
-                    log.debug("InnerMind: speak skipped (interval: %.0f < %d min)", elapsed, min_interval)
-                    return False
-
-        # Discord ステータス
-        status = context.get("discord_status", "online")
-        if status in ("offline", "dnd"):
-            log.debug("InnerMind: speak skipped (user status: %s)", status)
-            return False
-
-        # 確率判定
-        prob = await self._get_setting_float("speak_probability", 0.20)
-        roll = random.random()
-        if roll >= prob:
-            log.debug("InnerMind: speak skipped (probability: %.2f >= %.2f)", roll, prob)
-            return False
-
-        return True
-
-    async def _generate_message(self, thought: dict, context: dict) -> str | None:
-        """LLM呼び出し②: 発言メッセージを生成。"""
         persona = self.bot.config.get("character", {}).get("persona", "")
-
-        # 直近の自発発言を取得（重複防止）
-        recent_speaks = await self.bot.database.get_monologues(limit=5, did_notify_only=True)
-        recent_speaks_section = ""
-        if recent_speaks:
-            lines = ["[最近の自発発言（同じ話題を繰り返さないこと）]"]
-            for s in recent_speaks:
-                lines.append(f"- {s['notified_message']}")
-            recent_speaks_section = "\n".join(lines)
 
         # 直近会話テキスト
         recent_conv = ""
@@ -615,55 +564,84 @@ class InnerMind:
                 recent_conv = sr["text"]
                 break
 
-        # 時間帯コンテキスト
-        time_context = self._get_time_context()
+        # 直近の自律アクション履歴（重複抑制）
+        recent_actions_section = ""
+        try:
+            recent = await self.bot.database.fetchall(
+                "SELECT action, reasoning, notified_message FROM mimi_monologue "
+                "WHERE action IS NOT NULL AND action != 'no_op' "
+                "ORDER BY id DESC LIMIT 5",
+            )
+            if recent:
+                lines = ["[直近の自律アクション（繰り返しを避けること）]"]
+                for r in recent:
+                    act = r.get("action") or ""
+                    msg = r.get("notified_message") or r.get("reasoning") or ""
+                    lines.append(f"- {act}: {msg[:80]}")
+                recent_actions_section = "\n".join(lines)
+        except Exception as e:
+            log.debug("InnerMind: recent actions fetch failed: %s", e)
 
-        # 発言ヒント生成（直近発言のパターン分析に基づく）
-        speak_hint = self._build_speak_hint(recent_speaks)
+        # Tier2/Tier3 許可メニュー
+        tier2_menu = await self._build_tier_menu(2)
+        tier3_menu = await self._build_tier_menu(3)
 
-        system = SPEAK_SYSTEM.format(persona=persona)
-        prompt = SPEAK_PROMPT.format(
+        system = DECIDE_SYSTEM.format(persona=persona)
+        prompt = DECIDE_PROMPT.format(
             monologue=thought.get("monologue", ""),
             mood=thought.get("mood", "unknown"),
             datetime=context["datetime"],
-            time_context=time_context,
+            time_context=self._get_time_context(),
+            discord_status=context.get("discord_status", "unknown"),
             recent_conversation=recent_conv or "（なし）",
-            recent_speaks_section=recent_speaks_section,
-            speak_hint=speak_hint,
+            recent_actions_section=recent_actions_section or "（履歴なし）",
+            tier2_menu=tier2_menu,
+            tier3_menu=tier3_menu,
         )
-
-        raw = await self.bot.llm_router.generate(
-            prompt, system=system, purpose="inner_mind", ollama_only=True,
-        )
-        result = self._parse_speak_response(raw)
-        return result.get("message")
-
-    async def _send_to_discord(self, message: str, monologue_id: int) -> None:
-        """Discord に自発発言を送信し、DBを更新する。"""
-        channel_id = await self._get_setting("speak_channel_id", "")
-        if not channel_id:
-            log.warning("InnerMind: speak_channel_id not configured, skipping send")
-            return
 
         try:
-            channel = self.bot.get_channel(int(channel_id))
-            if not channel:
-                log.warning("InnerMind: channel %s not found", channel_id)
-                return
-
-            await channel.send(message)
-            log.info("InnerMind: sent message to Discord: %s", message[:80])
-
-            # モノローグの発言情報を更新
-            await self.bot.database.update_monologue_notify(monologue_id, message)
-
-            # conversation_log にも記録（次回の会話文脈に含まれるように）
-            await self.bot.database.log_conversation(
-                "discord", "assistant", message,
-                unit="inner_mind",
+            raw = await self.bot.llm_router.generate(
+                prompt, system=system, purpose="inner_mind", ollama_only=True,
             )
         except Exception:
-            log.error("InnerMind: failed to send to Discord", exc_info=True)
+            log.error("InnerMind: decide LLM failed", exc_info=True)
+            return None
+
+        result = self._extract_json(raw)
+        action = result.get("action") or "no_op"
+
+        # action を unit.method に分解
+        unit_name, method = "", ""
+        if "." in action and action not in ("no_op",):
+            unit_name, method = action.split(".", 1)
+
+        decision = {
+            "action": action,
+            "unit": unit_name,
+            "method": method,
+            "params": result.get("params") or {},
+            "reasoning": result.get("reasoning") or "",
+            "summary": result.get("summary") or "",
+        }
+        return decision
+
+    async def _build_tier_menu(self, tier: int) -> str:
+        """Tier2/Tier3 の許可ユニット一覧をプロンプト用文字列に整形。"""
+        allowed_csv = await self.bot.database.get_setting(
+            f"inner_mind.autonomy.t{tier}_allowed_units",
+        )
+        if not allowed_csv:
+            return f"（Tier{tier} の許可アクションなし）"
+        lines = []
+        for key in allowed_csv.split(","):
+            key = key.strip()
+            if not key or "." not in key:
+                continue
+            unit_name, method = key.split(".", 1)
+            cog = self.bot.get_cog(unit_name)
+            desc = getattr(cog, "UNIT_DESCRIPTION", "") if cog else ""
+            lines.append(f"- {key}: {desc[:60]}")
+        return "\n".join(lines) if lines else f"（Tier{tier} の許可アクションなし）"
 
     # --- Discord ステータス取得 ---
 
@@ -684,15 +662,6 @@ class InnerMind:
         return "online"
 
     # --- JSON パース ---
-
-    def _parse_speak_response(self, raw: str) -> dict:
-        """LLM応答からspeak JSONを抽出。"""
-        result = self._extract_json(raw)
-        msg = result.get("message")
-        # "null" 文字列を None に変換
-        if msg == "null" or msg is None:
-            result["message"] = None
-        return result
 
     def _extract_json(self, raw: str) -> dict:
         """段階的にJSONを抽出する。"""

@@ -314,11 +314,6 @@ export function render() {
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Speak Probability</label>
-        <input type="number" id="im-s-speak-prob" class="form-input" min="0" max="1" step="0.05">
-        <div class="form-hint">Chance of speaking after thinking (0.0 - 1.0)</div>
-      </div>
-      <div class="form-group">
         <label class="form-label">Min Speak Interval (min)</label>
         <input type="number" id="im-s-speak-interval" class="form-input" min="0" step="1">
         <div class="form-hint">Minutes between autonomous messages</div>
@@ -430,7 +425,6 @@ async function loadSettings() {
   try {
     const data = await api('/api/inner-mind/settings');
     $('im-s-enabled').checked = !!data.enabled;
-    $('im-s-speak-prob').value = data.speak_probability ?? '';
     $('im-s-speak-interval').value = data.min_speak_interval_minutes ?? '';
     $('im-s-think-ticks').value = data.thinking_interval_ticks ?? '';
     $('im-s-channel').value = data.speak_channel_id || '';
@@ -463,7 +457,6 @@ async function saveSettings() {
       method: 'POST',
       body: {
         enabled: $('im-s-enabled').checked,
-        speak_probability: Number($('im-s-speak-prob').value),
         min_speak_interval_minutes: Number($('im-s-speak-interval').value),
         thinking_interval_ticks: Number($('im-s-think-ticks').value),
         speak_channel_id: $('im-s-channel').value,

@@ -504,11 +504,6 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             short_key = key.removeprefix("inner_mind.")
             if short_key == "enabled":
                 im_cfg[short_key] = value == "true"
-            elif short_key in ("speak_probability",):
-                try:
-                    im_cfg[short_key] = float(value)
-                except ValueError:
-                    im_cfg[short_key] = value
             elif short_key in ("min_speak_interval_minutes",):
                 try:
                     im_cfg[short_key] = int(value)
