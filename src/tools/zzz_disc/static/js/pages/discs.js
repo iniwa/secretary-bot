@@ -1,10 +1,9 @@
-/** ディスク一覧 + フィルタ + ⚠競合マーカー */
+/** ディスク一覧 + フィルタ + 共有マーカー */
 import { api } from '../api.js';
 import { escapeHtml, toast } from '../app.js';
+import { statLabel, formatStatValue } from '../labels.js';
 
-let state = { masters: null, filters: { slot: '', set_id: '' }, discs: [], conflicts: new Set() };
-
-const SLOT_LABEL = { 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6' };
+let state = { sets: [], filters: { slot: '', set_id: '' }, discs: [], shared: new Set() };
 
 export function render() {
   return `
@@ -27,11 +26,11 @@ export function render() {
 
 export async function mount() {
   try {
-    state.masters = await api('/masters');
+    const setsRes = await api('/sets');
+    state.sets = Array.isArray(setsRes) ? setsRes : (setsRes?.sets || []);
     fillSetFilter();
   } catch (err) {
-    toast(`マスタ取得失敗: ${err.message}`, 'error');
-    state.masters = { characters: [], sets: [] };
+    state.sets = [];
   }
   document.getElementById('refresh-btn').addEventListener('click', loadDiscs);
   document.getElementById('filter-slot').addEventListener('change', (e) => {
@@ -42,13 +41,13 @@ export async function mount() {
     state.filters.set_id = e.target.value;
     loadDiscs();
   });
-  await loadConflicts();
+  await loadShared();
   await loadDiscs();
 }
 
 function fillSetFilter() {
   const sel = document.getElementById('filter-set');
-  for (const s of state.masters.sets || []) {
+  for (const s of state.sets) {
     const opt = document.createElement('option');
     opt.value = s.id;
     opt.textContent = s.name_ja;
@@ -56,13 +55,13 @@ function fillSetFilter() {
   }
 }
 
-async function loadConflicts() {
+async function loadShared() {
   try {
-    const data = await api('/conflicts');
-    const ids = data?.shared_disc_ids || data?.conflicts?.flatMap(c => c.disc_ids || []) || [];
-    state.conflicts = new Set(ids);
+    const data = await api('/shared-discs');
+    const items = Array.isArray(data) ? data : (data?.items || data?.shared || []);
+    state.shared = new Set(items.map(x => (x.disc?.id ?? x.id)).filter(x => x != null));
   } catch {
-    state.conflicts = new Set();
+    state.shared = new Set();
   }
 }
 
@@ -79,7 +78,7 @@ async function loadDiscs() {
 }
 
 function setNameById(id) {
-  const s = (state.masters?.sets || []).find(x => x.id === id);
+  const s = state.sets.find(x => x.id === id);
   return s?.name_ja || '-';
 }
 
@@ -115,20 +114,21 @@ function renderTable() {
 }
 
 function rowHtml(d) {
-  const isConflict = state.conflicts.has(d.id);
-  const subs = parseJSON(d.sub_stats_json) || [];
-  const subText = subs.map(s => `${s.name}+${s.value}${s.upgrades ? `(${s.upgrades})` : ''}`).join(' / ');
+  const isShared = state.shared.has(d.id);
+  const subs = parseJSON(d.sub_stats_json) || d.sub_stats || [];
+  const subText = (subs || []).map(s => `${statLabel(s.name)}+${formatStatValue(s.name, s.value)}${s.upgrades ? `(${s.upgrades})` : ''}`).join(' / ');
   const mainText = d.main_stat_name
-    ? `${d.main_stat_name} ${d.main_stat_value ?? ''}`
+    ? `${statLabel(d.main_stat_name)} ${formatStatValue(d.main_stat_name, d.main_stat_value)}`
     : '-';
+  const level = d.level != null ? ` <span class="text-xs text-muted">Lv.${d.level}</span>` : '';
   return `
     <tr>
       <td class="text-muted mono">${d.id}</td>
-      <td>${SLOT_LABEL[d.slot] ?? d.slot}</td>
-      <td>${escapeHtml(d.set_name || setNameById(d.set_id))}</td>
+      <td>${d.slot}</td>
+      <td>${escapeHtml(d.set_name_ja || d.set_name || setNameById(d.set_id))}${level}</td>
       <td>${escapeHtml(mainText)}</td>
       <td class="text-sm text-secondary">${escapeHtml(subText)}</td>
-      <td>${isConflict ? '<span class="conflict-mark" title="複数キャラで候補">⚠</span>' : ''}</td>
+      <td>${isShared ? '<span class="conflict-mark" title="複数ビルドで使用中">⚠</span>' : ''}</td>
       <td><button class="btn btn-sm" data-detail-id="${d.id}">詳細</button></td>
     </tr>
   `;

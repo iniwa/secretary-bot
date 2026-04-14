@@ -1,9 +1,14 @@
-"""ZZZ Disc Manager: SQLite スキーマ管理 + CRUD。
+"""ZZZ Disc Manager: SQLite スキーマ管理 + CRUD（ビルド中心モデル）。
 
-`bot.database` (src/database.py の Database) を経由して操作する。
-テーブルは `zzz_` プレフィックスで疎結合管理（_migrations dict には追加しない）。
+- zzz_characters / zzz_set_masters: マスタ
+- zzz_discs: インベントリ（fingerprint で重複排除）
+- zzz_builds: キャラ別ビルド（is_current=1 が「現在の装備」、0 がプリセット）
+- zzz_build_slots: ビルド × 部位 → disc_id
+- zzz_hoyolab_accounts: HoYoLAB cookie（平文）
+- zzz_extraction_jobs: VLM 抽出キュー
 """
 
+import hashlib
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -24,6 +29,7 @@ CREATE TABLE IF NOT EXISTS zzz_characters (
   faction TEXT,
   icon_url TEXT,
   display_order INTEGER DEFAULT 0,
+  hoyolab_agent_id TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -43,21 +49,51 @@ CREATE TABLE IF NOT EXISTS zzz_discs (
   main_stat_name TEXT NOT NULL,
   main_stat_value REAL NOT NULL,
   sub_stats_json TEXT NOT NULL,
+  level INTEGER DEFAULT 0,
+  rarity TEXT,
+  fingerprint TEXT,
+  hoyolab_disc_id TEXT,
   source_image_path TEXT,
   note TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_zzz_discs_fingerprint ON zzz_discs(fingerprint) WHERE fingerprint IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS zzz_presets (
+CREATE TABLE IF NOT EXISTS zzz_builds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   character_id INTEGER NOT NULL REFERENCES zzz_characters(id),
+  name TEXT NOT NULL,
+  tag TEXT,
+  rank TEXT,
+  notes TEXT,
+  is_current INTEGER NOT NULL DEFAULT 0,
+  stats_json TEXT,
+  synced_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_zzz_builds_char ON zzz_builds(character_id, is_current);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_zzz_builds_current ON zzz_builds(character_id) WHERE is_current = 1;
+
+CREATE TABLE IF NOT EXISTS zzz_build_slots (
+  build_id INTEGER NOT NULL REFERENCES zzz_builds(id) ON DELETE CASCADE,
   slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 6),
-  preferred_set_ids_json TEXT,
-  preferred_main_stats_json TEXT,
-  sub_stat_priority_json TEXT,
-  updated_at TEXT NOT NULL,
-  UNIQUE(character_id, slot)
+  disc_id INTEGER REFERENCES zzz_discs(id),
+  PRIMARY KEY(build_id, slot)
+);
+CREATE INDEX IF NOT EXISTS idx_zzz_build_slots_disc ON zzz_build_slots(disc_id);
+
+CREATE TABLE IF NOT EXISTS zzz_hoyolab_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid TEXT UNIQUE NOT NULL,
+  region TEXT NOT NULL,
+  ltuid_v2 TEXT NOT NULL,
+  ltoken_v2 TEXT NOT NULL,
+  nickname TEXT,
+  last_synced_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS zzz_extraction_jobs (
@@ -75,26 +111,96 @@ CREATE INDEX IF NOT EXISTS idx_zzz_jobs_status ON zzz_extraction_jobs(status, cr
 """
 
 
+async def _maybe_add_column(db, table: str, column: str, coldef: str) -> None:
+    info = await db.fetchall(f"PRAGMA table_info({table})")
+    if column not in {r["name"] for r in info}:
+        await db.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+        await db.db.commit()
+
+
 async def init_schema(db) -> None:
-    """`CREATE TABLE IF NOT EXISTS` で 5 テーブル冪等作成。"""
+    """CREATE TABLE IF NOT EXISTS + 既存 DB へのカラム追加。"""
     await db.db.executescript(_SCHEMA_SQL)
     await db.db.commit()
+    # 既存環境への追加カラム（fingerprint等は Phase 1 時点では無かった）
+    await _maybe_add_column(db, "zzz_discs", "level", "INTEGER DEFAULT 0")
+    await _maybe_add_column(db, "zzz_discs", "rarity", "TEXT")
+    await _maybe_add_column(db, "zzz_discs", "fingerprint", "TEXT")
+    await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
+    await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
+    # 既存ディスクに fingerprint を埋める
+    await _backfill_fingerprints(db)
 
 
-# ---------- マスタ初期投入 ----------
+def compute_fingerprint(slot: int, set_id: int | None,
+                        main_stat_name: str, main_stat_value: float,
+                        sub_stats: list[dict]) -> str:
+    """物理的に同じディスクを識別するための決定論的ハッシュ。
+
+    (slot, set_id, main_stat, 各サブステ{name,value,upgrades}) から計算。
+    sub_stats は name の辞書順に正規化。
+    """
+    subs_norm = sorted(
+        [
+            [s.get("name") or "",
+             round(float(s.get("value", 0) or 0), 3),
+             int(s.get("upgrades", 0) or 0)]
+            for s in (sub_stats or [])
+        ],
+        key=lambda x: x[0],
+    )
+    payload = json.dumps(
+        [slot, set_id, main_stat_name,
+         round(float(main_stat_value or 0), 3), subs_norm],
+        ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+async def _backfill_fingerprints(db) -> None:
+    rows = await db.fetchall(
+        "SELECT id, slot, set_id, main_stat_name, main_stat_value, sub_stats_json "
+        "FROM zzz_discs WHERE fingerprint IS NULL OR fingerprint = ''"
+    )
+    for r in rows:
+        subs = json.loads(r["sub_stats_json"] or "[]")
+        fp = compute_fingerprint(
+            r["slot"], r["set_id"], r["main_stat_name"],
+            r["main_stat_value"], subs,
+        )
+        try:
+            await db.execute(
+                "UPDATE zzz_discs SET fingerprint = ? WHERE id = ?",
+                (fp, r["id"]),
+            )
+        except Exception:
+            # 既存ディスクに重複がある場合は先に見つけたものを残し、後続はスキップ
+            pass
+
+
+# ---------- マスタ ----------
 
 async def upsert_character(db, *, slug: str, name_ja: str,
                            element: str | None = None,
                            faction: str | None = None,
                            icon_url: str | None = None,
-                           display_order: int = 0) -> None:
+                           display_order: int = 0,
+                           hoyolab_agent_id: str | None = None) -> None:
     existing = await db.fetchone("SELECT id FROM zzz_characters WHERE slug = ?", (slug,))
     if existing:
+        if hoyolab_agent_id:
+            await db.execute(
+                "UPDATE zzz_characters SET hoyolab_agent_id = ? WHERE id = ? AND "
+                "(hoyolab_agent_id IS NULL OR hoyolab_agent_id = '')",
+                (hoyolab_agent_id, existing["id"]),
+            )
         return
     await db.execute(
-        "INSERT INTO zzz_characters (slug, name_ja, element, faction, icon_url, display_order, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (slug, name_ja, element, faction, icon_url, display_order, _now()),
+        "INSERT INTO zzz_characters (slug, name_ja, element, faction, icon_url, "
+        "display_order, hoyolab_agent_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (slug, name_ja, element, faction, icon_url, display_order,
+         hoyolab_agent_id, _now()),
     )
 
 
@@ -113,14 +219,70 @@ async def upsert_set_master(db, *, slug: str, name_ja: str,
     )
 
 
+async def find_or_create_set_by_name(db, name_ja: str) -> int:
+    """HoYoLAB 同期時、既知のセット名をそのまま upsert。見つからなければ新規作成。"""
+    row = await db.fetchone("SELECT id FROM zzz_set_masters WHERE name_ja = ?", (name_ja,))
+    if row:
+        return row["id"]
+    # aliases 検索
+    all_rows = await db.fetchall(
+        "SELECT id, aliases_json FROM zzz_set_masters"
+    )
+    for r in all_rows:
+        aliases = json.loads(r["aliases_json"] or "[]")
+        if name_ja in aliases:
+            return r["id"]
+    # 新規作成（slug は name_ja のハッシュベース）
+    slug = "auto-" + hashlib.sha1(name_ja.encode("utf-8")).hexdigest()[:12]
+    cursor = await db.execute(
+        "INSERT INTO zzz_set_masters (slug, name_ja, aliases_json) VALUES (?, ?, ?)",
+        (slug, name_ja, "[]"),
+    )
+    return cursor.lastrowid
+
+
 # ---------- 参照系 ----------
 
 async def list_characters(db) -> list[dict]:
-    rows = await db.fetchall(
-        "SELECT id, slug, name_ja, element, faction, icon_url, display_order "
+    return await db.fetchall(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
         "FROM zzz_characters ORDER BY display_order, id"
     )
-    return rows
+
+
+async def list_characters_with_build_stats(db) -> list[dict]:
+    """キャラ一覧に has_current_build と preset_count を付与して返す。"""
+    chars = await list_characters(db)
+    build_rows = await db.fetchall(
+        "SELECT character_id, is_current FROM zzz_builds"
+    )
+    stats: dict[int, dict] = {}
+    for r in build_rows:
+        cid = r["character_id"]
+        s = stats.setdefault(cid, {"has_current": False, "preset": 0})
+        if r["is_current"]:
+            s["has_current"] = True
+        else:
+            s["preset"] += 1
+    for c in chars:
+        s = stats.get(c["id"], {"has_current": False, "preset": 0})
+        c["has_current_build"] = s["has_current"]
+        c["preset_count"] = s["preset"]
+    return chars
+
+
+async def get_character(db, character_id: int) -> dict | None:
+    return await db.fetchone(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
+        "FROM zzz_characters WHERE id = ?", (character_id,),
+    )
+
+
+async def get_character_by_slug(db, slug: str) -> dict | None:
+    return await db.fetchone(
+        "SELECT id, slug, name_ja, element, faction, icon_url, display_order, hoyolab_agent_id "
+        "FROM zzz_characters WHERE slug = ?", (slug,),
+    )
 
 
 async def list_set_masters(db) -> list[dict]:
@@ -133,7 +295,7 @@ async def list_set_masters(db) -> list[dict]:
     return rows
 
 
-# ---------- Discs CRUD ----------
+# ---------- Discs ----------
 
 def _disc_row_to_dict(row: dict) -> dict:
     return {
@@ -143,10 +305,14 @@ def _disc_row_to_dict(row: dict) -> dict:
         "main_stat_name": row["main_stat_name"],
         "main_stat_value": row["main_stat_value"],
         "sub_stats": json.loads(row["sub_stats_json"] or "[]"),
-        "source_image_path": row["source_image_path"],
-        "note": row["note"],
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
+        "level": row.get("level") or 0,
+        "rarity": row.get("rarity"),
+        "fingerprint": row.get("fingerprint"),
+        "hoyolab_disc_id": row.get("hoyolab_disc_id"),
+        "source_image_path": row.get("source_image_path"),
+        "note": row.get("note"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
     }
 
 
@@ -155,35 +321,67 @@ async def list_discs(db, *, slot: int | None = None,
     conditions = []
     params: list = []
     if slot is not None:
-        conditions.append("slot = ?")
+        conditions.append("d.slot = ?")
         params.append(slot)
     if set_id is not None:
-        conditions.append("set_id = ?")
+        conditions.append("d.set_id = ?")
         params.append(set_id)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = await db.fetchall(
-        f"SELECT * FROM zzz_discs{where} ORDER BY id DESC", tuple(params),
+        f"SELECT d.*, s.name_ja AS set_name_ja, s.slug AS set_slug "
+        f"FROM zzz_discs d LEFT JOIN zzz_set_masters s ON s.id = d.set_id"
+        f"{where} ORDER BY d.id DESC", tuple(params),
     )
-    return [_disc_row_to_dict(r) for r in rows]
+    result = []
+    for r in rows:
+        out = _disc_row_to_dict(r)
+        out["set_name_ja"] = r.get("set_name_ja")
+        out["set_slug"] = r.get("set_slug")
+        result.append(out)
+    return result
 
 
 async def get_disc(db, disc_id: int) -> dict | None:
-    row = await db.fetchone("SELECT * FROM zzz_discs WHERE id = ?", (disc_id,))
+    row = await db.fetchone(
+        "SELECT d.*, s.name_ja AS set_name_ja, s.slug AS set_slug "
+        "FROM zzz_discs d LEFT JOIN zzz_set_masters s ON s.id = d.set_id "
+        "WHERE d.id = ?", (disc_id,),
+    )
+    if not row:
+        return None
+    out = _disc_row_to_dict(row)
+    out["set_name_ja"] = row.get("set_name_ja")
+    out["set_slug"] = row.get("set_slug")
+    return out
+
+
+async def get_disc_by_fingerprint(db, fingerprint: str) -> dict | None:
+    row = await db.fetchone("SELECT * FROM zzz_discs WHERE fingerprint = ?", (fingerprint,))
     return _disc_row_to_dict(row) if row else None
 
 
 async def insert_disc(db, *, slot: int, set_id: int | None,
                       main_stat_name: str, main_stat_value: float,
                       sub_stats: list[dict],
+                      level: int = 0,
+                      rarity: str | None = None,
+                      hoyolab_disc_id: str | None = None,
                       source_image_path: str | None = None,
                       note: str | None = None) -> int:
+    """fingerprint で既存検索して重複排除。既存があれば既存 id を返す。"""
+    fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
+    existing = await db.fetchone("SELECT id FROM zzz_discs WHERE fingerprint = ?", (fp,))
+    if existing:
+        return existing["id"]
     now = _now()
     cursor = await db.execute(
         "INSERT INTO zzz_discs (slot, set_id, main_stat_name, main_stat_value, "
-        "sub_stats_json, source_image_path, note, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "sub_stats_json, level, rarity, fingerprint, hoyolab_disc_id, "
+        "source_image_path, note, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (slot, set_id, main_stat_name, main_stat_value,
          json.dumps(sub_stats, ensure_ascii=False),
+         level, rarity, fp, hoyolab_disc_id,
          source_image_path, note, now, now),
     )
     return cursor.lastrowid
@@ -192,14 +390,25 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
 async def update_disc(db, disc_id: int, *, slot: int, set_id: int | None,
                       main_stat_name: str, main_stat_value: float,
                       sub_stats: list[dict],
+                      level: int | None = None,
+                      rarity: str | None = None,
                       source_image_path: str | None = None,
                       note: str | None = None) -> int:
+    fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
+    # 既存の他 disc と fingerprint が衝突するなら UPDATE 拒否（CRUD 側で責任）
+    clash = await db.fetchone(
+        "SELECT id FROM zzz_discs WHERE fingerprint = ? AND id != ?", (fp, disc_id)
+    )
+    if clash:
+        return -1  # caller 側で別ハンドリング（Phase 1 互換の簡易戻り値）
     return await db.execute_returning_rowcount(
         "UPDATE zzz_discs SET slot = ?, set_id = ?, main_stat_name = ?, "
-        "main_stat_value = ?, sub_stats_json = ?, source_image_path = ?, "
-        "note = ?, updated_at = ? WHERE id = ?",
+        "main_stat_value = ?, sub_stats_json = ?, level = COALESCE(?, level), "
+        "rarity = COALESCE(?, rarity), fingerprint = ?, "
+        "source_image_path = ?, note = ?, updated_at = ? WHERE id = ?",
         (slot, set_id, main_stat_name, main_stat_value,
          json.dumps(sub_stats, ensure_ascii=False),
+         level, rarity, fp,
          source_image_path, note, _now(), disc_id),
     )
 
@@ -210,59 +419,243 @@ async def delete_disc(db, disc_id: int) -> int:
     )
 
 
-# ---------- Presets ----------
+async def list_builds_using_disc(db, disc_id: int) -> list[dict]:
+    rows = await db.fetchall(
+        "SELECT b.id as build_id, b.name, b.is_current, b.character_id, "
+        "c.slug as character_slug, c.name_ja as character_name_ja, bs.slot "
+        "FROM zzz_build_slots bs "
+        "JOIN zzz_builds b ON b.id = bs.build_id "
+        "JOIN zzz_characters c ON c.id = b.character_id "
+        "WHERE bs.disc_id = ? ORDER BY b.is_current DESC, b.id",
+        (disc_id,),
+    )
+    return rows
 
-def _preset_row_to_dict(row: dict) -> dict:
+
+# ---------- Builds ----------
+
+def _build_row_to_dict(row: dict) -> dict:
     return {
+        "id": row["id"],
         "character_id": row["character_id"],
-        "slot": row["slot"],
-        "preferred_set_ids": json.loads(row["preferred_set_ids_json"] or "[]"),
-        "preferred_main_stats": json.loads(row["preferred_main_stats_json"] or "[]"),
-        "sub_stat_priority": json.loads(row["sub_stat_priority_json"] or "[]"),
+        "name": row["name"],
+        "tag": row.get("tag"),
+        "rank": row.get("rank"),
+        "notes": row.get("notes"),
+        "is_current": bool(row["is_current"]),
+        "stats": json.loads(row["stats_json"]) if row.get("stats_json") else {},
+        "synced_at": row.get("synced_at"),
+        "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
 
 
-async def list_presets_for_character(db, character_id: int) -> list[dict]:
+async def list_builds_for_character(db, character_id: int) -> list[dict]:
     rows = await db.fetchall(
-        "SELECT character_id, slot, preferred_set_ids_json, "
-        "preferred_main_stats_json, sub_stat_priority_json, updated_at "
-        "FROM zzz_presets WHERE character_id = ? ORDER BY slot",
+        "SELECT * FROM zzz_builds WHERE character_id = ? "
+        "ORDER BY is_current DESC, id DESC",
         (character_id,),
     )
-    return [_preset_row_to_dict(r) for r in rows]
+    return [_build_row_to_dict(r) for r in rows]
 
 
-async def list_all_presets(db) -> list[dict]:
+async def list_all_builds(db) -> list[dict]:
     rows = await db.fetchall(
-        "SELECT character_id, slot, preferred_set_ids_json, "
-        "preferred_main_stats_json, sub_stat_priority_json, updated_at "
-        "FROM zzz_presets ORDER BY character_id, slot"
+        "SELECT * FROM zzz_builds ORDER BY character_id, is_current DESC, id"
     )
-    return [_preset_row_to_dict(r) for r in rows]
+    return [_build_row_to_dict(r) for r in rows]
 
 
-async def upsert_preset(db, *, character_id: int, slot: int,
-                        preferred_set_ids: list[int],
-                        preferred_main_stats: list[str],
-                        sub_stat_priority: list[dict]) -> None:
+async def get_build(db, build_id: int) -> dict | None:
+    row = await db.fetchone("SELECT * FROM zzz_builds WHERE id = ?", (build_id,))
+    return _build_row_to_dict(row) if row else None
+
+
+async def get_current_build(db, character_id: int) -> dict | None:
+    row = await db.fetchone(
+        "SELECT * FROM zzz_builds WHERE character_id = ? AND is_current = 1",
+        (character_id,),
+    )
+    return _build_row_to_dict(row) if row else None
+
+
+async def get_build_slots(db, build_id: int) -> list[dict]:
+    """build_id のスロット 1..6 を全部返す（disc 情報も join）。"""
+    rows = await db.fetchall(
+        "SELECT bs.slot, bs.disc_id, d.* "
+        "FROM zzz_build_slots bs LEFT JOIN zzz_discs d ON d.id = bs.disc_id "
+        "WHERE bs.build_id = ? ORDER BY bs.slot",
+        (build_id,),
+    )
+    result = []
+    for r in rows:
+        disc = _disc_row_to_dict(r) if r.get("disc_id") else None
+        result.append({"slot": r["slot"], "disc_id": r.get("disc_id"), "disc": disc})
+    return result
+
+
+async def upsert_current_build(db, *, character_id: int,
+                               name: str = "現在の装備",
+                               stats: dict | None = None,
+                               synced_at: str | None = None) -> int:
+    """character_id の is_current=1 ビルドを更新（なければ作成）。"""
     now = _now()
+    synced_at = synced_at or now
+    existing = await db.fetchone(
+        "SELECT id FROM zzz_builds WHERE character_id = ? AND is_current = 1",
+        (character_id,),
+    )
+    if existing:
+        await db.execute(
+            "UPDATE zzz_builds SET name = ?, stats_json = ?, synced_at = ?, "
+            "updated_at = ? WHERE id = ?",
+            (name, json.dumps(stats or {}, ensure_ascii=False), synced_at,
+             now, existing["id"]),
+        )
+        return existing["id"]
+    cursor = await db.execute(
+        "INSERT INTO zzz_builds (character_id, name, is_current, stats_json, "
+        "synced_at, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?)",
+        (character_id, name, json.dumps(stats or {}, ensure_ascii=False),
+         synced_at, now, now),
+    )
+    return cursor.lastrowid
+
+
+async def clear_build_slots(db, build_id: int) -> None:
+    await db.execute("DELETE FROM zzz_build_slots WHERE build_id = ?", (build_id,))
+
+
+async def set_build_slot(db, build_id: int, slot: int, disc_id: int | None) -> None:
     await db.execute(
-        "INSERT INTO zzz_presets (character_id, slot, preferred_set_ids_json, "
-        "preferred_main_stats_json, sub_stat_priority_json, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(character_id, slot) DO UPDATE SET "
-        "preferred_set_ids_json = excluded.preferred_set_ids_json, "
-        "preferred_main_stats_json = excluded.preferred_main_stats_json, "
-        "sub_stat_priority_json = excluded.sub_stat_priority_json, "
-        "updated_at = excluded.updated_at",
-        (character_id, slot,
-         json.dumps(preferred_set_ids), json.dumps(preferred_main_stats, ensure_ascii=False),
-         json.dumps(sub_stat_priority, ensure_ascii=False), now),
+        "INSERT INTO zzz_build_slots (build_id, slot, disc_id) VALUES (?, ?, ?) "
+        "ON CONFLICT(build_id, slot) DO UPDATE SET disc_id = excluded.disc_id",
+        (build_id, slot, disc_id),
     )
 
 
-# ---------- Jobs ----------
+async def copy_build_as_preset(db, source_build_id: int, *,
+                               name: str, tag: str | None = None,
+                               rank: str | None = None,
+                               notes: str | None = None) -> int:
+    """既存ビルド（主に is_current）をプリセット複製。slot 配列も複製。"""
+    src = await get_build(db, source_build_id)
+    if not src:
+        raise ValueError("source build not found")
+    now = _now()
+    cursor = await db.execute(
+        "INSERT INTO zzz_builds (character_id, name, tag, rank, notes, is_current, "
+        "stats_json, synced_at, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+        (src["character_id"], name, tag, rank, notes,
+         json.dumps(src.get("stats") or {}, ensure_ascii=False),
+         src.get("synced_at"), now, now),
+    )
+    new_id = cursor.lastrowid
+    slots = await get_build_slots(db, source_build_id)
+    for s in slots:
+        if s["disc_id"]:
+            await set_build_slot(db, new_id, s["slot"], s["disc_id"])
+    return new_id
+
+
+async def update_build_meta(db, build_id: int, *,
+                            name: str | None = None,
+                            tag: str | None = None,
+                            rank: str | None = None,
+                            notes: str | None = None) -> int:
+    fields = []
+    params: list = []
+    if name is not None:
+        fields.append("name = ?"); params.append(name)
+    if tag is not None:
+        fields.append("tag = ?"); params.append(tag)
+    if rank is not None:
+        fields.append("rank = ?"); params.append(rank)
+    if notes is not None:
+        fields.append("notes = ?"); params.append(notes)
+    if not fields:
+        return 0
+    fields.append("updated_at = ?"); params.append(_now())
+    params.append(build_id)
+    return await db.execute_returning_rowcount(
+        f"UPDATE zzz_builds SET {', '.join(fields)} WHERE id = ?",
+        tuple(params),
+    )
+
+
+async def delete_build(db, build_id: int) -> int:
+    # is_current は削除しない（sync で再生成されるべき）
+    row = await db.fetchone("SELECT is_current FROM zzz_builds WHERE id = ?", (build_id,))
+    if not row:
+        return 0
+    if row["is_current"]:
+        raise ValueError("current build cannot be deleted")
+    await db.execute("DELETE FROM zzz_build_slots WHERE build_id = ?", (build_id,))
+    return await db.execute_returning_rowcount(
+        "DELETE FROM zzz_builds WHERE id = ?", (build_id,),
+    )
+
+
+async def find_shared_discs(db) -> list[dict]:
+    """複数ビルドで使われている disc を返す。"""
+    rows = await db.fetchall(
+        "SELECT bs.disc_id, COUNT(DISTINCT bs.build_id) AS usage_count "
+        "FROM zzz_build_slots bs WHERE bs.disc_id IS NOT NULL "
+        "GROUP BY bs.disc_id HAVING usage_count >= 2"
+    )
+    result = []
+    for r in rows:
+        disc = await get_disc(db, r["disc_id"])
+        builds = await list_builds_using_disc(db, r["disc_id"])
+        result.append({
+            "disc": disc,
+            "usage_count": r["usage_count"],
+            "used_by": builds,
+        })
+    return result
+
+
+# ---------- HoYoLAB アカウント ----------
+
+async def get_hoyolab_account(db) -> dict | None:
+    """単一アカウント想定（自宅 Pi 用途）。"""
+    row = await db.fetchone(
+        "SELECT id, uid, region, ltuid_v2, ltoken_v2, nickname, last_synced_at "
+        "FROM zzz_hoyolab_accounts ORDER BY id LIMIT 1"
+    )
+    return dict(row) if row else None
+
+
+async def upsert_hoyolab_account(db, *, uid: str, region: str,
+                                 ltuid_v2: str, ltoken_v2: str,
+                                 nickname: str | None = None) -> None:
+    now = _now()
+    existing = await db.fetchone(
+        "SELECT id FROM zzz_hoyolab_accounts WHERE uid = ?", (uid,)
+    )
+    if existing:
+        await db.execute(
+            "UPDATE zzz_hoyolab_accounts SET region = ?, ltuid_v2 = ?, ltoken_v2 = ?, "
+            "nickname = COALESCE(?, nickname), updated_at = ? WHERE id = ?",
+            (region, ltuid_v2, ltoken_v2, nickname, now, existing["id"]),
+        )
+        return
+    await db.execute(
+        "INSERT INTO zzz_hoyolab_accounts (uid, region, ltuid_v2, ltoken_v2, "
+        "nickname, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (uid, region, ltuid_v2, ltoken_v2, nickname, now, now),
+    )
+
+
+async def update_hoyolab_synced(db, uid: str) -> None:
+    await db.execute(
+        "UPDATE zzz_hoyolab_accounts SET last_synced_at = ? WHERE uid = ?",
+        (_now(), uid),
+    )
+
+
+# ---------- Jobs（既存維持） ----------
 
 def _job_row_to_dict(row: dict) -> dict:
     return {
@@ -318,22 +711,16 @@ async def update_job(db, job_id: int, *, status: str | None = None,
     fields = []
     params: list = []
     if status is not None:
-        fields.append("status = ?")
-        params.append(status)
+        fields.append("status = ?"); params.append(status)
     if image_path is not None:
-        fields.append("image_path = ?")
-        params.append(image_path)
+        fields.append("image_path = ?"); params.append(image_path)
     if extracted_json is not None:
-        fields.append("extracted_json = ?")
-        params.append(json.dumps(extracted_json, ensure_ascii=False))
+        fields.append("extracted_json = ?"); params.append(json.dumps(extracted_json, ensure_ascii=False))
     if normalized_json is not None:
-        fields.append("normalized_json = ?")
-        params.append(json.dumps(normalized_json, ensure_ascii=False))
+        fields.append("normalized_json = ?"); params.append(json.dumps(normalized_json, ensure_ascii=False))
     if error_message is not None:
-        fields.append("error_message = ?")
-        params.append(error_message)
-    fields.append("updated_at = ?")
-    params.append(_now())
+        fields.append("error_message = ?"); params.append(error_message)
+    fields.append("updated_at = ?"); params.append(_now())
     params.append(job_id)
     return await db.execute_returning_rowcount(
         f"UPDATE zzz_extraction_jobs SET {', '.join(fields)} WHERE id = ?",
@@ -348,7 +735,6 @@ async def delete_job(db, job_id: int) -> int:
 
 
 async def list_jobs_to_resume(db) -> list[dict]:
-    """起動時復元: 未完了ジョブをキューに積み直す。"""
     rows = await db.fetchall(
         "SELECT * FROM zzz_extraction_jobs "
         "WHERE status IN ('queued', 'capturing', 'extracting') ORDER BY id"
@@ -357,7 +743,6 @@ async def list_jobs_to_resume(db) -> list[dict]:
 
 
 async def prune_finished_jobs(db, retention: int = 200) -> int:
-    """saved/failed のうち古いものを削除。"""
     rows = await db.fetchall(
         "SELECT id FROM zzz_extraction_jobs WHERE status IN ('saved', 'failed') "
         "ORDER BY id DESC"

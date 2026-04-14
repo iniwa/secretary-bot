@@ -52,9 +52,16 @@ export function render() {
 }
 
 export async function mount() {
-  // master data
+  // master data（新APIに合わせて分割呼び出し）
   try {
-    state.masters = await api('/masters');
+    const [sets, chars] = await Promise.all([
+      api('/sets').catch(() => []),
+      api('/characters').catch(() => []),
+    ]);
+    state.masters = {
+      sets: Array.isArray(sets) ? sets : (sets?.sets || []),
+      characters: Array.isArray(chars) ? chars : (chars?.characters || []),
+    };
   } catch (err) {
     toast('マスタ取得に失敗しました', 'error');
     state.masters = { characters: [], sets: [] };

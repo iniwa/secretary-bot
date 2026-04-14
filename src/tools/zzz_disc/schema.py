@@ -1,8 +1,10 @@
-"""ZZZ Disc Manager: リクエスト/レスポンスDTO（Pydantic）。"""
+"""ZZZ Disc Manager: リクエスト/レスポンスDTO（Pydantic）。ビルド中心モデル。"""
 
 from pydantic import BaseModel, Field
 from typing import Any
 
+
+# ---------- Discs ----------
 
 class SubStat(BaseModel):
     name: str
@@ -16,6 +18,9 @@ class DiscIn(BaseModel):
     main_stat_name: str
     main_stat_value: float
     sub_stats: list[SubStat] = Field(default_factory=list)
+    level: int = 0
+    rarity: str | None = None
+    hoyolab_disc_id: str | None = None
     source_image_path: str | None = None
     note: str | None = None
 
@@ -27,26 +32,17 @@ class DiscOut(BaseModel):
     main_stat_name: str
     main_stat_value: float
     sub_stats: list[dict]
-    source_image_path: str | None
-    note: str | None
-    created_at: str
-    updated_at: str
+    level: int = 0
+    rarity: str | None = None
+    fingerprint: str | None = None
+    hoyolab_disc_id: str | None = None
+    source_image_path: str | None = None
+    note: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
-class PresetIn(BaseModel):
-    preferred_set_ids: list[int] = Field(default_factory=list)
-    preferred_main_stats: list[str] = Field(default_factory=list)
-    sub_stat_priority: list[dict] = Field(default_factory=list)  # [{name, weight}]
-
-
-class PresetOut(BaseModel):
-    character_id: int
-    slot: int
-    preferred_set_ids: list[int]
-    preferred_main_stats: list[str]
-    sub_stat_priority: list[dict]
-    updated_at: str
-
+# ---------- Masters ----------
 
 class CharacterOut(BaseModel):
     id: int
@@ -56,6 +52,7 @@ class CharacterOut(BaseModel):
     faction: str | None = None
     icon_url: str | None = None
     display_order: int = 0
+    hoyolab_agent_id: str | None = None
 
 
 class SetMasterOut(BaseModel):
@@ -72,22 +69,101 @@ class MastersResponse(BaseModel):
     sets: list[SetMasterOut]
 
 
-class CandidateOut(BaseModel):
+# ---------- Builds ----------
+
+class BuildSlotOut(BaseModel):
+    slot: int
+    disc_id: int | None = None
+    disc: DiscOut | None = None
+
+
+class BuildOut(BaseModel):
+    id: int
+    character_id: int
+    name: str
+    tag: str | None = None
+    rank: str | None = None
+    notes: str | None = None
+    is_current: bool
+    stats: dict = Field(default_factory=dict)
+    synced_at: str | None = None
+    created_at: str
+    updated_at: str
+    slots: list[BuildSlotOut] = Field(default_factory=list)
+
+
+class BuildMetaIn(BaseModel):
+    """プリセットのメタ情報更新。"""
+    name: str | None = None
+    tag: str | None = None
+    rank: str | None = None
+    notes: str | None = None
+
+
+class BuildSavePresetIn(BaseModel):
+    """現在の装備をプリセットとして保存するリクエスト。"""
+    name: str
+    tag: str | None = None
+    rank: str | None = None
+    notes: str | None = None
+
+
+class BuildSlotAssignIn(BaseModel):
+    """ビルドの特定スロットに disc を割り当て。"""
+    disc_id: int | None = None
+
+
+# ---------- Shared discs ----------
+
+class SharedDiscBuildRef(BaseModel):
+    build_id: int
+    name: str
+    is_current: bool
     character_id: int
     character_slug: str
     character_name_ja: str
     slot: int
-    score: float
 
+
+class SharedDiscOut(BaseModel):
+    disc: DiscOut
+    usage_count: int
+    used_by: list[SharedDiscBuildRef]
+
+
+# ---------- HoYoLAB ----------
+
+class HoyolabAccountIn(BaseModel):
+    uid: str
+    region: str  # "prod_gf_jp" / "prod_gf_us" / etc
+    ltuid_v2: str
+    ltoken_v2: str
+    nickname: str | None = None
+
+
+class HoyolabAccountOut(BaseModel):
+    uid: str
+    region: str
+    nickname: str | None = None
+    last_synced_at: str | None = None
+
+
+class HoyolabSyncResult(BaseModel):
+    synced_characters: int
+    synced_discs: int
+    errors: list[str] = Field(default_factory=list)
+
+
+# ---------- Jobs ----------
 
 class JobOut(BaseModel):
     id: int
     status: str
     source: str
-    image_path: str | None
-    extracted_json: Any | None
-    normalized_json: Any | None
-    error_message: str | None
+    image_path: str | None = None
+    extracted_json: Any | None = None
+    normalized_json: Any | None = None
+    error_message: str | None = None
     created_at: str
     updated_at: str
 
@@ -98,5 +174,4 @@ class JobConfirmIn(BaseModel):
 
 
 class JobCaptureIn(BaseModel):
-    """「今の画面を解析」ボタンからのリクエスト。"""
-    source: str = "capture-mss"  # "capture-mss" | "capture-obs"
+    source: str = "capture-mss"

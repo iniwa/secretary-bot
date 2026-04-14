@@ -1,18 +1,19 @@
-/** ディスク詳細 + 合うキャラスコア降順 */
+/** ディスク詳細 + このディスクを使っているビルド一覧 */
 import { api } from '../api.js';
 import { escapeHtml, toast, confirmDialog } from '../app.js';
+import { statLabel, formatStatValue } from '../labels.js';
 
 export function render(params) {
   return `
     <div class="page-header">
       <a href="#/discs" class="btn btn-sm btn-ghost">← 一覧</a>
-      <h2>ディスク詳細 #${escapeHtml(params.id)}</h2>
+      <h2>ディスク #${escapeHtml(params.id)}</h2>
       <button class="btn btn-sm btn-danger" id="delete-btn">削除</button>
     </div>
     <div id="disc-info" class="card"><div class="spinner"></div></div>
     <div class="card">
-      <h3 class="mb-1">🎯 合うキャラ（スコア降順）</h3>
-      <div id="candidates"></div>
+      <h3 class="mb-1">使用ビルド</h3>
+      <div id="used-by"></div>
     </div>
   `;
 }
@@ -27,46 +28,65 @@ export async function mount(params) {
     document.getElementById('disc-info').innerHTML = `<div class="text-muted">${escapeHtml(err.message)}</div>`;
   }
   try {
-    const cands = await api(`/discs/${id}/candidates`);
-    renderCandidates(Array.isArray(cands) ? cands : (cands?.candidates || []));
+    const res = await api(`/discs/${id}/builds`);
+    const builds = Array.isArray(res) ? res : (res?.builds || res?.used_by || []);
+    renderUsedBy(builds);
   } catch (err) {
-    document.getElementById('candidates').innerHTML = `<div class="text-muted">${escapeHtml(err.message)}</div>`;
+    document.getElementById('used-by').innerHTML = `<div class="text-muted text-sm">${escapeHtml(err.message)}</div>`;
   }
 }
 
 function renderDisc(d) {
   const el = document.getElementById('disc-info');
-  const subs = parseJSON(d.sub_stats_json) || [];
+  const subs = parseJSON(d.sub_stats_json) || d.sub_stats || [];
+  const setName = d.set_name_ja || d.set_name || '-';
+  const level = d.level != null ? `Lv.${d.level}` : '';
   el.innerHTML = `
     <div class="form-grid">
       <label>部位</label><div>${d.slot}</div>
-      <label>セット</label><div>${escapeHtml(d.set_name || '-')}</div>
-      <label>メインステ</label><div>${escapeHtml(d.main_stat_name || '')} ${d.main_stat_value ?? ''}</div>
+      <label>セット</label><div>${escapeHtml(setName)} ${level ? `<span class="disc-tile-level">${escapeHtml(level)}</span>` : ''}</div>
+      <label>メインステ</label><div>${escapeHtml(statLabel(d.main_stat_name))} <strong>${escapeHtml(formatStatValue(d.main_stat_name, d.main_stat_value))}</strong></div>
       <label>サブステ</label>
-      <div>
-        ${subs.map(s => `<div>${escapeHtml(s.name)} +${s.value} ${s.upgrades ? `<span class="text-muted text-xs">(強化${s.upgrades})</span>` : ''}</div>`).join('') || '<span class="text-muted">—</span>'}
+      <div class="disc-subs">
+        ${(subs || []).map(s => `
+          <div class="disc-sub-row">
+            <span class="sub-name">${escapeHtml(statLabel(s.name))}</span>
+            ${Number(s.upgrades || 0) > 0 ? `<span class="sub-dots">${'<span class="dot"></span>'.repeat(Number(s.upgrades))}</span>` : ''}
+            <span class="sub-value">${escapeHtml(formatStatValue(s.name, s.value))}</span>
+          </div>
+        `).join('') || '<span class="text-muted">—</span>'}
       </div>
       <label>メモ</label><div>${escapeHtml(d.note || '') || '<span class="text-muted">—</span>'}</div>
+      ${d.fingerprint ? `<label>fingerprint</label><div class="mono text-xs text-muted">${escapeHtml(d.fingerprint)}</div>` : ''}
     </div>
   `;
 }
 
-function renderCandidates(cands) {
-  const el = document.getElementById('candidates');
-  if (!cands.length) {
-    el.innerHTML = '<div class="text-muted">候補なし（プリセット未設定 or 閾値未満）</div>';
+function renderUsedBy(builds) {
+  const el = document.getElementById('used-by');
+  if (!builds.length) {
+    el.innerHTML = '<div class="text-muted text-sm">このディスクはまだどのビルドでも使われていません</div>';
     return;
   }
   el.innerHTML = `
     <table class="data-table">
       <thead>
-        <tr><th>キャラ</th><th style="width:120px;">スコア</th></tr>
+        <tr>
+          <th>キャラ</th>
+          <th>ビルド</th>
+          <th style="width:80px;"></th>
+        </tr>
       </thead>
       <tbody>
-        ${cands.map(c => `
+        ${builds.map(b => `
           <tr>
-            <td>${escapeHtml(c.character_name || c.name_ja || c.slug || '-')}</td>
-            <td class="mono">${(c.score ?? 0).toFixed(2)}</td>
+            <td>${escapeHtml(b.character_name_ja || b.slug || '-')}</td>
+            <td>
+              ${escapeHtml(b.name || '無名')}
+              ${b.is_current ? '<span class="build-current-badge" style="margin-left:6px;">現在</span>' : ''}
+              ${b.rank ? `<span class="rank-badge rank-${escapeHtml(b.rank)}" style="margin-left:6px;">${escapeHtml(b.rank)}</span>` : ''}
+            </td>
+            <td>${b.character_slug ? `<a href="#/characters/${escapeHtml(b.character_slug)}" class="btn btn-sm">開く</a>` : ''}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -75,7 +95,7 @@ function renderCandidates(cands) {
 }
 
 async function deleteDisc(id) {
-  const ok = await confirmDialog(`ディスク #${id} を削除します。よろしいですか？`);
+  const ok = await confirmDialog(`ディスク #${id} を削除します。よろしいですか？\n（使用中のビルドからも外れます）`);
   if (!ok) return;
   try {
     await api(`/discs/${id}`, { method: 'DELETE' });

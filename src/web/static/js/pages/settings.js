@@ -13,6 +13,118 @@ function setVal(id, v) { const el = $(id); if (el) el.value = (v ?? ''); }
 function setNum(id, v) { const el = $(id); if (el) el.value = (v ?? ''); }
 function setBool(id, v) { const el = $(id); if (el) el.checked = !!v; }
 
+// 各入力IDに対する説明文（?アイコンのツールチップに表示）
+const TOOLTIPS = {
+  // 1. LLM & モデル
+  's-ollama-model': 'Ollamaで使用するモデル名。Pi上にpull済みのものから選択。',
+  's-ollama-timeout': 'Ollama API呼び出しのタイムアウト（秒）。超過で Gemini フォールバックに切替。',
+  's-ollama-url': 'Ollama APIのベースURL（例: http://192.168.1.210:11434）。',
+  's-gemini-model': 'Ollama失敗時のフォールバック用 Gemini モデル名（例: gemini-2.5-flash）。',
+
+  // 2. Gemini
+  's-gemini-conversation': '通常会話で Ollama が落ちた時に Gemini を使う。課金対象。',
+  's-gemini-memory': '記憶抽出のフォールバックに Gemini を使う。OFF推奨（Ollama専用運用）。',
+  's-gemini-routing': 'Skill Router（ユニット振り分け）で Gemini を使う。',
+  's-gemini-token-limit': 'Geminiの月間トークン上限。0=無制限。超過時は Gemini 利用を自動停止。',
+
+  // 3. Heartbeat
+  's-hb-with': 'Ollamaが利用可能な時のハートビート間隔（分）。',
+  's-hb-without': 'Ollamaが落ちている時のハートビート間隔（分）。省エネのため広めに設定。',
+  's-hb-compact': '会話履歴がこの件数を超えたら自動圧縮（要約化）する。',
+
+  // 4. InnerMind 基本
+  's-im-enabled': '自律思考（独り言生成）機能全体のON/OFF。',
+  's-im-ticks': '何ハートビートごとに思考を走らせるか。大きいほど頻度低。',
+  's-im-min-speak': '発言の最小間隔（分）。連続発言を防ぐ。',
+  's-im-active': 'このN分以内にユーザー活動があれば "active" 扱いとする閾値。',
+  's-im-channel': '自発発言を送信する Discord チャンネル ID。',
+  's-im-user': '対象ユーザーの Discord ID。アクティビティ判定などで使用。',
+
+  // 5. InnerMind 自律アクション
+  's-auto-mode': '自律モード。off=無効 / observe_only=T0のみ / proposal=T0+T1と承認経由のT2/T3 / full=T4以外自動。',
+  's-auto-timeout': '承認依頼のタイムアウト（分）。超過で自動キャンセル。',
+  's-auto-t2-limit': 'T2アクション（ユーザー補助系）の日次上限。0=無制限。',
+  's-auto-t3-limit': 'T3アクション（外部書込系）の日次上限。0=無制限。',
+  's-auto-concurrent': '承認待ちが重なった時の挙動。single=1件のみ / queue=順次 / prefer_new=新規優先。',
+  's-auto-show-reasoning': '承認依頼メッセージに LLM の判断理由を含める。',
+  's-auto-notify': '承認待ちアクション発生時に Discord へ通知を送る。',
+
+  // 6. InnerMind 外部情報
+  's-gh-user': '監視対象の GitHub ユーザー名。',
+  's-gh-hours': 'GitHub活動を何時間遡って取得するか。',
+  's-gh-max': '1回の取得で扱うイベントの最大件数。',
+  's-tav-queries': 'ニュース検索するキーワード（カンマ区切り）。',
+  's-tav-max': 'クエリごとの結果件数上限。',
+  's-tav-days': '何日前までの記事を対象にするか。',
+  's-tav-topic': 'Tavily検索のトピック（news / general など）。',
+
+  // 7. キャラクター
+  's-char-name': 'キャラクター名。ペルソナ内の自己認識やログ表示に使用。',
+  's-char-ollama-only': 'ペルソナを Ollama 利用時のみ注入。Gemini フォールバック時は素の状態に。',
+  's-persona-text': 'キャラクターの性格・話し方の指示文（LLMのsystem promptに投入）。',
+
+  // 8. Chat
+  's-chat-history': '会話履歴を何分保持するか。0=無制限。古い発言は圧縮対象。',
+
+  // 9. 外部サービス
+  's-rss-interval': 'RSSフィード取得の実行間隔（分）。',
+  's-rss-digest': '日次ダイジェストを配信する時刻（0-23）。',
+  's-rss-retain': 'RSS記事のDB保存期間（日）。超過分は自動削除。',
+  's-rss-max': 'カテゴリごとの最大保存件数。',
+  's-w-loc': '天気コマンドのデフォルト取得地点。',
+  's-w-umb': '降水確率がこの％以上で「傘を持って」判定。',
+  's-sx-url': 'SearXNG（メタ検索）のベース URL。',
+  's-sx-max': '検索結果の件数上限。',
+  's-sx-pages': '結果から本文を取得するページ数。',
+  's-sx-chars': '各ページから抽出する最大文字数。',
+  's-rk-max': '楽天検索の結果件数。',
+  's-rk-details': '各商品の詳細説明も取得する（遅いが情報量多）。',
+  's-rk-conc': '詳細取得の並列度。',
+  's-rk-desc': '詳細説明の最大文字数。',
+  's-stt-enabled': '音声文字起こし（STT）連携機能の有効化。',
+  's-stt-poll': 'STT結果を取りに行くポーリング間隔（分）。',
+  's-stt-sum': 'この文字数を超えたら要約を試みる閾値。',
+  's-dlg-cpu': 'Pi側CPU使用率がこの％を超えたら Windows PC へ委託。',
+  's-dlg-mem': 'Pi側メモリ使用率がこの％を超えたら委託。',
+  's-dlg-gpu': 'Pi側GPU使用率がこの％を超えたら委託。',
+
+  // 10. メモリ & アクティビティ
+  's-mem-sweep': 'ChromaDB内で「一度も参照されなかった古い記憶」を定期削除する。',
+  's-mem-stale': '最終保存からこの日数を超え、かつ未ヒット（hit_count=0）なら削除対象。',
+  's-act-enabled': 'アクティビティ検出機能。配信中などの自発発言抑制に使用。',
+  's-act-obs-stream': 'OBS配信中は自発発言を抑制。',
+  's-act-obs-rec': 'OBS録画中は抑制。',
+  's-act-obs-rep': 'OBSリプレイバッファ動作中は抑制。',
+  's-act-gaming': 'Main PCでゲーム実行中は抑制。',
+  's-act-vc': 'Discord VCに参加中は抑制。',
+  's-dm-enabled': 'Dockerコンテナのログを監視しエラー検出で通知する。',
+  's-dm-interval': 'ログチェックの実行間隔（秒）。',
+  's-dm-cool': '同一エラーの連続通知を抑制するクールダウン（分）。',
+  's-dm-lines': '1回のチェックで読むログの最大行数。',
+};
+
+function applyTooltips() {
+  for (const [id, desc] of Object.entries(TOOLTIPS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const group = el.closest('.form-group');
+    if (!group) continue;
+    const label = group.querySelector('.form-label');
+    if (!label || label.querySelector('.help-icon')) continue;
+    const icon = document.createElement('span');
+    icon.className = 'help-icon';
+    icon.tabIndex = 0;
+    icon.setAttribute('role', 'button');
+    icon.setAttribute('aria-label', desc);
+    icon.textContent = '?';
+    const tip = document.createElement('span');
+    tip.className = 'help-tooltip';
+    tip.textContent = desc;
+    icon.appendChild(tip);
+    label.appendChild(icon);
+  }
+}
+
 // 折りたたみ状態を localStorage に保持（リロード後も維持）
 const OPEN_KEY = 'settings.openSections';
 function loadOpen() {
@@ -609,4 +721,7 @@ export async function mount() {
       'docker_monitor.max_lines_per_check': numVal('s-dm-lines'),
     }, 'System');
   });
+
+  // 各設定項目に ? アイコン（説明ツールチップ）を挿入
+  applyTooltips();
 }

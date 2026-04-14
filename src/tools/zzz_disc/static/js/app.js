@@ -1,20 +1,22 @@
 /** ZZZ Disc Manager — hash router + toast + modal helpers. */
-import * as capture from './pages/capture.js';
+import * as characters from './pages/characters.js';
+import * as characterDetail from './pages/character_detail.js';
 import * as discs from './pages/discs.js';
 import * as discDetail from './pages/disc_detail.js';
+import * as capture from './pages/capture.js';
 import * as upload from './pages/upload.js';
-import * as presets from './pages/presets.js';
-import * as presetEdit from './pages/preset_edit.js';
-import * as conflict from './pages/conflict.js';
+import * as shared from './pages/shared.js';
+import * as settings from './pages/settings.js';
 
 const routes = [
-  { pattern: /^#\/capture$/,                 module: capture,     nav: 'capture' },
-  { pattern: /^#\/discs$/,                   module: discs,       nav: 'discs' },
-  { pattern: /^#\/discs\/([^/]+)$/,          module: discDetail,  nav: 'discs', param: 'id' },
-  { pattern: /^#\/upload$/,                  module: upload,      nav: 'upload' },
-  { pattern: /^#\/presets$/,                 module: presets,     nav: 'presets' },
-  { pattern: /^#\/presets\/([^/]+)$/,        module: presetEdit,  nav: 'presets', param: 'slug' },
-  { pattern: /^#\/conflicts$/,               module: conflict,    nav: 'conflicts' },
+  { pattern: /^#\/characters$/,              module: characters,       nav: 'characters' },
+  { pattern: /^#\/characters\/([^/]+)$/,     module: characterDetail,  nav: 'characters', param: 'slug' },
+  { pattern: /^#\/discs$/,                   module: discs,            nav: 'discs' },
+  { pattern: /^#\/discs\/([^/]+)$/,          module: discDetail,       nav: 'discs', param: 'id' },
+  { pattern: /^#\/capture$/,                 module: capture,          nav: 'capture' },
+  { pattern: /^#\/upload$/,                  module: upload,           nav: 'upload' },
+  { pattern: /^#\/shared$/,                  module: shared,           nav: 'shared' },
+  { pattern: /^#\/settings$/,                module: settings,         nav: 'settings' },
 ];
 
 let currentModule = null;
@@ -29,15 +31,14 @@ function resolve(hash) {
 }
 
 async function navigate() {
-  const hash = location.hash || '#/capture';
+  const hash = location.hash || '#/characters';
   const resolved = resolve(hash);
   if (!resolved) {
-    location.hash = '#/capture';
+    location.hash = '#/characters';
     return;
   }
   const { route, params } = resolved;
 
-  // unmount previous
   if (currentModule?.unmount) {
     try { currentModule.unmount(); } catch { /* silent */ }
   }
@@ -45,7 +46,6 @@ async function navigate() {
   currentModule = route.module;
   const gen = ++_navGen;
 
-  // update nav
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === route.nav);
   });
@@ -114,7 +114,7 @@ export function openModal({ title, body, footer }) {
 
 export function confirmDialog(message) {
   return new Promise(resolve => {
-    const { backdrop, footerEl, close } = openModal({
+    const { footerEl, close } = openModal({
       title: '確認',
       body: `<p>${escapeHtml(message)}</p>`,
     });
@@ -127,11 +127,30 @@ export function confirmDialog(message) {
   });
 }
 
-// ============================================================
-// Init
-// ============================================================
+export function promptDialog({ title = '入力', label = '', value = '', placeholder = '' }) {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <label class="text-secondary text-sm">${escapeHtml(label)}</label>
+      <input type="text" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" style="width:100%;margin-top:6px;" autofocus />
+    `;
+    const { footerEl, close } = openModal({ title, body: wrap });
+    const input = wrap.querySelector('input');
+    footerEl.innerHTML = `
+      <button class="btn" data-act="cancel">キャンセル</button>
+      <button class="btn btn-primary" data-act="ok">OK</button>
+    `;
+    footerEl.querySelector('[data-act="cancel"]').addEventListener('click', () => { close(); resolve(null); });
+    footerEl.querySelector('[data-act="ok"]').addEventListener('click', () => { const v = input.value; close(); resolve(v); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { const v = input.value; close(); resolve(v); }
+    });
+    setTimeout(() => input.focus(), 50);
+  });
+}
+
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
-  if (!location.hash) location.hash = '#/capture';
+  if (!location.hash) location.hash = '#/characters';
   navigate();
 });

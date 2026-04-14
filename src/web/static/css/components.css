@@ -185,6 +185,58 @@
 }
 .has-tooltip:hover .tooltip { display: block; }
 
+/* === Help icon (settings) === */
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 0.35rem;
+  border-radius: 50%;
+  background: var(--bg-overlay);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  position: relative;
+  vertical-align: middle;
+  user-select: none;
+  transition: background var(--ease), color var(--ease);
+}
+.help-icon:hover,
+.help-icon:focus-visible {
+  background: var(--accent-muted);
+  color: var(--accent-hover);
+  outline: none;
+}
+.help-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.45rem 0.65rem;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-primary);
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  width: 240px;
+  box-shadow: var(--shadow-md);
+  z-index: 20;
+  pointer-events: none;
+}
+.help-icon:hover .help-tooltip,
+.help-icon:focus-visible .help-tooltip { display: block; }
+
 /* === Buttons === */
 
 .btn {
