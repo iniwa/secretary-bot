@@ -681,9 +681,17 @@ h3 { font-size: 1rem; font-weight: 600; }
 
 .disc-tile-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   justify-content: space-between;
+}
+.disc-tile-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  flex-shrink: 0;
 }
 .disc-tile-set {
   font-weight: 600;

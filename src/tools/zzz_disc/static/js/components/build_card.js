@@ -112,9 +112,13 @@ function renderDiscTile(entry) {
   const level = d.level != null ? `Lv.${d.level}` : '';
   const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
 
+  const iconHtml = d.icon_url
+    ? `<img class="disc-tile-icon" src="${escapeHtml(d.icon_url)}" alt="" loading="lazy" />`
+    : '';
   return `
     <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : ''}">
       <div class="disc-tile-header">
+        ${iconHtml}
         <span class="disc-tile-set">${escapeHtml(setName)}${sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : ''}</span>
         <span class="disc-tile-slot">[${d.slot}]</span>
       </div>

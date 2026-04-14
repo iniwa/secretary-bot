@@ -55,7 +55,8 @@ def _as_dict(obj) -> dict:
 
 
 def _extract_substats(disc_obj) -> list[dict]:
-    subs = _pick(disc_obj, "sub_properties", "substats", "sub_stats", default=[]) or []
+    # genshin.py v1.7+: disc.properties (list of ZZZProperty with name/value/type)
+    subs = _pick(disc_obj, "properties", "sub_properties", "substats", "sub_stats", default=[]) or []
     result = []
     for s in subs:
         result.append({
@@ -79,7 +80,13 @@ def _parse_value(v) -> float:
 
 
 def _extract_main_stat(disc_obj) -> tuple[str, float]:
-    main = _pick(disc_obj, "main_property", "main_stat", "mainstat")
+    # genshin.py v1.7+: disc.main_properties (list, 通常 1件)
+    mains = _pick(disc_obj, "main_properties", default=None)
+    main = None
+    if isinstance(mains, list) and mains:
+        main = mains[0]
+    else:
+        main = _pick(disc_obj, "main_property", "main_stat", "mainstat")
     if not main:
         return ("", 0.0)
     name = str(_pick(main, "name", "property_name", default="") or "")
@@ -88,12 +95,28 @@ def _extract_main_stat(disc_obj) -> tuple[str, float]:
 
 
 def _extract_slot(disc_obj) -> int:
-    slot = _pick(disc_obj, "equipment_type", "slot", "position", "equip_slot")
+    # genshin.py v1.7+: disc.position (int 1..6)
+    slot = _pick(disc_obj, "position", "equipment_type", "slot", "equip_slot")
     if isinstance(slot, int):
         return slot
     if isinstance(slot, str) and slot.isdigit():
         return int(slot)
     return 0
+
+
+def _extract_set_info(disc_obj) -> tuple[str, str | None, str | None, str | None]:
+    """(set_name, set_id, two_pc_desc, four_pc_desc) を返す。"""
+    se = _pick(disc_obj, "set_effect", "equip_suit", default=None)
+    if not se:
+        name = str(_pick(disc_obj, "suit_name", "set_name", default="") or "")
+        return (name, None, None, None)
+    d = _as_dict(se) if not isinstance(se, dict) else se
+    return (
+        str(d.get("name") or ""),
+        str(d.get("id")) if d.get("id") is not None else None,
+        d.get("two_piece_description") or d.get("desc2"),
+        d.get("four_piece_description") or d.get("desc4"),
+    )
 
 
 def _extract_agent_stats(agent_obj) -> dict:
@@ -244,32 +267,59 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
     if not agent_id or not name_ja:
         raise RuntimeError("agent id/name missing")
 
+    # 詳細取得（discs 付き）— agent 基本情報より詳細の方が icon が整っている
+    detail = await _fetch_agent_detail(client, uid, agent_id) or agent
+
+    # agent icon: square_icon を優先、無ければ rectangle_icon / banner_icon
+    agent_icon = (
+        _pick(detail, "square_icon", default=None)
+        or _pick(agent, "square_icon", default=None)
+        or _pick(detail, "rectangle_icon", default=None)
+        or _pick(agent, "rectangle_icon", default=None)
+        or _pick(detail, "banner_icon", default=None)
+        or _pick(agent, "banner_icon", default=None)
+    )
+    agent_element = str(_pick(agent, "element", default="") or
+                        _pick(detail, "element", default="") or "") or None
+    agent_faction = str(_pick(agent, "faction_name", default="") or
+                        _pick(detail, "faction_name", default="") or "") or None
+
     # character を upsert（slug = hoyolab-{agent_id}）
     slug_candidate = f"hoyolab-{agent_id}"
     existing = await db.fetchone(
-        "SELECT id FROM zzz_characters WHERE hoyolab_agent_id = ? OR name_ja = ?",
+        "SELECT id, icon_url, element, faction, hoyolab_agent_id "
+        "FROM zzz_characters WHERE hoyolab_agent_id = ? OR name_ja = ?",
         (str(agent_id), name_ja),
     )
     if existing:
         character_id = existing["id"]
-        await db.execute(
-            "UPDATE zzz_characters SET hoyolab_agent_id = ? WHERE id = ? AND "
-            "(hoyolab_agent_id IS NULL OR hoyolab_agent_id = '')",
-            (str(agent_id), character_id),
-        )
+        sets, params = [], []
+        if not existing.get("hoyolab_agent_id"):
+            sets.append("hoyolab_agent_id = ?"); params.append(str(agent_id))
+        if agent_icon and not existing.get("icon_url"):
+            sets.append("icon_url = ?"); params.append(str(agent_icon))
+        if agent_element and not existing.get("element"):
+            sets.append("element = ?"); params.append(agent_element)
+        if agent_faction and not existing.get("faction"):
+            sets.append("faction = ?"); params.append(agent_faction)
+        if sets:
+            params.append(character_id)
+            await db.execute(
+                f"UPDATE zzz_characters SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
+            )
     else:
         await models.upsert_character(
             db, slug=slug_candidate, name_ja=name_ja,
+            element=agent_element, faction=agent_faction,
+            icon_url=str(agent_icon) if agent_icon else None,
             hoyolab_agent_id=str(agent_id),
         )
         row = await db.fetchone(
             "SELECT id FROM zzz_characters WHERE slug = ?", (slug_candidate,))
         character_id = row["id"]
 
-    # 詳細取得（discs 付き）
-    detail = await _fetch_agent_detail(client, uid, agent_id) or agent
-    discs_raw = _pick(detail, "equip", "discs", "disc_list", "equipment", default=[]) or []
-    # discs_raw から「ディスク（equipment_type 1..6）」だけを抽出（Wエンジン等を除外）
+    discs_raw = _pick(detail, "discs", "equip", "disc_list", "equipment", default=[]) or []
     disc_ids_by_slot: dict[int, int] = {}
     count = 0
     for d in discs_raw:
@@ -279,12 +329,13 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
         main_name, main_val = _extract_main_stat(d)
         if not main_name:
             continue
-        set_name = str(_pick(d, "equip_suit", "suit_name", "set_name", default="") or "")
-        if isinstance(_pick(d, "equip_suit"), dict):
-            set_name = _pick(d, "equip_suit").get("name") or set_name
+        set_name, hoyo_set_id, two_pc, four_pc = _extract_set_info(d)
         set_id = None
         if set_name:
-            set_id = await models.find_or_create_set_by_name(db, set_name)
+            set_id = await models.find_or_create_set_by_name(
+                db, set_name,
+                two_pc_effect=two_pc, four_pc_effect=four_pc,
+            )
 
         disc_id = await models.insert_disc(
             db,
@@ -294,6 +345,7 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
             level=int(_pick(d, "level", default=0) or 0),
             rarity=str(_pick(d, "rarity", default="") or "") or None,
             hoyolab_disc_id=str(_pick(d, "id", "disc_id", default="") or "") or None,
+            icon_url=str(_pick(d, "icon", default="") or "") or None,
         )
         disc_ids_by_slot[slot] = disc_id
         count += 1

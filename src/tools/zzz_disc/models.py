@@ -129,6 +129,7 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "rarity", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "fingerprint", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
+    await _maybe_add_column(db, "zzz_discs", "icon_url", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "email", "TEXT")
@@ -204,13 +205,24 @@ async def upsert_character(db, *, slug: str, name_ja: str,
                            icon_url: str | None = None,
                            display_order: int = 0,
                            hoyolab_agent_id: str | None = None) -> None:
-    existing = await db.fetchone("SELECT id FROM zzz_characters WHERE slug = ?", (slug,))
+    existing = await db.fetchone(
+        "SELECT id, icon_url, element, faction, hoyolab_agent_id "
+        "FROM zzz_characters WHERE slug = ?", (slug,))
     if existing:
-        if hoyolab_agent_id:
+        sets, params = [], []
+        if hoyolab_agent_id and not existing.get("hoyolab_agent_id"):
+            sets.append("hoyolab_agent_id = ?"); params.append(hoyolab_agent_id)
+        if icon_url and not existing.get("icon_url"):
+            sets.append("icon_url = ?"); params.append(icon_url)
+        if element and not existing.get("element"):
+            sets.append("element = ?"); params.append(element)
+        if faction and not existing.get("faction"):
+            sets.append("faction = ?"); params.append(faction)
+        if sets:
+            params.append(existing["id"])
             await db.execute(
-                "UPDATE zzz_characters SET hoyolab_agent_id = ? WHERE id = ? AND "
-                "(hoyolab_agent_id IS NULL OR hoyolab_agent_id = '')",
-                (hoyolab_agent_id, existing["id"]),
+                f"UPDATE zzz_characters SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
             )
         return
     await db.execute(
@@ -237,10 +249,26 @@ async def upsert_set_master(db, *, slug: str, name_ja: str,
     )
 
 
-async def find_or_create_set_by_name(db, name_ja: str) -> int:
-    """HoYoLAB 同期時、既知のセット名をそのまま upsert。見つからなければ新規作成。"""
-    row = await db.fetchone("SELECT id FROM zzz_set_masters WHERE name_ja = ?", (name_ja,))
+async def find_or_create_set_by_name(db, name_ja: str, *,
+                                     two_pc_effect: str | None = None,
+                                     four_pc_effect: str | None = None) -> int:
+    """HoYoLAB 同期時、既知のセット名をそのまま upsert。見つからなければ新規作成。
+    既存に effect 文字列が無ければ今回取得分で補填する。"""
+    row = await db.fetchone(
+        "SELECT id, two_pc_effect, four_pc_effect FROM zzz_set_masters WHERE name_ja = ?",
+        (name_ja,))
     if row:
+        sets, params = [], []
+        if two_pc_effect and not row.get("two_pc_effect"):
+            sets.append("two_pc_effect = ?"); params.append(two_pc_effect)
+        if four_pc_effect and not row.get("four_pc_effect"):
+            sets.append("four_pc_effect = ?"); params.append(four_pc_effect)
+        if sets:
+            params.append(row["id"])
+            await db.execute(
+                f"UPDATE zzz_set_masters SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
+            )
         return row["id"]
     # aliases 検索
     all_rows = await db.fetchall(
@@ -253,8 +281,9 @@ async def find_or_create_set_by_name(db, name_ja: str) -> int:
     # 新規作成（slug は name_ja のハッシュベース）
     slug = "auto-" + hashlib.sha1(name_ja.encode("utf-8")).hexdigest()[:12]
     cursor = await db.execute(
-        "INSERT INTO zzz_set_masters (slug, name_ja, aliases_json) VALUES (?, ?, ?)",
-        (slug, name_ja, "[]"),
+        "INSERT INTO zzz_set_masters (slug, name_ja, aliases_json, "
+        "two_pc_effect, four_pc_effect) VALUES (?, ?, ?, ?, ?)",
+        (slug, name_ja, "[]", two_pc_effect, four_pc_effect),
     )
     return cursor.lastrowid
 
@@ -327,6 +356,7 @@ def _disc_row_to_dict(row: dict) -> dict:
         "rarity": row.get("rarity"),
         "fingerprint": row.get("fingerprint"),
         "hoyolab_disc_id": row.get("hoyolab_disc_id"),
+        "icon_url": row.get("icon_url"),
         "source_image_path": row.get("source_image_path"),
         "note": row.get("note"),
         "created_at": row.get("created_at"),
@@ -384,22 +414,30 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
                       level: int = 0,
                       rarity: str | None = None,
                       hoyolab_disc_id: str | None = None,
+                      icon_url: str | None = None,
                       source_image_path: str | None = None,
                       note: str | None = None) -> int:
-    """fingerprint で既存検索して重複排除。既存があれば既存 id を返す。"""
+    """fingerprint で既存検索して重複排除。既存があれば既存 id を返す。
+    既存に icon_url が無く今回取得できた場合は補填する。"""
     fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
-    existing = await db.fetchone("SELECT id FROM zzz_discs WHERE fingerprint = ?", (fp,))
+    existing = await db.fetchone(
+        "SELECT id, icon_url FROM zzz_discs WHERE fingerprint = ?", (fp,))
     if existing:
+        if icon_url and not existing.get("icon_url"):
+            await db.execute(
+                "UPDATE zzz_discs SET icon_url = ? WHERE id = ?",
+                (icon_url, existing["id"]),
+            )
         return existing["id"]
     now = _now()
     cursor = await db.execute(
         "INSERT INTO zzz_discs (slot, set_id, main_stat_name, main_stat_value, "
-        "sub_stats_json, level, rarity, fingerprint, hoyolab_disc_id, "
+        "sub_stats_json, level, rarity, fingerprint, hoyolab_disc_id, icon_url, "
         "source_image_path, note, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (slot, set_id, main_stat_name, main_stat_value,
          json.dumps(sub_stats, ensure_ascii=False),
-         level, rarity, fp, hoyolab_disc_id,
+         level, rarity, fp, hoyolab_disc_id, icon_url,
          source_image_path, note, now, now),
     )
     return cursor.lastrowid

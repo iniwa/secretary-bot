@@ -36,6 +36,7 @@ class DiscOut(BaseModel):
     rarity: str | None = None
     fingerprint: str | None = None
     hoyolab_disc_id: str | None = None
+    icon_url: str | None = None
     source_image_path: str | None = None
     note: str | None = None
     created_at: str | None = None
