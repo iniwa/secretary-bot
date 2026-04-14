@@ -30,6 +30,8 @@ _EXTRACT_PROMPT = """\
 class MemoUnit(BaseUnit):
     UNIT_NAME = "memo"
     UNIT_DESCRIPTION = "メモの保存やキーワード検索。「〜をメモして」「〜のメモある？」など。"
+    AUTONOMY_TIER = 2
+    AUTONOMOUS_ACTIONS = ["add"]
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()

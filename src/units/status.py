@@ -7,6 +7,8 @@ from src.units.base_unit import BaseUnit
 class StatusUnit(BaseUnit):
     UNIT_NAME = "status"
     UNIT_DESCRIPTION = "PCやサーバーの稼働状況を確認。「PCは起きてる？」「ステータス確認」など。"
+    AUTONOMY_TIER = 0
+    AUTONOMOUS_ACTIONS = ["get"]
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()

@@ -19,6 +19,7 @@ import * as inputRelay from './pages/input-relay.js';
 import * as stt from './pages/stt.js';
 import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
+import * as pending from './pages/pending.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -42,6 +43,7 @@ const pages = {
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
   'docker-monitor': { title: 'Docker Monitor', module: dockerMonitor },
+  pending:      { title: 'Pending Actions',  module: pending },
   maintenance:  { title: 'Maintenance',      module: maintenance },
 };
 

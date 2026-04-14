@@ -41,6 +41,8 @@ _EXTRACT_PROMPT = """\
 class PowerUnit(BaseUnit):
     UNIT_NAME = "power"
     UNIT_DESCRIPTION = "PCの電源管理。起動（WoL）・シャットダウン・再起動。「メインPCを起動して」「PCをシャットダウン」など。"
+    AUTONOMY_TIER = 3
+    AUTONOMOUS_ACTIONS = ["sleep", "shutdown"]
 
     ADMIN_ONLY = True
 

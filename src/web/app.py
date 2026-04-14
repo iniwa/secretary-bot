@@ -1427,6 +1427,115 @@ def create_web_app(bot) -> FastAPI:
 
         return {"ok": True}
 
+    # --- InnerMind 自律: pending_actions ---
+
+    @app.get("/api/inner-mind/autonomy", dependencies=[Depends(_verify)])
+    async def get_autonomy_settings():
+        raw = await bot.database.get_all_settings("inner_mind.autonomy.")
+        return {k.removeprefix("inner_mind.autonomy."): _coerce(v) for k, v in raw.items()}
+
+    @app.post("/api/inner-mind/autonomy", dependencies=[Depends(_verify)])
+    async def set_autonomy_settings(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        saved = []
+        for short_key, val in body.items():
+            key = f"inner_mind.autonomy.{short_key}"
+            await bot.database.set_setting(key, _serialize(val))
+            saved.append(key)
+        return {"ok": True, "saved": saved}
+
+    @app.get("/api/inner-mind/autonomy/units", dependencies=[Depends(_verify)])
+    async def get_autonomy_units():
+        """全ユニットの (tier, AUTONOMOUS_ACTIONS) を列挙。UI のチェックリスト用。"""
+        tier2, tier3 = [], []
+        for cog in list(bot.cogs.values()):
+            tier = getattr(cog, "AUTONOMY_TIER", 4)
+            actions = getattr(cog, "AUTONOMOUS_ACTIONS", []) or []
+            unit_name = getattr(cog, "UNIT_NAME", "") or cog.__class__.__name__
+            if not actions:
+                continue
+            for m in actions:
+                entry = {
+                    "unit_name": unit_name,
+                    "method": m,
+                    "description": getattr(cog, "UNIT_DESCRIPTION", ""),
+                    "key": f"{unit_name}.{m}",
+                }
+                if tier == 2:
+                    tier2.append(entry)
+                elif tier == 3:
+                    tier3.append(entry)
+        return {"tier2": tier2, "tier3": tier3}
+
+    @app.get("/api/pending", dependencies=[Depends(_verify)])
+    async def list_pending(status: str | None = None, limit: int = 100):
+        items = await bot.database.list_pending_actions(status=status, limit=limit)
+        pending_count = await bot.database.count_pending_unread()
+        return {"items": items, "counts": {"pending": pending_count}}
+
+    @app.get("/api/pending/unread-count", dependencies=[Depends(_verify)])
+    async def pending_unread_count():
+        c = await bot.database.count_pending_unread()
+        return {"count": c}
+
+    @app.get("/api/pending/{pid}", dependencies=[Depends(_verify)])
+    async def get_pending(pid: int):
+        p = await bot.database.get_pending_action(pid)
+        if p is None:
+            raise HTTPException(404, "not found")
+        return p
+
+    @app.post("/api/pending/{pid}/approve", dependencies=[Depends(_verify)])
+    async def approve_pending(pid: int):
+        p = await bot.database.get_pending_action(pid)
+        if p is None:
+            raise HTTPException(404, "not found")
+        if p.get("status") != "pending":
+            raise HTTPException(409, f"already {p.get('status')}")
+        try:
+            params = json.loads(p.get("params") or "{}")
+        except Exception:
+            params = {}
+        result = await bot.actuator._execute_unit(
+            p.get("unit_name") or "", p.get("method") or "",
+            {"params": params}, p.get("monologue_id"),
+        )
+        if result.get("status") == "executed":
+            await bot.database.resolve_pending_action(
+                pid, "executed",
+                json.dumps(result.get("result"), ensure_ascii=False), None,
+            )
+            await bot.actuator._rewrite_approval_message(p, "✅ WebGUIで承認")
+        else:
+            await bot.database.resolve_pending_action(
+                pid, "failed", None, result.get("reason"),
+            )
+        return {"ok": True, "result": result}
+
+    @app.post("/api/pending/{pid}/reject", dependencies=[Depends(_verify)])
+    async def reject_pending(pid: int):
+        p = await bot.database.get_pending_action(pid)
+        if p is None:
+            raise HTTPException(404, "not found")
+        if p.get("status") != "pending":
+            raise HTTPException(409, f"already {p.get('status')}")
+        await bot.database.resolve_pending_action(pid, "rejected", None, None)
+        await bot.actuator._rewrite_approval_message(p, "❌ WebGUIで却下")
+        return {"ok": True}
+
+    @app.post("/api/pending/{pid}/cancel", dependencies=[Depends(_verify)])
+    async def cancel_pending(pid: int):
+        p = await bot.database.get_pending_action(pid)
+        if p is None:
+            raise HTTPException(404, "not found")
+        if p.get("status") != "pending":
+            raise HTTPException(409, f"already {p.get('status')}")
+        await bot.database.resolve_pending_action(pid, "cancelled", None, None)
+        await bot.actuator._rewrite_approval_message(p, "🚫 キャンセル")
+        return {"ok": True}
+
     # --- Tools: input-relay ---
 
     async def _agent_request(method: str, path: str, role: str | None = None) -> list[dict]:

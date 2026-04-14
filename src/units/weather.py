@@ -80,6 +80,8 @@ _LOCATION_EXTRACT_PROMPT = """\
 class WeatherUnit(BaseUnit):
     UNIT_NAME = "weather"
     UNIT_DESCRIPTION = "天気予報の取得や毎朝の天気通知登録。「東京の天気」「明日の天気」「毎朝教えて」など。"
+    AUTONOMY_TIER = 0
+    AUTONOMOUS_ACTIONS = ["get_current"]
 
     def __init__(self, bot):
         super().__init__(bot)

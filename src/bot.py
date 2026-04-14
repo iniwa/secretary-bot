@@ -15,6 +15,11 @@ from src.activity.detector import ActivityDetector
 from src.database import Database
 from src.flow_tracker import get_flow_tracker
 from src.heartbeat import Heartbeat
+from src.inner_mind.actuator import Actuator
+from src.inner_mind.approval_view import (
+    PersistentApprovalView,
+    dispatch_persistent_interaction,
+)
 from src.llm.router import LLMRouter
 from src.logger import get_logger, setup_logging
 from src.memory.chroma_client import ChromaMemory
@@ -80,6 +85,7 @@ class SecretaryBot(commands.Bot):
         self.unit_router = UnitRouter(self)
         self.heartbeat = Heartbeat(self)
         self.inner_mind = self.heartbeat.inner_mind
+        self.actuator = Actuator(self)
         self.unit_manager = UnitManager(self)
         self.activity_detector = ActivityDetector(self, config)
         self.unit_manager.agent_pool.set_activity_detector(self.activity_detector)
@@ -94,10 +100,23 @@ class SecretaryBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         # Discord接続時に呼ばれるが、main()で既に初期化済みなのでスキップ
-        pass
+        # persistent_view 登録（approval:* custom_id を受けるため）
+        try:
+            self.add_view(PersistentApprovalView())
+        except Exception as e:
+            log.debug("add_view failed: %s", e)
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s (ID: %s)", self.user, self.user.id)
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        # approval:ok:<id> / approval:ng:<id> を拾う
+        try:
+            handled = await dispatch_persistent_interaction(self, interaction)
+            if handled:
+                return
+        except Exception as e:
+            log.warning("approval interaction dispatch failed: %s", e)
 
     async def _fetch_discord_history(
         self, message: discord.Message, minutes: int, limit: int,

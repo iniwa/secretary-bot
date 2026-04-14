@@ -53,6 +53,8 @@ _MAX_CHARS_PER_PAGE = 3000  # 1ページあたりの最大文字数
 class WebSearchUnit(BaseUnit):
     UNIT_NAME = "web_search"
     UNIT_DESCRIPTION = "ネットで調べもの・検索。「〜を調べて」「〜って何？」「最新の〜は？」など。"
+    AUTONOMY_TIER = 3
+    AUTONOMOUS_ACTIONS = ["search"]
 
     def __init__(self, bot):
         super().__init__(bot)

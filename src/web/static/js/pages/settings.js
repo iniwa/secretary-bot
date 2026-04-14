@@ -97,35 +97,43 @@ export function render() {
     </div>
   </details>
 
-  <!-- 5. InnerMind 自律アクション（Phase 2 で本実装） -->
+  <!-- 5. InnerMind 自律アクション -->
   <details class="accordion-item" data-section="autonomy" open>
     <summary class="accordion-summary">InnerMind 自律アクション<span class="acc-hint">OK/NG 承認制</span></summary>
     <div class="accordion-body">
-      <div class="warning-text">Phase 2 で本実装予定。現在はUI枠のみ表示しています。</div>
       <div class="acc-grid">
         <div class="form-group">
           <label class="form-label">自律モード</label>
-          <select id="s-auto-mode" class="form-input" disabled>
+          <select id="s-auto-mode" class="form-input">
             <option value="off">off</option>
             <option value="observe_only">observe_only (T0のみ)</option>
             <option value="proposal">proposal (T0+T1+承認経由のT2/T3)</option>
             <option value="full">full (T4以外自動)</option>
           </select>
         </div>
-        <div class="form-group"><label class="form-label">承認タイムアウト (分)</label><input type="number" id="s-auto-timeout" class="form-input" min="1" step="1" disabled value="30"></div>
-        <div class="form-group"><label class="form-label">T2 日次上限 (0=無制限)</label><input type="number" id="s-auto-t2-limit" class="form-input" min="0" step="1" disabled value="0"></div>
-        <div class="form-group"><label class="form-label">T3 日次上限 (0=無制限)</label><input type="number" id="s-auto-t3-limit" class="form-input" min="0" step="1" disabled value="0"></div>
+        <div class="form-group"><label class="form-label">承認タイムアウト (分)</label><input type="number" id="s-auto-timeout" class="form-input" min="1" step="1" value="30"></div>
+        <div class="form-group"><label class="form-label">T2 日次上限 (0=無制限)</label><input type="number" id="s-auto-t2-limit" class="form-input" min="0" step="1" value="0"></div>
+        <div class="form-group"><label class="form-label">T3 日次上限 (0=無制限)</label><input type="number" id="s-auto-t3-limit" class="form-input" min="0" step="1" value="0"></div>
         <div class="form-group">
           <label class="form-label">同時 pending 処理</label>
-          <select id="s-auto-concurrent" class="form-input" disabled>
+          <select id="s-auto-concurrent" class="form-input">
             <option value="single">single (1件のみ)</option>
-            <option value="queue" selected>queue (順次承認)</option>
+            <option value="queue">queue (順次承認)</option>
             <option value="prefer_new">prefer_new (新規優先)</option>
           </select>
         </div>
-        <div class="form-group"><div class="form-row"><label class="form-label" style="margin-bottom:0">確認メッセージに理由を含める</label><label class="toggle-switch"><input type="checkbox" id="s-auto-show-reasoning" disabled checked><span class="toggle-slider"></span></label></div></div>
-        <div class="form-group"><div class="form-row"><label class="form-label" style="margin-bottom:0">承認待ちを通知</label><label class="toggle-switch"><input type="checkbox" id="s-auto-notify" disabled checked><span class="toggle-slider"></span></label></div></div>
+        <div class="form-group"><div class="form-row"><label class="form-label" style="margin-bottom:0">確認メッセージに理由を含める</label><label class="toggle-switch"><input type="checkbox" id="s-auto-show-reasoning" checked><span class="toggle-slider"></span></label></div></div>
+        <div class="form-group"><div class="form-row"><label class="form-label" style="margin-bottom:0">承認待ちを通知</label><label class="toggle-switch"><input type="checkbox" id="s-auto-notify" checked><span class="toggle-slider"></span></label></div></div>
       </div>
+      <div class="acc-sub">
+        <div class="acc-sub-title">T2 許可アクション</div>
+        <div id="s-auto-t2-units" class="acc-grid"></div>
+      </div>
+      <div class="acc-sub">
+        <div class="acc-sub-title">T3 許可アクション</div>
+        <div id="s-auto-t3-units" class="acc-grid"></div>
+      </div>
+      <div class="card-footer"><button class="btn btn-primary btn-sm" id="s-auto-save">Save</button></div>
     </div>
   </details>
 
@@ -324,7 +332,7 @@ export async function mount() {
   }
 
   // Fetch all config in parallel
-  const [llm, gemini, persona, heartbeat, chatCfg, rakuten, ollamaModels, imSettings, genericSettings] = await apiBatch([
+  const [llm, gemini, persona, heartbeat, chatCfg, rakuten, ollamaModels, imSettings, genericSettings, autonomy, autonomyUnits] = await apiBatch([
     ['/api/llm-config'],
     ['/api/gemini-config'],
     ['/api/persona'],
@@ -334,6 +342,8 @@ export async function mount() {
     ['/api/ollama-models'],
     ['/api/inner-mind/settings'],
     ['/api/settings'],
+    ['/api/inner-mind/autonomy'],
+    ['/api/inner-mind/autonomy/units'],
   ]);
 
   // 1. LLM
@@ -381,6 +391,32 @@ export async function mount() {
     setVal('s-im-user', imSettings.target_user_id || '');
   }
   setNum('s-im-active', genericSettings?.['inner_mind.active_threshold_minutes']);
+
+  // 5. InnerMind 自律アクション
+  if (autonomy) {
+    setVal('s-auto-mode', autonomy.mode || 'off');
+    setNum('s-auto-timeout', autonomy.approval_timeout_minutes ?? 30);
+    setNum('s-auto-t2-limit', autonomy.t2_daily_limit ?? 0);
+    setNum('s-auto-t3-limit', autonomy.t3_daily_limit ?? 0);
+    setVal('s-auto-concurrent', autonomy.concurrent_pending || 'queue');
+    setBool('s-auto-show-reasoning', autonomy.show_reasoning !== false);
+    setBool('s-auto-notify', autonomy.notify_pending !== false);
+  }
+  const buildUnitCheckboxes = (containerId, items, allowedCsv) => {
+    const container = $(containerId);
+    if (!container) return;
+    const allowed = new Set((allowedCsv || '').split(',').map(s => s.trim()).filter(Boolean));
+    container.innerHTML = (items || []).map(it => `
+      <div class="form-group">
+        <div class="form-row">
+          <label class="form-label" style="margin-bottom:0">${it.unit_name}.${it.method}</label>
+          <label class="toggle-switch"><input type="checkbox" data-key="${it.key}" ${allowed.has(it.key) ? 'checked' : ''}><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+    `).join('') || '<div class="muted">対象ユニットなし</div>';
+  };
+  buildUnitCheckboxes('s-auto-t2-units', autonomyUnits?.tier2, autonomy?.t2_allowed_units);
+  buildUnitCheckboxes('s-auto-t3-units', autonomyUnits?.tier3, autonomy?.t3_allowed_units);
 
   // 6. InnerMind 外部情報
   const g = genericSettings || {};
@@ -478,6 +514,29 @@ export async function mount() {
       'inner_mind.thinking_interval_ticks': numVal('s-im-ticks'),
       'inner_mind.active_threshold_minutes': numVal('s-im-active'),
     }, 'InnerMind misc');
+  });
+
+  $('s-auto-save').addEventListener('click', async () => {
+    const collectKeys = (containerId) => Array.from(
+      document.querySelectorAll(`#${containerId} input[type="checkbox"]:checked`)
+    ).map(el => el.dataset.key).filter(Boolean).join(',');
+    try {
+      await api('/api/inner-mind/autonomy', { method: 'POST', body: {
+        mode: val('s-auto-mode'),
+        approval_timeout_minutes: numVal('s-auto-timeout'),
+        t2_daily_limit: numVal('s-auto-t2-limit'),
+        t3_daily_limit: numVal('s-auto-t3-limit'),
+        concurrent_pending: val('s-auto-concurrent'),
+        show_reasoning: boolVal('s-auto-show-reasoning'),
+        notify_pending: boolVal('s-auto-notify'),
+        t2_allowed_units: collectKeys('s-auto-t2-units'),
+        t3_allowed_units: collectKeys('s-auto-t3-units'),
+      }});
+      toast('Autonomy saved', 'success');
+    } catch (err) {
+      console.error('Autonomy save:', err);
+      toast('Failed to save autonomy', 'error');
+    }
   });
 
   $('s-im-ext-save').addEventListener('click', async () => {

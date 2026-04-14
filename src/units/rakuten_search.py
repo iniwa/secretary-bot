@@ -252,6 +252,8 @@ def _parse_item_page(html: str, max_desc_chars: int = 300) -> dict:
 class RakutenSearchUnit(BaseUnit):
     UNIT_NAME = "rakuten_search"
     UNIT_DESCRIPTION = "楽天市場で商品を検索・提案する。「楽天で◯◯を探して」「楽天でおすすめの◯◯は？」「楽天で安い◯◯を教えて」など。"
+    AUTONOMY_TIER = 3
+    AUTONOMOUS_ACTIONS = ["search"]
 
     def __init__(self, bot):
         super().__init__(bot)

@@ -67,6 +67,8 @@ def _format_dt(remind_at: str) -> str:
 class ReminderUnit(BaseUnit):
     UNIT_NAME = "reminder"
     UNIT_DESCRIPTION = "リマインダーやToDoの登録・一覧・編集・削除・完了管理。「〜時に教えて」「やることリスト」など。"
+    AUTONOMY_TIER = 2
+    AUTONOMOUS_ACTIONS = ["add"]
 
     def __init__(self, bot):
         super().__init__(bot)

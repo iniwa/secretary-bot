@@ -78,6 +78,8 @@ class CalendarUnit(BaseUnit):
         "読み取りカレンダー（Private含む）の登録・一覧・削除。"
         "「明日14時から会議」「xxxを読み取り登録（Private）」「読み取りカレンダー一覧」など。"
     )
+    AUTONOMY_TIER = 3
+    AUTONOMOUS_ACTIONS = ["create_event"]
 
     def __init__(self, bot):
         super().__init__(bot)

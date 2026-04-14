@@ -25,6 +25,8 @@ JSON以外は返さないでください。
 class TimerUnit(BaseUnit):
     UNIT_NAME = "timer"
     UNIT_DESCRIPTION = "指定時間後に通知するタイマー。「30分後に教えて」「5分タイマー」など。"
+    AUTONOMY_TIER = 2
+    AUTONOMOUS_ACTIONS = ["add"]
 
     def __init__(self, bot):
         super().__init__(bot)

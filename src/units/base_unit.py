@@ -21,6 +21,10 @@ class BaseUnit(commands.Cog):
     UNIT_DESCRIPTION: str = ""
     DELEGATE_TO: str | None = None
     PREFERRED_AGENT: str | None = None
+    # 自律行動の既定階層。T4=破壊的/未定義。各ユニットで適切な値に上書きする。
+    AUTONOMY_TIER: int = 4
+    # 自律的に呼び出し可能なアクション名のリスト（method名を想定）。
+    AUTONOMOUS_ACTIONS: list[str] = []
 
     def __init__(self, bot):
         self.bot = bot
@@ -50,6 +54,18 @@ class BaseUnit(commands.Cog):
     async def on_heartbeat(self) -> None:
         """ハートビート時に呼ばれる。必要に応じてオーバーライド。"""
         pass
+
+    async def autonomous_execute(
+        self, method: str, params: dict, user_id: str,
+    ) -> dict:
+        """Actuator から自律アクションを実行する際に呼ばれる。
+
+        AUTONOMOUS_ACTIONS にあるメソッドのみサポートすること。
+        各ユニットで必要に応じて override する。
+        """
+        raise NotImplementedError(
+            f"{self.UNIT_NAME} does not implement autonomous_execute ({method})"
+        )
 
     # --- Discord通知ヘルパー ---
 

@@ -398,6 +398,35 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at)",
                 "CREATE INDEX IF NOT EXISTS idx_calendar_events_cal ON calendar_events(calendar_id)",
             ],
+            25: [
+                # InnerMind 自律アクション基盤
+                "ALTER TABLE mimi_monologue ADD COLUMN action TEXT",
+                "ALTER TABLE mimi_monologue ADD COLUMN reasoning TEXT",
+                "ALTER TABLE mimi_monologue ADD COLUMN action_params TEXT",
+                "ALTER TABLE mimi_monologue ADD COLUMN action_result TEXT",
+                "ALTER TABLE mimi_monologue ADD COLUMN pending_id INTEGER",
+                """CREATE TABLE IF NOT EXISTS pending_actions (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    monologue_id       INTEGER,
+                    tier               INTEGER NOT NULL,
+                    unit_name          TEXT,
+                    method             TEXT,
+                    params             TEXT NOT NULL,
+                    reasoning          TEXT NOT NULL,
+                    summary            TEXT NOT NULL,
+                    status             TEXT NOT NULL DEFAULT 'pending',
+                    discord_message_id TEXT,
+                    channel_id         TEXT,
+                    user_id            TEXT NOT NULL,
+                    result             TEXT,
+                    error              TEXT,
+                    created_at         DATETIME NOT NULL,
+                    resolved_at        DATETIME,
+                    expires_at         DATETIME NOT NULL
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status)",
+                "CREATE INDEX IF NOT EXISTS idx_pending_actions_user   ON pending_actions(user_id, status)",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -590,14 +619,30 @@ class Database:
         self, monologue: str, mood: str | None = None,
         did_notify: bool = False, notified_message: str | None = None,
         context_json: str = "",
+        action: str | None = None, reasoning: str | None = None,
+        action_params: str | None = None, action_result: str | None = None,
+        pending_id: int | None = None,
     ) -> int:
-        """モノローグを保存し、挿入されたIDを返す。"""
+        """モノローグを保存し、挿入されたIDを返す。
+        action != None の行は自律アクションの decision ログ。"""
         cursor = await self.execute(
-            "INSERT INTO mimi_monologue (monologue, mood, did_notify, notified_message, created_at, context_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (monologue, mood, 1 if did_notify else 0, notified_message, jst_now(), context_json),
+            "INSERT INTO mimi_monologue "
+            "(monologue, mood, did_notify, notified_message, created_at, context_json, "
+            " action, reasoning, action_params, action_result, pending_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (monologue, mood, 1 if did_notify else 0, notified_message, jst_now(), context_json,
+             action, reasoning, action_params, action_result, pending_id),
         )
         return cursor.lastrowid
+
+    async def set_monologue_action_result(
+        self, monologue_id: int, action_result: str,
+    ) -> None:
+        """decision 実行後に結果 JSON を書き戻す。"""
+        await self.execute(
+            "UPDATE mimi_monologue SET action_result = ? WHERE id = ?",
+            (action_result, monologue_id),
+        )
 
     async def update_monologue_notify(
         self, monologue_id: int, notified_message: str,
@@ -646,3 +691,82 @@ class Database:
         """自己モデル全体をdict形式で取得する。"""
         rows = await self.fetchall("SELECT key, value FROM mimi_self_model")
         return {r["key"]: r["value"] for r in rows}
+
+    # --- InnerMind 自律アクション: pending_actions ---
+
+    async def create_pending_action(
+        self, *, monologue_id: int | None, tier: int,
+        unit_name: str | None, method: str | None, params: str,
+        reasoning: str, summary: str, user_id: str,
+        channel_id: str | None, expires_at: str,
+    ) -> int:
+        cursor = await self.execute(
+            "INSERT INTO pending_actions "
+            "(monologue_id, tier, unit_name, method, params, reasoning, summary, "
+            " status, user_id, channel_id, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+            (monologue_id, tier, unit_name, method, params, reasoning, summary,
+             user_id, channel_id, jst_now(), expires_at),
+        )
+        return cursor.lastrowid
+
+    async def get_pending_action(self, pending_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM pending_actions WHERE id = ?", (pending_id,)
+        )
+
+    async def list_pending_actions(
+        self, *, status: str | None = None, limit: int = 100,
+    ) -> list[dict]:
+        if status:
+            return await self.fetchall(
+                "SELECT * FROM pending_actions WHERE status = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        return await self.fetchall(
+            "SELECT * FROM pending_actions ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+
+    async def count_pending_today(self, tier: int, user_id: str) -> int:
+        """今日作成された同 tier の pending 数（上限制御用）。"""
+        today = datetime.now(JST).strftime("%Y-%m-%d")
+        row = await self.fetchone(
+            "SELECT COUNT(*) AS c FROM pending_actions "
+            "WHERE tier = ? AND user_id = ? AND date(created_at) = ?",
+            (tier, user_id, today),
+        )
+        return int(row["c"]) if row else 0
+
+    async def set_pending_discord_message(
+        self, pending_id: int, message_id: str,
+    ) -> None:
+        await self.execute(
+            "UPDATE pending_actions SET discord_message_id = ? WHERE id = ?",
+            (message_id, pending_id),
+        )
+
+    async def resolve_pending_action(
+        self, pending_id: int, status: str,
+        result: str | None = None, error: str | None = None,
+    ) -> None:
+        """pending_action を approved/rejected/expired/executed/failed/cancelled のいずれかに確定。"""
+        await self.execute(
+            "UPDATE pending_actions "
+            "SET status = ?, result = ?, error = ?, resolved_at = ? WHERE id = ?",
+            (status, result, error, jst_now(), pending_id),
+        )
+
+    async def count_pending_unread(self, user_id: str | None = None) -> int:
+        """承認待ちの pending 件数（通知バッジ用）。"""
+        if user_id:
+            row = await self.fetchone(
+                "SELECT COUNT(*) AS c FROM pending_actions "
+                "WHERE status = 'pending' AND user_id = ?", (user_id,),
+            )
+        else:
+            row = await self.fetchone(
+                "SELECT COUNT(*) AS c FROM pending_actions WHERE status = 'pending'"
+            )
+        return int(row["c"]) if row else 0
