@@ -10,6 +10,8 @@ genshin.py ライブラリ経由で `ltuid_v2` / `ltoken_v2` Cookie を使って
 
 from __future__ import annotations
 
+import re
+
 from src.logger import get_logger
 from . import models
 
@@ -175,6 +177,10 @@ def _extract_set_info(disc_obj) -> tuple[str, str | None, str | None, str | None
     se = _pick(disc_obj, "set_effect", "equip_suit", default=None)
     if not se:
         name = str(_pick(disc_obj, "suit_name", "set_name", default="") or "")
+        if not name:
+            # ZZZ ではディスク name 自体がセット名（末尾 [N] はスロット番号）
+            raw = str(_pick(disc_obj, "name", default="") or "")
+            name = re.sub(r"\s*\[\d+\]\s*$", "", raw).strip()
         return (name, None, None, None)
     d = _as_dict(se) if not isinstance(se, dict) else se
     return (
@@ -443,7 +449,8 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
             rarity=str(_pick(d, "rarity", default="") or "") or None,
             hoyolab_disc_id=str(_pick(d, "id", "disc_id", default="") or "") or None,
             icon_url=str(_pick(d, "icon", default="") or "") or None,
-            name=str(_pick(d, "name", default="") or "") or None,
+            name=(re.sub(r"\s*\[\d+\]\s*$", "",
+                         str(_pick(d, "name", default="") or "")).strip() or None),
         )
         disc_ids_by_slot[slot] = disc_id
         count += 1

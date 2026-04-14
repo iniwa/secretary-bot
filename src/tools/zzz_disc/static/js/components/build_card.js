@@ -136,15 +136,17 @@ function renderDiscTile(entry, recommended = new Set()) {
   const iconHtml = d.icon_url
     ? `<img class="disc-tile-icon" src="${escapeHtml(d.icon_url)}" alt="" loading="lazy" />`
     : '';
-  const discName = d.name || '';
+  const rawName = (d.name || '').replace(/\s*\[\d+\]\s*$/, '').trim();
+  // setName が未解決 (「-」) のときは d.name をフォールバック表示
+  const displayName = (setName && setName !== '-') ? setName : (rawName || '-');
+  const tooltip = shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : '';
   return `
-    <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : ''}${discName ? (shared.length ? ' | ' : '') + discName : ''}">
+    <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
       <div class="disc-tile-header">
         ${iconHtml}
-        <span class="disc-tile-set">${escapeHtml(setName)}${sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : ''}</span>
+        <span class="disc-tile-set">${escapeHtml(displayName)}${sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : ''}</span>
         <span class="disc-tile-slot">[${d.slot}]</span>
       </div>
-      ${discName ? `<div class="disc-tile-name" title="${escapeHtml(discName)}">${escapeHtml(discName)}</div>` : ''}
       ${level ? `<div class="disc-tile-level">${escapeHtml(level)}</div>` : ''}
       <div class="disc-main">
         <span class="name">${escapeHtml(statLabel(d.main_stat_name))}</span>
