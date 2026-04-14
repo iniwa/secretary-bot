@@ -267,6 +267,119 @@ class SecretaryBot(commands.Bot):
         log.info("シャットダウン完了")
 
 
+# config.yaml → DB settings への初期シード対象
+# ネストは "." で flatten。リスト/dict 値は JSON で保存。
+# 構造が複雑で GUI 化の範囲外なものは含めない（windows_agents, rss.presets,
+# docker_monitor.containers, units.*.enabled, wol, metrics, debug, tools 等）。
+_SEED_KEYS: tuple[tuple[str, ...], ...] = (
+    ("llm", "ollama_model"),
+    ("llm", "ollama_url"),
+    ("llm", "ollama_timeout"),
+    ("llm", "gemini_model"),
+    ("gemini", "conversation"),
+    ("gemini", "memory_extraction"),
+    ("gemini", "unit_routing"),
+    ("gemini", "monthly_token_limit"),
+    ("heartbeat", "interval_with_ollama_minutes"),
+    ("heartbeat", "interval_without_ollama_minutes"),
+    ("heartbeat", "compact_threshold_messages"),
+    ("inner_mind", "enabled"),
+    ("inner_mind", "thinking_interval_ticks"),
+    ("inner_mind", "min_speak_interval_minutes"),
+    ("inner_mind", "speak_channel_id"),
+    ("inner_mind", "target_user_id"),
+    ("inner_mind", "active_threshold_minutes"),
+    ("inner_mind", "github", "username"),
+    ("inner_mind", "github", "lookback_hours"),
+    ("inner_mind", "github", "max_items"),
+    ("inner_mind", "tavily_news", "max_results_per_query"),
+    ("inner_mind", "tavily_news", "lookback_days"),
+    ("inner_mind", "tavily_news", "topic"),
+    ("character", "name"),
+    ("character", "persona"),
+    ("character", "ollama_only"),
+    ("rss", "fetch_interval_minutes"),
+    ("rss", "digest_hour"),
+    ("rss", "article_retention_days"),
+    ("rss", "max_articles_per_category"),
+    ("weather", "default_location"),
+    ("weather", "umbrella_threshold"),
+    ("searxng", "url"),
+    ("searxng", "max_results"),
+    ("searxng", "fetch_pages"),
+    ("searxng", "max_chars_per_page"),
+    ("rakuten_search", "max_results"),
+    ("rakuten_search", "fetch_details"),
+    ("rakuten_search", "detail_concurrency"),
+    ("rakuten_search", "detail_max_desc_chars"),
+    ("stt", "enabled"),
+    ("stt", "polling_interval_minutes"),
+    ("stt", "processing", "summary_threshold_chars"),
+    ("delegation", "thresholds", "cpu_percent"),
+    ("delegation", "thresholds", "memory_percent"),
+    ("delegation", "thresholds", "gpu_percent"),
+    ("activity", "enabled"),
+    ("activity", "block_rules", "obs_streaming"),
+    ("activity", "block_rules", "obs_recording"),
+    ("activity", "block_rules", "obs_replay_buffer"),
+    ("activity", "block_rules", "gaming_on_main"),
+    ("activity", "block_rules", "discord_vc"),
+    ("docker_monitor", "enabled"),
+    ("docker_monitor", "check_interval_seconds"),
+    ("docker_monitor", "cooldown_minutes"),
+    ("docker_monitor", "max_lines_per_check"),
+    ("memory", "sweep_enabled"),
+    ("memory", "sweep_stale_days"),
+)
+
+
+def _dig(d: dict, path: tuple[str, ...]):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return None
+        d = d[k]
+    return d
+
+
+def _serialize_setting(val) -> str:
+    """スカラは素の文字列で保存（既存 _restore_settings の互換維持）。
+    bool は 'true'/'false'、数値は str()、dict/list は JSON 文字列。"""
+    import json as _json
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, str):
+        return val
+    return _json.dumps(val, ensure_ascii=False)
+
+
+async def _seed_settings_from_config(bot: "SecretaryBot") -> None:
+    """初回起動時に config.yaml の内容を settings テーブルへ書き写す。
+    既に DB に存在するキーは上書きしない。"""
+    version_key = "_seed_version"
+    current_version = "1"
+    saved_version = await bot.database.get_setting(version_key)
+    if saved_version == current_version:
+        return
+
+    cfg = bot.config
+    written = 0
+    for path in _SEED_KEYS:
+        val = _dig(cfg, path)
+        if val is None:
+            continue
+        key = ".".join(path)
+        existing = await bot.database.get_setting(key)
+        if existing is not None:
+            continue
+        await bot.database.set_setting(key, _serialize_setting(val))
+        written += 1
+
+    await bot.database.set_setting(version_key, current_version)
+    log.info("Seeded %d settings from config.yaml (version=%s)", written, current_version)
+
+
 async def _restore_settings(bot: SecretaryBot) -> None:
     """DBに保存されたWebGUI設定をconfigに復元する。"""
     import json as _json
@@ -392,6 +505,52 @@ async def _restore_settings(bot: SecretaryBot) -> None:
         bot.config.setdefault("character", {})["persona"] = saved_persona
         log.info("Restored persona from DB")
 
+    # 汎用 domain 復元（seed 対応 domain をまとめて config に反映）
+    # キャラクター/Chat/Weather/SearXNG/STT/RSS/Activity/Docker Monitor/Memory/Delegation thresholds
+    def _coerce(val: str):
+        # bool → 'true'/'false'
+        if val == "true":
+            return True
+        if val == "false":
+            return False
+        # 数値
+        try:
+            if "." in val:
+                return float(val)
+            return int(val)
+        except (ValueError, TypeError):
+            pass
+        # JSON
+        try:
+            return _json.loads(val)
+        except (ValueError, _json.JSONDecodeError, TypeError):
+            return val
+
+    # 単純 domain（prefix → config セクション）
+    _GENERIC_DOMAINS = (
+        ("weather.", "weather"),
+        ("searxng.", "searxng"),
+        ("stt.", "stt"),
+        ("rss.", "rss"),
+        ("activity.", "activity"),
+        ("docker_monitor.", "docker_monitor"),
+        ("memory.", "memory"),
+        ("delegation.", "delegation"),
+        ("character.", "character"),
+    )
+    for prefix, root in _GENERIC_DOMAINS:
+        flat = await bot.database.get_all_settings(prefix)
+        if not flat:
+            continue
+        section = bot.config.setdefault(root, {})
+        for key, value in flat.items():
+            path = key.removeprefix(prefix).split(".")
+            cur = section
+            for seg in path[:-1]:
+                cur = cur.setdefault(seg, {})
+            cur[path[-1]] = _coerce(value)
+        log.info("Restored %s settings from DB", root)
+
 
 async def _run_web(bot: SecretaryBot) -> None:
     import uvicorn
@@ -419,6 +578,7 @@ async def main() -> None:
     # DB/LLM/Unit の初期化（Discord接続前に実行）
     await bot.database.connect()
     bot.llm_router.set_database(bot.database)
+    await _seed_settings_from_config(bot)
     await _restore_settings(bot)
     await bot.llm_router.check_ollama()
     await bot.unit_manager.load_units()

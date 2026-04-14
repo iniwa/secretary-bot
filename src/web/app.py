@@ -1210,6 +1210,68 @@ def create_web_app(bot) -> FastAPI:
         await bot.database.set_setting("character.persona", persona)
         return {"ok": True}
 
+    # --- 汎用 settings API ---
+    # フロントからセクション単位で一括取得・保存するための汎用入口。
+    # 個別エンドポイント（/api/llm-config 等）は互換維持のため並存。
+
+    _SCALAR_PREFIXES: tuple[str, ...] = (
+        "llm.", "gemini.", "heartbeat.", "inner_mind.", "character.",
+        "chat.", "rss.", "weather.", "searxng.", "rakuten_search.",
+        "stt.", "delegation.", "activity.", "docker_monitor.", "memory.",
+    )
+
+    def _serialize(val) -> str:
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, (int, float)):
+            return str(val)
+        if isinstance(val, str):
+            return val
+        return json.dumps(val, ensure_ascii=False)
+
+    def _coerce(val: str):
+        if val == "true":
+            return True
+        if val == "false":
+            return False
+        try:
+            if "." in val:
+                return float(val)
+            return int(val)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return json.loads(val)
+        except (ValueError, json.JSONDecodeError, TypeError):
+            return val
+
+    @app.get("/api/settings", dependencies=[Depends(_verify)])
+    async def get_settings(prefix: str = ""):
+        if prefix and not any(prefix.startswith(p) or p.startswith(prefix) for p in _SCALAR_PREFIXES):
+            raise HTTPException(400, f"prefix '{prefix}' not allowed")
+        raw = await bot.database.get_all_settings(prefix)
+        return {k: _coerce(v) for k, v in raw.items()}
+
+    @app.post("/api/settings", dependencies=[Depends(_verify)])
+    async def set_settings(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        saved: list[str] = []
+        for key, val in body.items():
+            if not any(key.startswith(p) for p in _SCALAR_PREFIXES):
+                raise HTTPException(400, f"key '{key}' not allowed")
+            await bot.database.set_setting(key, _serialize(val))
+            # bot.config にもネストで反映（次回再起動まで現行プロセスでも有効に）
+            parts = key.split(".")
+            cur = bot.config
+            for seg in parts[:-1]:
+                cur = cur.setdefault(seg, {}) if isinstance(cur, dict) else cur
+            if isinstance(cur, dict):
+                cur[parts[-1]] = val
+            saved.append(key)
+        return {"ok": True, "saved": saved}
+
     # --- フロー追跡 ---
 
     @app.get("/api/flow/state", )
