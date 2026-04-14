@@ -73,17 +73,37 @@ function renderActions(actions, build) {
 }
 
 function renderStats(stats) {
-  // 並び順通りに出し、残りは後ろにアルファベット順
-  const known = STATS_ORDER.filter(k => stats[k] != null);
-  const remaining = Object.keys(stats).filter(k => !STATS_ORDER.includes(k)).sort();
+  // 並び順通りに出し、残りは後ろにアルファベット順（_で始まるメタは除外）
+  const keys = Object.keys(stats).filter(k => !k.startsWith('_'));
+  const known = STATS_ORDER.filter(k => keys.includes(k));
+  const remaining = keys.filter(k => !STATS_ORDER.includes(k)).sort();
   const all = [...known, ...remaining];
   if (!all.length) return '<div class="text-muted text-sm">ステータス情報なし</div>';
-  return all.map(key => `
-    <div class="stat-row">
-      <span class="label">${escapeHtml(statLabel(key))}</span>
-      <span class="value">${escapeHtml(formatStatValue(key, stats[key]))}</span>
-    </div>
-  `).join('');
+  return all.map(key => {
+    const v = stats[key];
+    // v: {base, add, final} 形式 or 旧レガシー（数値/文字列）
+    if (v && typeof v === 'object' && 'final' in v) {
+      const finalTxt = v.final || '-';
+      const addTxt = v.add && v.add !== '' && v.add !== '0' ? v.add : '';
+      const baseTxt = v.base && v.base !== '' ? v.base : '';
+      const breakdown = (baseTxt || addTxt)
+        ? `<span class="stat-breakdown">${escapeHtml(baseTxt || '-')}${addTxt ? ` <span class="stat-add">+${escapeHtml(addTxt)}</span>` : ''}</span>`
+        : '';
+      return `
+        <div class="stat-row">
+          <span class="label">${escapeHtml(statLabel(key))}</span>
+          <span class="value">
+            <span class="stat-final">${escapeHtml(finalTxt)}</span>
+            ${breakdown}
+          </span>
+        </div>`;
+    }
+    return `
+      <div class="stat-row">
+        <span class="label">${escapeHtml(statLabel(key))}</span>
+        <span class="value">${escapeHtml(formatStatValue(key, v))}</span>
+      </div>`;
+  }).join('');
 }
 
 function renderDiscs(slots) {
@@ -115,13 +135,15 @@ function renderDiscTile(entry) {
   const iconHtml = d.icon_url
     ? `<img class="disc-tile-icon" src="${escapeHtml(d.icon_url)}" alt="" loading="lazy" />`
     : '';
+  const discName = d.name || '';
   return `
-    <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : ''}">
+    <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : ''}${discName ? (shared.length ? ' | ' : '') + discName : ''}">
       <div class="disc-tile-header">
         ${iconHtml}
         <span class="disc-tile-set">${escapeHtml(setName)}${sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : ''}</span>
         <span class="disc-tile-slot">[${d.slot}]</span>
       </div>
+      ${discName ? `<div class="disc-tile-name" title="${escapeHtml(discName)}">${escapeHtml(discName)}</div>` : ''}
       ${level ? `<div class="disc-tile-level">${escapeHtml(level)}</div>` : ''}
       <div class="disc-main">
         <span class="name">${escapeHtml(statLabel(d.main_stat_name))}</span>

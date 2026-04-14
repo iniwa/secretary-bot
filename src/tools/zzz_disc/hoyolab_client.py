@@ -54,21 +54,56 @@ def _as_dict(obj) -> dict:
             if not k.startswith("_") and not callable(getattr(obj, k, None))}
 
 
+# ZZZ S-rank ディスクの 1 ロール（1 強化）あたりの増分値（日本語名ベース）。
+# 参考: 公式データベース / 有志検証値。同じ name でも is_percent で意味が変わるため
+# キーは `name(+%)` で引く。初期値 ≒ 1ロール分と扱えるため総ロール = round(value/per_roll)。
+_ROLL_VALUES_S = {
+    "HP%": 3.0, "攻撃力%": 3.0, "防御力%": 4.8,
+    "会心率": 2.4, "会心ダメージ": 4.8,
+    "異常マスタリー": 9.0,
+    "貫通率": 2.4, "貫通値": 9.0,
+    "HP": 112.0, "攻撃力": 19.0, "防御力": 15.0,
+}
+# A/B は S のおおよそ 0.75 / 0.5 倍（近似値。厳密ではないが整数化すれば十分実用）
+_ROLL_VALUES_A = {k: round(v * 0.75, 3) for k, v in _ROLL_VALUES_S.items()}
+_ROLL_VALUES_B = {k: round(v * 0.50, 3) for k, v in _ROLL_VALUES_S.items()}
+
+
+def _rolls_for(name: str, value: float, rarity: str | None) -> int:
+    """サブステの value から強化回数（初期 1 + 上昇回数）を逆算。
+    不明な name / value=0 の場合は 0。"""
+    if value is None or value <= 0:
+        return 0
+    table = _ROLL_VALUES_S
+    if rarity == "A":
+        table = _ROLL_VALUES_A
+    elif rarity == "B":
+        table = _ROLL_VALUES_B
+    per = table.get(name)
+    if not per:
+        return 0
+    # 四捨五入で近い整数（誤差 0.05 程度を許容）
+    return max(1, int(round(value / per)))
+
+
 def _extract_substats(disc_obj) -> list[dict]:
     # genshin.py v1.7+: disc.properties (list of ZZZProperty with name/value/type)
     subs = _pick(disc_obj, "properties", "sub_properties", "substats", "sub_stats", default=[]) or []
+    rarity = str(_pick(disc_obj, "rarity", default="") or "").upper() or None
     result = []
     for s in subs:
         raw_val = _pick(s, "value", "base", default=0)
         name = str(_pick(s, "name", "property_name", default="") or "")
         is_percent = _is_percent_value(raw_val)
-        # name に `%` を含めて区別可能にする（フロントで判定用）
         if is_percent and not name.endswith("%"):
             name = name + "%"
+        value = _parse_value(raw_val)
+        # HoYoLAB API は roll 回数を公開していないため、値から逆算する
+        rolls = _rolls_for(name, value, rarity)
         result.append({
             "name": name,
-            "value": _parse_value(raw_val),
-            "upgrades": int(_pick(s, "times", "upgrade_times", "upgrades", default=0) or 0),
+            "value": value,
+            "upgrades": rolls,  # 初期1 + 強化回数 を含む総ロール数
             "is_percent": is_percent,
         })
     return result
@@ -134,14 +169,29 @@ def _extract_set_info(disc_obj) -> tuple[str, str | None, str | None, str | None
 
 
 def _extract_agent_stats(agent_obj) -> dict:
-    """エージェントの基本ステータス（HP/ATK/DEF/Crit等）を dict にまとめる。"""
+    """エージェントのステータス。値ごとに base/add/final を保持。
+
+    agent.properties の各要素は {name, type, value, add, final} を持つ:
+      - value: ベース値（キャラ素のステ）
+      - add: 装備/Wエンジン由来の加算
+      - final: 合計
+    値が文字列の場合 ('9%' 等) はフロントでパース表示する。
+    """
     props = _pick(agent_obj, "properties", "stats", default=[]) or []
     stats: dict = {}
     for p in props:
         name = str(_pick(p, "name", "property_name", default="") or "")
-        value = _pick(p, "final", "value", "base", default=None)
-        if name and value is not None:
-            stats[name] = value
+        if not name:
+            continue
+        final = _pick(p, "final", default=None)
+        base = _pick(p, "value", "base", default=None)
+        add = _pick(p, "add", default=None)
+        # 文字列のまま保存（'9%' / '2200' / '1.20' など混在を保持）
+        stats[name] = {
+            "final": "" if final is None else str(final),
+            "base": "" if base is None else str(base),
+            "add": "" if add is None else str(add),
+        }
     level = _pick(agent_obj, "level", default=None)
     if level is not None:
         stats["_level"] = level
@@ -376,6 +426,7 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
             rarity=str(_pick(d, "rarity", default="") or "") or None,
             hoyolab_disc_id=str(_pick(d, "id", "disc_id", default="") or "") or None,
             icon_url=str(_pick(d, "icon", default="") or "") or None,
+            name=str(_pick(d, "name", default="") or "") or None,
         )
         disc_ids_by_slot[slot] = disc_id
         count += 1

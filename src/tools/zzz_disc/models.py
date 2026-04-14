@@ -130,6 +130,7 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "fingerprint", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "icon_url", "TEXT")
+    await _maybe_add_column(db, "zzz_discs", "name", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "email", "TEXT")
@@ -159,11 +160,12 @@ def compute_fingerprint(slot: int, set_id: int | None,
     (slot, set_id, main_stat, 各サブステ{name,value,upgrades}) から計算。
     sub_stats は name の辞書順に正規化。
     """
+    # NOTE: upgrades (強化回数) は value から導出される派生値のため
+    # fingerprint には含めない（再同期の冪等性を保つ）
     subs_norm = sorted(
         [
             [s.get("name") or "",
-             round(float(s.get("value", 0) or 0), 3),
-             int(s.get("upgrades", 0) or 0)]
+             round(float(s.get("value", 0) or 0), 3)]
             for s in (sub_stats or [])
         ],
         key=lambda x: x[0],
@@ -357,6 +359,7 @@ def _disc_row_to_dict(row: dict) -> dict:
         "fingerprint": row.get("fingerprint"),
         "hoyolab_disc_id": row.get("hoyolab_disc_id"),
         "icon_url": row.get("icon_url"),
+        "name": row.get("name"),
         "source_image_path": row.get("source_image_path"),
         "note": row.get("note"),
         "created_at": row.get("created_at"),
@@ -415,29 +418,36 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
                       rarity: str | None = None,
                       hoyolab_disc_id: str | None = None,
                       icon_url: str | None = None,
+                      name: str | None = None,
                       source_image_path: str | None = None,
                       note: str | None = None) -> int:
     """fingerprint で既存検索して重複排除。既存があれば既存 id を返す。
-    既存に icon_url が無く今回取得できた場合は補填する。"""
+    既存に icon_url / name が無く今回取得できた場合は補填する。"""
     fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
     existing = await db.fetchone(
-        "SELECT id, icon_url FROM zzz_discs WHERE fingerprint = ?", (fp,))
+        "SELECT id, icon_url, name FROM zzz_discs WHERE fingerprint = ?", (fp,))
     if existing:
+        sets, params = [], []
         if icon_url and not existing.get("icon_url"):
+            sets.append("icon_url = ?"); params.append(icon_url)
+        if name and not existing.get("name"):
+            sets.append("name = ?"); params.append(name)
+        if sets:
+            params.append(existing["id"])
             await db.execute(
-                "UPDATE zzz_discs SET icon_url = ? WHERE id = ?",
-                (icon_url, existing["id"]),
+                f"UPDATE zzz_discs SET {', '.join(sets)} WHERE id = ?",
+                tuple(params),
             )
         return existing["id"]
     now = _now()
     cursor = await db.execute(
         "INSERT INTO zzz_discs (slot, set_id, main_stat_name, main_stat_value, "
-        "sub_stats_json, level, rarity, fingerprint, hoyolab_disc_id, icon_url, "
+        "sub_stats_json, level, rarity, fingerprint, hoyolab_disc_id, icon_url, name, "
         "source_image_path, note, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (slot, set_id, main_stat_name, main_stat_value,
          json.dumps(sub_stats, ensure_ascii=False),
-         level, rarity, fp, hoyolab_disc_id, icon_url,
+         level, rarity, fp, hoyolab_disc_id, icon_url, name,
          source_image_path, note, now, now),
     )
     return cursor.lastrowid

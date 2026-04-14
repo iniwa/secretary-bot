@@ -641,7 +641,17 @@ h3 { font-size: 1rem; font-weight: 600; }
   border-bottom: 1px dashed var(--border);
 }
 .stat-row .label { color: var(--text-secondary); }
-.stat-row .value { font-weight: 600; font-family: 'Cascadia Code', monospace; }
+.stat-row .value { font-weight: 600; font-family: 'Cascadia Code', monospace; display: inline-flex; align-items: baseline; gap: 8px; }
+.stat-final { color: var(--text-primary); }
+.stat-breakdown { font-weight: 400; font-size: 0.72rem; color: var(--text-muted); }
+.stat-add { color: var(--success, #4ade80); }
+.disc-tile-name {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Disc grid (2x3) */
 .disc-grid {
