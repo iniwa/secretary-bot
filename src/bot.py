@@ -496,32 +496,26 @@ async def _restore_settings(bot: SecretaryBot) -> None:
                 chat_cfg[short_key] = value
         log.info("Restored chat settings from DB")
 
-    # InnerMind設定
-    im_settings = await bot.database.get_all_settings("inner_mind.")
-    if im_settings:
-        im_cfg = bot.config.setdefault("inner_mind", {})
-        for key, value in im_settings.items():
-            short_key = key.removeprefix("inner_mind.")
-            if short_key == "enabled":
-                im_cfg[short_key] = value == "true"
-            elif short_key in ("min_speak_interval_minutes",):
-                try:
-                    im_cfg[short_key] = int(value)
-                except ValueError:
-                    im_cfg[short_key] = value
-            else:
-                im_cfg[short_key] = value
-        log.info("Restored inner_mind settings from DB")
-
     # ペルソナ
     saved_persona = await bot.database.get_setting("character.persona")
     if saved_persona is not None:
         bot.config.setdefault("character", {})["persona"] = saved_persona
         log.info("Restored persona from DB")
 
+    # 型ヒント: 数字のみでも str のまま保持すべきキー（Discord ID・カンマ区切り文字列等）
+    _STR_KEYS: frozenset[str] = frozenset({
+        "inner_mind.speak_channel_id",
+        "inner_mind.target_user_id",
+        "inner_mind.autonomy.mode",
+        "inner_mind.autonomy.concurrent_pending",
+        "inner_mind.autonomy.t2_allowed_units",
+        "inner_mind.autonomy.t3_allowed_units",
+    })
+
     # 汎用 domain 復元（seed 対応 domain をまとめて config に反映）
-    # キャラクター/Chat/Weather/SearXNG/STT/RSS/Activity/Docker Monitor/Memory/Delegation thresholds
-    def _coerce(val: str):
+    def _coerce(val: str, *, full_key: str = ""):
+        if full_key in _STR_KEYS:
+            return val
         # bool → 'true'/'false'
         if val == "true":
             return True
@@ -551,6 +545,7 @@ async def _restore_settings(bot: SecretaryBot) -> None:
         ("memory.", "memory"),
         ("delegation.", "delegation"),
         ("character.", "character"),
+        ("inner_mind.", "inner_mind"),
     )
     for prefix, root in _GENERIC_DOMAINS:
         flat = await bot.database.get_all_settings(prefix)
@@ -562,7 +557,7 @@ async def _restore_settings(bot: SecretaryBot) -> None:
             cur = section
             for seg in path[:-1]:
                 cur = cur.setdefault(seg, {})
-            cur[path[-1]] = _coerce(value)
+            cur[path[-1]] = _coerce(value, full_key=key)
         log.info("Restored %s settings from DB", root)
 
 
