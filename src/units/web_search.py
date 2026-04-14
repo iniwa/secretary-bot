@@ -55,6 +55,7 @@ class WebSearchUnit(BaseUnit):
     UNIT_DESCRIPTION = "ネットで調べもの・検索。「〜を調べて」「〜って何？」「最新の〜は？」など。"
     AUTONOMY_TIER = 3
     AUTONOMOUS_ACTIONS = ["search"]
+    AUTONOMY_HINT = "search: params={\"query\":str}。ユーザーの未解決の疑問や『調べておいて』に類する発言があった時に提案。"
 
     def __init__(self, bot):
         super().__init__(bot)

@@ -145,9 +145,13 @@ class InnerMind:
             context = await self._collect_context()
 
             # コンテキスト鮮度チェック（段階的スキップ）
+            sources = context["sources"]
+            current_mood = str((context.get("self_model") or {}).get("mood", ""))
             ctx_key = (
                 context["discord_status"]
-                + "|".join(sr["text"][:200] for sr in context["sources"])
+                + str(len(sources))
+                + current_mood
+                + "".join(sr["text"] for sr in sources)
             )
             ctx_hash = hashlib.md5(ctx_key.encode()).hexdigest()
 
@@ -161,8 +165,8 @@ class InnerMind:
                         self._stale_count,
                     )
                     return
-                if self._stale_count >= 3:
-                    # 3回連続不変 → 鮮度メモを付与して思考は続行
+                if self._stale_count >= 2:
+                    # 2回連続不変 → 鮮度メモを付与して思考は続行
                     staleness_note = (
                         "コンテキストに大きな変化はありません。"
                         "無理に考える必要はなく、「特になし」でOKです。"
@@ -640,7 +644,11 @@ class InnerMind:
             unit_name, method = key.split(".", 1)
             cog = self.bot.get_cog(unit_name)
             desc = getattr(cog, "UNIT_DESCRIPTION", "") if cog else ""
-            lines.append(f"- {key}: {desc[:60]}")
+            hint = getattr(cog, "AUTONOMY_HINT", "") if cog else ""
+            entry = f"- {key}: {desc[:60]}"
+            if hint:
+                entry += f"\n  hint: {hint}"
+            lines.append(entry)
         return "\n".join(lines) if lines else f"（Tier{tier} の許可アクションなし）"
 
     # --- Discord ステータス取得 ---

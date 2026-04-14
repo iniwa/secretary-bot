@@ -353,6 +353,17 @@ export function render() {
     </div>
   </div>
 
+  <!-- Recent Dispatches Card -->
+  <div class="card">
+    <div class="card-header"><h3>直近 dispatch 結果</h3></div>
+    <div class="im-ctx-actions">
+      <button class="btn btn-sm" id="im-dispatch-refresh">Refresh</button>
+    </div>
+    <div class="im-ctx-list" id="im-dispatch-list">
+      <div class="im-ctx-empty">Loading...</div>
+    </div>
+  </div>
+
 </div>`;
 }
 
@@ -473,6 +484,48 @@ async function saveSettings() {
   }
 }
 
+async function loadDispatches() {
+  const list = $('im-dispatch-list');
+  if (!list) return;
+  list.innerHTML = '<div class="im-ctx-empty">Loading...</div>';
+  try {
+    const data = await api('/api/inner-mind/dispatches?limit=20');
+    const rows = data.dispatches || [];
+    if (!rows.length) {
+      list.innerHTML = '<div class="im-ctx-empty">No dispatches yet.</div>';
+      return;
+    }
+    list.innerHTML = rows.map(r => {
+      let resultText = '';
+      const raw = r.action_result;
+      if (raw) {
+        try {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          resultText = JSON.stringify(parsed, null, 2);
+        } catch {
+          resultText = String(raw);
+        }
+      }
+      const status = (() => {
+        try {
+          const p = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+          return p && p.status ? p.status : '-';
+        } catch { return '-'; }
+      })();
+      const time = `<span title="${esc(fullDatetime(r.created_at))}">${timeAgo(r.created_at)}</span>`;
+      const head = `${time} | <strong>${esc(r.action || '')}</strong> | ${esc(r.reasoning || '')} | status=${esc(status)}`;
+      const body = resultText
+        ? `<div class="im-ctx-body" style="display:block"><pre class="im-ctx-text">${esc(resultText)}</pre></div>`
+        : '';
+      return `<div class="im-ctx-source open"><div class="im-ctx-header"><span class="im-ctx-name">${head}</span></div>${body}</div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Load dispatches:', err);
+    list.innerHTML = '<div class="im-ctx-empty">Failed to load dispatches.</div>';
+    toast('Failed to load dispatches', 'error');
+  }
+}
+
 // ============================================================
 // Event helpers
 // ============================================================
@@ -497,6 +550,9 @@ export async function mount() {
   // Context refresh
   $('im-ctx-refresh')?.addEventListener('click', loadContext);
 
+  // Dispatches refresh
+  $('im-dispatch-refresh')?.addEventListener('click', loadDispatches);
+
   // Load all data in parallel
-  await Promise.all([loadStatus(), loadSettings(), loadContext()]);
+  await Promise.all([loadStatus(), loadSettings(), loadContext(), loadDispatches()]);
 }

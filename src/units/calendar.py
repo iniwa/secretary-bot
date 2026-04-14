@@ -80,6 +80,7 @@ class CalendarUnit(BaseUnit):
     )
     AUTONOMY_TIER = 3
     AUTONOMOUS_ACTIONS = ["create_event"]
+    AUTONOMY_HINT = "create_event: params={\"title\":str, \"start\":\"YYYY-MM-DD HH:MM\", \"end\":\"YYYY-MM-DD HH:MM\"}。ユーザーが予定を匂わせたが未登録の時に提案。"
 
     def __init__(self, bot):
         super().__init__(bot)

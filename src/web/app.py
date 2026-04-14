@@ -1445,6 +1445,22 @@ def create_web_app(bot) -> FastAPI:
 
         return {"ok": True}
 
+    @app.get("/api/inner-mind/dispatches", dependencies=[Depends(_verify)])
+    async def get_inner_mind_dispatches(limit: int = 20):
+        """直近の dispatch 結果（mimi_monologue のうち action 実行あり）を返す。"""
+        try:
+            limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit = 20
+        rows = await bot.database.fetchall(
+            "SELECT id, created_at, action, reasoning, action_result, pending_id "
+            "FROM mimi_monologue "
+            "WHERE action IS NOT NULL AND action != 'no_op' "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return {"dispatches": rows}
+
     # --- InnerMind 自律: pending_actions ---
 
     @app.get("/api/inner-mind/autonomy", dependencies=[Depends(_verify)])

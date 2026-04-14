@@ -69,6 +69,7 @@ class ReminderUnit(BaseUnit):
     UNIT_DESCRIPTION = "リマインダーやToDoの登録・一覧・編集・削除・完了管理。「〜時に教えて」「やることリスト」など。"
     AUTONOMY_TIER = 2
     AUTONOMOUS_ACTIONS = ["add"]
+    AUTONOMY_HINT = "add: params={\"text\":str, \"when\":\"YYYY-MM-DD HH:MM\" or 相対表現}。ユーザーが『〇時に〜』等と言ったが確定リマインダーがない時に提案。"
 
     def __init__(self, bot):
         super().__init__(bot)

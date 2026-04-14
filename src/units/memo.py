@@ -32,6 +32,7 @@ class MemoUnit(BaseUnit):
     UNIT_DESCRIPTION = "メモの保存やキーワード検索。「〜をメモして」「〜のメモある？」など。"
     AUTONOMY_TIER = 2
     AUTONOMOUS_ACTIONS = ["add"]
+    AUTONOMY_HINT = "add: params={\"text\":str}。ユーザーが『メモしといて』『覚えておいて』と言ったが未登録の時に提案。"
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()

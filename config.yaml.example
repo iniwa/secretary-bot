@@ -235,7 +235,6 @@ wol:
 inner_mind:
   enabled: true
   thinking_interval_ticks: 2      # ハートビート何回に1回思考するか（15分×2=30分）
-  speak_probability: 0.20         # 発言確率（0.0〜1.0）
   min_speak_interval_minutes: 0   # 最低発言インターバル（分）。0=制限なし
   speak_channel_id: ""            # 自発発言を送るDiscordチャンネルID
   target_user_id: ""              # Discordステータスを監視するユーザーID

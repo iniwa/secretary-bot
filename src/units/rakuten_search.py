@@ -254,6 +254,7 @@ class RakutenSearchUnit(BaseUnit):
     UNIT_DESCRIPTION = "楽天市場で商品を検索・提案する。「楽天で◯◯を探して」「楽天でおすすめの◯◯は？」「楽天で安い◯◯を教えて」など。"
     AUTONOMY_TIER = 3
     AUTONOMOUS_ACTIONS = ["search"]
+    AUTONOMY_HINT = "search: params={\"keyword\":str}。ユーザーが商品名・買いたい物を話題にした直後のみ提案。"
 
     def __init__(self, bot):
         super().__init__(bot)

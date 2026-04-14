@@ -82,6 +82,7 @@ class WeatherUnit(BaseUnit):
     UNIT_DESCRIPTION = "天気予報の取得や毎朝の天気通知登録。「東京の天気」「明日の天気」「毎朝教えて」など。"
     AUTONOMY_TIER = 0
     AUTONOMOUS_ACTIONS = ["get_current"]
+    AUTONOMY_HINT = "get_current: params={}。ユーザーが天気の話題を出した時の補助情報取得。"
 
     def __init__(self, bot):
         super().__init__(bot)

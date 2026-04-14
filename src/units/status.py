@@ -9,6 +9,7 @@ class StatusUnit(BaseUnit):
     UNIT_DESCRIPTION = "PCやサーバーの稼働状況を確認。「PCは起きてる？」「ステータス確認」など。"
     AUTONOMY_TIER = 0
     AUTONOMOUS_ACTIONS = ["get"]
+    AUTONOMY_HINT = "get: params={}。システム状態を取得する軽量アクション。"
 
     async def execute(self, ctx, parsed: dict) -> str | None:
         ft = get_flow_tracker()

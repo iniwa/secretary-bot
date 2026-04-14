@@ -25,6 +25,8 @@ class BaseUnit(commands.Cog):
     AUTONOMY_TIER: int = 4
     # 自律的に呼び出し可能なアクション名のリスト（method名を想定）。
     AUTONOMOUS_ACTIONS: list[str] = []
+    # 自律行動時のヒント（params形式・発動条件を1-2行で）。LLMのプロンプトに展開される。
+    AUTONOMY_HINT: str = ""
 
     def __init__(self, bot):
         self.bot = bot

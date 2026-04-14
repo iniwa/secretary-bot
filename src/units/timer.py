@@ -27,6 +27,7 @@ class TimerUnit(BaseUnit):
     UNIT_DESCRIPTION = "指定時間後に通知するタイマー。「30分後に教えて」「5分タイマー」など。"
     AUTONOMY_TIER = 2
     AUTONOMOUS_ACTIONS = ["add"]
+    AUTONOMY_HINT = "add: params={\"minutes\":int, \"label\":str}。ユーザーが『〇分後に〜』と言ったが未登録の時に提案。"
 
     def __init__(self, bot):
         super().__init__(bot)

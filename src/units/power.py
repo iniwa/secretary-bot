@@ -43,6 +43,7 @@ class PowerUnit(BaseUnit):
     UNIT_DESCRIPTION = "PCの電源管理。起動（WoL）・シャットダウン・再起動。「メインPCを起動して」「PCをシャットダウン」など。"
     AUTONOMY_TIER = 3
     AUTONOMOUS_ACTIONS = ["sleep", "shutdown"]
+    AUTONOMY_HINT = "sleep/shutdown: params={\"target\":\"main\"|\"sub\"}。深夜帯でPC稼働中かつユーザーoffline時のみ提案。破壊的なので慎重に。"
 
     ADMIN_ONLY = True
 

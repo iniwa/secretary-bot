@@ -84,11 +84,24 @@ class Actuator:
 
         return: {"status": "executed"|"queued"|"skipped"|"failed", "pending_id": int|None, ...}
         """
+        action = decision.get("action") or ""
+        result = await self._dispatch_inner(decision, monologue_id, action)
+        try:
+            log.info(
+                "actuator dispatch: action=%s status=%s reason=%s",
+                action, result.get("status"), result.get("reason", ""),
+            )
+        except Exception:
+            pass
+        return result
+
+    async def _dispatch_inner(
+        self, decision: dict, monologue_id: int | None, action: str,
+    ) -> dict:
         mode = await self._mode()
         if mode == "off":
             return {"status": "skipped", "reason": "autonomy_off"}
 
-        action = decision.get("action") or ""
         unit_name = decision.get("unit") or ""
         method = decision.get("method") or ""
 
@@ -149,6 +162,33 @@ class Actuator:
     # --- 実行系 ---
 
     async def _execute_speak(self, decision: dict) -> dict:
+        # 最低発言インターバル enforce
+        try:
+            min_interval = int(await self._get_setting("inner_mind.min_speak_interval_minutes", "0"))
+        except (TypeError, ValueError):
+            min_interval = 0
+        if min_interval > 0:
+            row = await self.bot.database.fetchone(
+                "SELECT created_at FROM mimi_monologue "
+                "WHERE action='speak' ORDER BY id DESC LIMIT 1",
+            )
+            if row and row.get("created_at"):
+                raw = row["created_at"]
+                try:
+                    last_dt = raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=JST)
+                    else:
+                        last_dt = last_dt.astimezone(JST)
+                    elapsed_min = int((jst_now() - last_dt).total_seconds() // 60)
+                    if elapsed_min < min_interval:
+                        return {
+                            "status": "skipped",
+                            "reason": f"speak_interval:last={elapsed_min}min<min={min_interval}min",
+                        }
+                except Exception:
+                    pass
+
         text = decision.get("params", {}).get("text") or decision.get("text") or ""
         if not text:
             return {"status": "failed", "reason": "empty_speak"}
