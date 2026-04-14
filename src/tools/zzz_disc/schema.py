@@ -10,6 +10,7 @@ class SubStat(BaseModel):
     name: str
     value: float
     upgrades: int = 0
+    is_percent: bool = False
 
 
 class DiscIn(BaseModel):

@@ -77,6 +77,7 @@ export function render() {
       </div>
       <div class="row">
         <button class="btn btn-primary" id="sync-all-btn">全キャラ同期</button>
+        <button class="btn btn-danger" id="reset-btn" title="HoYoLAB 由来のディスク/ビルド/重複キャラを全削除">同期データをリセット</button>
         <div class="flex-1"></div>
         <span id="sync-status" class="text-sm text-muted"></span>
       </div>
@@ -96,7 +97,22 @@ export async function mount() {
   document.getElementById('auto-login-btn').addEventListener('click', autoLogin);
   document.getElementById('refresh-btn').addEventListener('click', refreshCookie);
   document.getElementById('clear-cred-btn').addEventListener('click', clearCredentials);
+  document.getElementById('reset-btn').addEventListener('click', resetSynced);
   await loadAccount();
+}
+
+async function resetSynced() {
+  if (!confirm('HoYoLAB 同期で作成されたディスク・ビルド・重複キャラを全削除します。よろしいですか？\n（プリセットの標準キャラは残ります）')) return;
+  const btn = document.getElementById('reset-btn');
+  btn.disabled = true;
+  try {
+    const res = await api('/hoyolab/reset', { method: 'POST' });
+    toast(`リセット完了: discs=${res.discs} / builds=${res.builds} / chars=${res.chars}`, 'success');
+  } catch (err) {
+    toast(`リセット失敗: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadAccount() {

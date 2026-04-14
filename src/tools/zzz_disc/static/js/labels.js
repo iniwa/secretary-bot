@@ -36,7 +36,9 @@ export function formatStatValue(key, value) {
   if (value == null || value === '') return '-';
   const num = typeof value === 'number' ? value : parseFloat(value);
   if (!Number.isFinite(num)) return String(value);
-  const isPercent = /_pct$|_rate$|_dmg$|_ratio$|_bonus$|_regen$/.test(key);
+  // 日本語名末尾の % もしくは _pct/_rate 等で割合扱い
+  const isPercent = /%$/.test(String(key))
+    || /_pct$|_rate$|_dmg$|_ratio$|_bonus$|_regen$/.test(key);
   if (isPercent) return `${num.toFixed(1)}%`;
   return String(Math.round(num));
 }
@@ -47,6 +49,9 @@ export const ELEMENT_LABELS = {
   ice: '氷',
   electric: '電気',
   ether: 'エーテル',
+  // ZZZ 数値 ID（HoYoLAB 互換）
+  200: '物理', 201: '炎', 202: '氷', 203: '電気', 205: 'エーテル',
+  '200': '物理', '201': '炎', '202': '氷', '203': '電気', '205': 'エーテル',
 };
 
 export function elementLabel(key) {

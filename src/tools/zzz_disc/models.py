@@ -773,6 +773,29 @@ async def update_hoyolab_synced(db, uid: str) -> None:
     )
 
 
+async def reset_hoyolab_synced_data(db) -> dict:
+    """HoYoLAB 同期で作られたデータを一掃する。
+
+    - slug が hoyolab-* の重複キャラを削除（元のプリセットキャラは残す）
+    - 全 current ビルドと build_slots を削除（再同期で復活）
+    - 全 disc を削除（HoYoLAB 同期由来が大半。手動登録分があれば失われる点に注意）
+
+    Returns: {'chars': n, 'builds': n, 'discs': n}
+    """
+    c = await db.execute_returning_rowcount(
+        "DELETE FROM zzz_build_slots WHERE build_id IN "
+        "(SELECT id FROM zzz_builds WHERE is_current = 1)"
+    )
+    b = await db.execute_returning_rowcount(
+        "DELETE FROM zzz_builds WHERE is_current = 1"
+    )
+    d = await db.execute_returning_rowcount("DELETE FROM zzz_discs")
+    ch = await db.execute_returning_rowcount(
+        "DELETE FROM zzz_characters WHERE slug LIKE 'hoyolab-%'"
+    )
+    return {"slots": c, "builds": b, "discs": d, "chars": ch}
+
+
 # ---------- Jobs（既存維持） ----------
 
 def _job_row_to_dict(row: dict) -> dict:

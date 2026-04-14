@@ -59,10 +59,17 @@ def _extract_substats(disc_obj) -> list[dict]:
     subs = _pick(disc_obj, "properties", "sub_properties", "substats", "sub_stats", default=[]) or []
     result = []
     for s in subs:
+        raw_val = _pick(s, "value", "base", default=0)
+        name = str(_pick(s, "name", "property_name", default="") or "")
+        is_percent = _is_percent_value(raw_val)
+        # name に `%` を含めて区別可能にする（フロントで判定用）
+        if is_percent and not name.endswith("%"):
+            name = name + "%"
         result.append({
-            "name": str(_pick(s, "name", "property_name", default="") or ""),
-            "value": _parse_value(_pick(s, "value", "base", default=0)),
+            "name": name,
+            "value": _parse_value(raw_val),
             "upgrades": int(_pick(s, "times", "upgrade_times", "upgrades", default=0) or 0),
+            "is_percent": is_percent,
         })
     return result
 
@@ -79,6 +86,11 @@ def _parse_value(v) -> float:
     return 0.0
 
 
+def _is_percent_value(v) -> bool:
+    """HoYoLAB レスポンスの value 文字列に `%` が含まれているか。"""
+    return isinstance(v, str) and "%" in v
+
+
 def _extract_main_stat(disc_obj) -> tuple[str, float]:
     # genshin.py v1.7+: disc.main_properties (list, 通常 1件)
     mains = _pick(disc_obj, "main_properties", default=None)
@@ -89,9 +101,11 @@ def _extract_main_stat(disc_obj) -> tuple[str, float]:
         main = _pick(disc_obj, "main_property", "main_stat", "mainstat")
     if not main:
         return ("", 0.0)
+    raw_val = _pick(main, "value", "base", default=0)
     name = str(_pick(main, "name", "property_name", default="") or "")
-    value = _parse_value(_pick(main, "value", "base", default=0))
-    return (name, value)
+    if _is_percent_value(raw_val) and not name.endswith("%"):
+        name = name + "%"
+    return (name, _parse_value(raw_val))
 
 
 def _extract_slot(disc_obj) -> int:
@@ -157,7 +171,8 @@ async def sync_current_builds(db, account: dict,
         if acc.get("account_id_v2"):
             cookies["account_id_v2"] = acc["account_id_v2"]
         client = genshin.Client(cookies=cookies,
-                                game=getattr(genshin.Game, "ZZZ", None))
+                                game=getattr(genshin.Game, "ZZZ", None),
+                                lang="ja-jp")
         return await _fetch_agents(client, uid)
 
     try:
@@ -188,7 +203,8 @@ async def sync_current_builds(db, account: dict,
         cookies["account_mid_v2"] = account["account_mid_v2"]
     if account.get("account_id_v2"):
         cookies["account_id_v2"] = account["account_id_v2"]
-    client = genshin.Client(cookies=cookies, game=getattr(genshin.Game, "ZZZ", None))
+    client = genshin.Client(cookies=cookies, game=getattr(genshin.Game, "ZZZ", None),
+                            lang="ja-jp")
     if filter_hoyolab_id:
         agents = [
             a for a in agents
@@ -279,18 +295,32 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
         or _pick(detail, "banner_icon", default=None)
         or _pick(agent, "banner_icon", default=None)
     )
-    agent_element = str(_pick(agent, "element", default="") or
-                        _pick(detail, "element", default="") or "") or None
+    # element: ZZZElementType(int enum) → 日本語ラベルに変換
+    _ELEMENT_JA = {200: "物理", 201: "炎", 202: "氷", 203: "電気", 205: "エーテル"}
+    raw_elem = _pick(agent, "element", default=None) or _pick(detail, "element", default=None)
+    if hasattr(raw_elem, "value"):
+        raw_elem = raw_elem.value
+    try:
+        agent_element = _ELEMENT_JA.get(int(raw_elem)) if raw_elem is not None else None
+    except (TypeError, ValueError):
+        agent_element = str(raw_elem) if raw_elem else None
     agent_faction = str(_pick(agent, "faction_name", default="") or
                         _pick(detail, "faction_name", default="") or "") or None
 
     # character を upsert（slug = hoyolab-{agent_id}）
+    # 優先度: ① hoyolab_agent_id 一致 → ② name_ja 一致（プリセット優先で最古のを採用）
     slug_candidate = f"hoyolab-{agent_id}"
     existing = await db.fetchone(
         "SELECT id, icon_url, element, faction, hoyolab_agent_id "
-        "FROM zzz_characters WHERE hoyolab_agent_id = ? OR name_ja = ?",
-        (str(agent_id), name_ja),
+        "FROM zzz_characters WHERE hoyolab_agent_id = ? LIMIT 1",
+        (str(agent_id),),
     )
+    if not existing:
+        existing = await db.fetchone(
+            "SELECT id, icon_url, element, faction, hoyolab_agent_id "
+            "FROM zzz_characters WHERE name_ja = ? ORDER BY id ASC LIMIT 1",
+            (name_ja,),
+        )
     if existing:
         character_id = existing["id"]
         sets, params = [], []

@@ -398,6 +398,12 @@ def build_router(bot, config: dict) -> APIRouter:
             raise HTTPException(502, f"再ログイン失敗: {e}")
         return {"ok": True, "ltuid_v2": cookies["ltuid_v2"]}
 
+    @router.post("/api/hoyolab/reset")
+    async def post_hoyolab_reset():
+        """HoYoLAB 同期データを一掃（キャラ重複解消・再同期用）。"""
+        result = await models.reset_hoyolab_synced_data(db)
+        return {"ok": True, **result}
+
     @router.post("/api/hoyolab/sync")
     async def post_hoyolab_sync():
         try:
