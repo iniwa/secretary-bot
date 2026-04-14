@@ -411,6 +411,19 @@ def create_web_app(bot) -> FastAPI:
                 ).stdout.strip()
 
                 if hash_before == remote_hash:
+                    # 親リポが最新でも、サブモジュールの追跡ブランチは進んでいる
+                    # 可能性があるので、ここでも submodule update を実行
+                    sub_result = subprocess.run(
+                        ["git", "submodule", "update", "--init", "--recursive", "--remote"],
+                        cwd=git_dir, capture_output=True, text=True, timeout=120,
+                    )
+                    sub_changed = False
+                    if sub_result.returncode != 0:
+                        log.warning("submodule update failed: %s", sub_result.stderr.strip())
+                    elif sub_result.stdout.strip():
+                        log.info("submodule updated (main at head): %s", sub_result.stdout.strip())
+                        sub_changed = True
+
                     # Pi は最新だが、エージェント側が古い可能性があるのでチェック
                     agent_versions = await _get_all_agent_versions(bot)
                     stale_agents = [
@@ -431,6 +444,15 @@ def create_web_app(bot) -> FastAPI:
                             "agents": agent_update_results,
                             "agents_restart": agent_restart_results,
                         }
+                    if sub_changed:
+                        # サブモジュールが進んだので再起動してコードを反映
+                        background_tasks.add_task(_delayed_restart, 2)
+                        return {
+                            "updated": True,
+                            "message": f"親リポは最新 ({hash_before[:7]}) / サブモジュール更新あり",
+                            "restarted": True,
+                            "restart_detail": "サブモジュール反映のため再起動します…",
+                        }
                     return {"updated": False, "message": f"Already up to date. ({hash_before[:7]})", "restarted": False, "restart_detail": "変更なしのためスキップ"}
 
                 # pull
@@ -447,12 +469,17 @@ def create_web_app(bot) -> FastAPI:
                 log.info("Code updated: %s -> %s", hash_before[:7], remote_hash[:7])
 
                 # サブモジュール更新
+                # --init: 未初期化なら clone
+                # --remote: 親リポが記録している commit ではなく、各サブモジュールの
+                #           追跡ブランチ最新まで進める（親の pin は無視）
                 sub_result = subprocess.run(
-                    ["git", "submodule", "update", "--init", "--recursive"], cwd=git_dir,
-                    capture_output=True, text=True, timeout=60,
+                    ["git", "submodule", "update", "--init", "--recursive", "--remote"],
+                    cwd=git_dir, capture_output=True, text=True, timeout=120,
                 )
                 if sub_result.returncode != 0:
                     log.warning("submodule update failed: %s", sub_result.stderr.strip())
+                elif sub_result.stdout.strip():
+                    log.info("submodule updated: %s", sub_result.stdout.strip())
 
                 # 全Windows Agentに更新を通知（並列・8秒timeout）
                 agent_update_results = await _update_all_agents(bot)
