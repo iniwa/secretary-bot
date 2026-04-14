@@ -116,16 +116,56 @@ async def sync_current_builds(db, account: dict,
     """HoYoLAB から取得 → zzz_discs / zzz_builds / zzz_build_slots に反映。
 
     filter_hoyolab_id が指定されていれば、その agent_id を持つ1キャラのみ同期。
+    cookie 失効時は auto_login_enabled かつ email/password が保存されていれば
+    自動ログインで cookies を更新し、一度だけリトライする。
     """
     genshin = await _load_client()
+    uid = int(account["uid"])
+
+    async def _run(acc: dict) -> list:
+        cookies = {
+            "ltuid_v2": acc["ltuid_v2"],
+            "ltoken_v2": acc["ltoken_v2"],
+        }
+        if acc.get("ltmid_v2"):
+            cookies["ltmid_v2"] = acc["ltmid_v2"]
+        if acc.get("account_mid_v2"):
+            cookies["account_mid_v2"] = acc["account_mid_v2"]
+        if acc.get("account_id_v2"):
+            cookies["account_id_v2"] = acc["account_id_v2"]
+        client = genshin.Client(cookies=cookies,
+                                game=getattr(genshin.Game, "ZZZ", None))
+        return await _fetch_agents(client, uid)
+
+    try:
+        agents = await _run(account)
+    except Exception as e:
+        # cookie 失効 → 自動リフレッシュしてリトライ
+        is_auth_err = isinstance(e, getattr(genshin, "InvalidCookies", type(None))) \
+            or "invalid" in str(e).lower() and "cookie" in str(e).lower() \
+            or "10001" in str(e) or "-100" in str(e)
+        if not is_auth_err or not account.get("auto_login_enabled") \
+                or not (account.get("email") and account.get("password")):
+            raise
+        log.warning("HoYoLAB cookie 失効の可能性。自動ログインで再取得を試行")
+        from . import hoyolab_auth
+        await hoyolab_auth.refresh_account_cookies(db, account)
+        account = await models.get_hoyolab_account(db) or account
+        agents = await _run(account)
+
+    # agents 取得後は詳細取得のため再利用する client が必要。_run は agents だけ返すので
+    # 再構築する。
     cookies = {
         "ltuid_v2": account["ltuid_v2"],
         "ltoken_v2": account["ltoken_v2"],
     }
+    if account.get("ltmid_v2"):
+        cookies["ltmid_v2"] = account["ltmid_v2"]
+    if account.get("account_mid_v2"):
+        cookies["account_mid_v2"] = account["account_mid_v2"]
+    if account.get("account_id_v2"):
+        cookies["account_id_v2"] = account["account_id_v2"]
     client = genshin.Client(cookies=cookies, game=getattr(genshin.Game, "ZZZ", None))
-    uid = int(account["uid"])
-
-    agents = await _fetch_agents(client, uid)
     if filter_hoyolab_id:
         agents = [
             a for a in agents

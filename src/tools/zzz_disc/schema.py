@@ -141,11 +141,32 @@ class HoyolabAccountIn(BaseModel):
     nickname: str | None = None
 
 
+class HoyolabCredentialsIn(BaseModel):
+    """自動ログイン用 email/password の保存。"""
+    email: str
+    password: str
+    auto_login_enabled: bool = True
+
+
+class HoyolabAutoLoginIn(BaseModel):
+    """ワンショット自動ログイン（credentials は任意で保存）。"""
+    email: str
+    password: str
+    uid: str | None = None       # 未登録時の初回登録用
+    region: str | None = None    # 未登録時の初回登録用
+    nickname: str | None = None
+    save_credentials: bool = True
+
+
 class HoyolabAccountOut(BaseModel):
     uid: str
     region: str
     nickname: str | None = None
     last_synced_at: str | None = None
+    auto_login_enabled: bool = False
+    last_auto_login_at: str | None = None
+    last_auto_login_error: str | None = None
+    email: str | None = None  # password は返さない
 
 
 class HoyolabSyncResult(BaseModel):

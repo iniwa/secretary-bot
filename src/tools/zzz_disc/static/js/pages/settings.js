@@ -44,6 +44,33 @@ export function render() {
     </div>
 
     <div class="settings-section">
+      <h3>🔐 自動ログイン（miHoYo / HoYoverse ID）</h3>
+      <div class="hint">
+        email/password を保存しておくと、cookie 失効時に自動で再取得します。
+        2FA / captcha が有効なアカウントでは動作しません（その場合は手動 cookie 登録をご利用ください）。
+        <br><strong>注意:</strong> password は平文で Pi 上の SQLite に保存されます。
+      </div>
+      <div class="form-grid">
+        <label>email</label>
+        <input type="email" id="f-email" placeholder="HoYoverse ID の email" autocomplete="off" />
+
+        <label>password</label>
+        <input type="password" id="f-password" placeholder="（未変更なら空欄）" autocomplete="new-password" />
+
+        <label>自動ログイン</label>
+        <label class="inline-label"><input type="checkbox" id="f-auto-enabled" /> 有効化</label>
+      </div>
+      <div class="row mt-2">
+        <button class="btn btn-primary" id="save-cred-btn">資格情報を保存</button>
+        <button class="btn" id="auto-login-btn">今すぐ自動ログイン</button>
+        <button class="btn" id="refresh-btn">cookie 再取得</button>
+        <button class="btn btn-danger" id="clear-cred-btn">資格情報を削除</button>
+        <div class="flex-1"></div>
+        <span id="cred-status" class="text-sm text-muted"></span>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>同期</h3>
       <div class="hint">
         保存済みアカウントを使って、プロフィール（showcase）から装備情報を取り込みます。
@@ -65,6 +92,10 @@ export async function mount() {
   document.getElementById('save-btn').addEventListener('click', save);
   document.getElementById('test-btn').addEventListener('click', testConnection);
   document.getElementById('sync-all-btn').addEventListener('click', syncAll);
+  document.getElementById('save-cred-btn').addEventListener('click', saveCredentials);
+  document.getElementById('auto-login-btn').addEventListener('click', autoLogin);
+  document.getElementById('refresh-btn').addEventListener('click', refreshCookie);
+  document.getElementById('clear-cred-btn').addEventListener('click', clearCredentials);
   await loadAccount();
 }
 
@@ -78,9 +109,20 @@ async function loadAccount() {
     // ltoken はマスク済みで返る想定だがそのまま入れる
     setVal('f-ltoken', acc.ltoken_v2);
     setVal('f-nickname', acc.nickname);
+    setVal('f-email', acc.email);
+    const cb = document.getElementById('f-auto-enabled');
+    if (cb) cb.checked = !!acc.auto_login_enabled;
     document.getElementById('save-status').textContent = acc.nickname
       ? `登録済み: ${acc.nickname}`
       : '登録済み';
+    const cs = document.getElementById('cred-status');
+    if (acc.last_auto_login_error) {
+      cs.textContent = `前回エラー: ${acc.last_auto_login_error}`;
+    } else if (acc.last_auto_login_at) {
+      cs.textContent = `前回ログイン: ${acc.last_auto_login_at}`;
+    } else if (acc.has_password) {
+      cs.textContent = '資格情報あり（未ログイン）';
+    }
   } catch (err) {
     // 未登録なら 404 で来る想定。無視
     if (!/404/.test(err.message)) console.warn(err);
@@ -132,6 +174,95 @@ async function testConnection() {
   } catch (err) {
     status.textContent = '✗ 接続失敗';
     toast(`接続失敗: ${err.message}`, 'error');
+  }
+}
+
+async function saveCredentials() {
+  const email = document.getElementById('f-email').value.trim();
+  const password = document.getElementById('f-password').value;
+  const autoEnabled = document.getElementById('f-auto-enabled').checked;
+  if (!email || !password) {
+    toast('email と password の両方を入力してください', 'warning');
+    return;
+  }
+  try {
+    await api('/hoyolab/credentials', {
+      method: 'PUT',
+      body: { email, password, auto_login_enabled: autoEnabled },
+    });
+    document.getElementById('f-password').value = '';
+    toast('資格情報を保存しました', 'success');
+    document.getElementById('cred-status').textContent = '保存済み';
+  } catch (err) {
+    toast(`保存失敗: ${err.message}`, 'error');
+  }
+}
+
+async function autoLogin() {
+  const email = document.getElementById('f-email').value.trim();
+  const password = document.getElementById('f-password').value;
+  const autoEnabled = document.getElementById('f-auto-enabled').checked;
+  const uid = document.getElementById('f-uid').value.trim();
+  const region = document.getElementById('f-region').value;
+  const nickname = document.getElementById('f-nickname').value.trim() || null;
+  if (!email || !password) {
+    toast('email / password を入力してください', 'warning');
+    return;
+  }
+  const btn = document.getElementById('auto-login-btn');
+  const cs = document.getElementById('cred-status');
+  btn.disabled = true;
+  cs.textContent = 'ログイン中...';
+  try {
+    const res = await api('/hoyolab/auto-login', {
+      method: 'POST',
+      body: {
+        email, password,
+        uid: uid || null, region: region || null, nickname,
+        save_credentials: autoEnabled,
+      },
+    });
+    document.getElementById('f-password').value = '';
+    toast('ログイン成功、cookie を取得しました', 'success');
+    cs.textContent = `ログイン成功 (ltuid=${res.ltuid_v2})`;
+    await loadAccount();
+  } catch (err) {
+    cs.textContent = '✗ ログイン失敗';
+    toast(`ログイン失敗: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function refreshCookie() {
+  const btn = document.getElementById('refresh-btn');
+  const cs = document.getElementById('cred-status');
+  btn.disabled = true;
+  cs.textContent = '更新中...';
+  try {
+    const res = await api('/hoyolab/refresh', { method: 'POST' });
+    toast('cookie を再取得しました', 'success');
+    cs.textContent = `更新成功 (ltuid=${res.ltuid_v2})`;
+    await loadAccount();
+  } catch (err) {
+    cs.textContent = '✗ 更新失敗';
+    toast(`更新失敗: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function clearCredentials() {
+  if (!confirm('保存された email/password を削除しますか？')) return;
+  try {
+    await api('/hoyolab/credentials', { method: 'DELETE' });
+    document.getElementById('f-email').value = '';
+    document.getElementById('f-password').value = '';
+    document.getElementById('f-auto-enabled').checked = false;
+    document.getElementById('cred-status').textContent = '削除しました';
+    toast('資格情報を削除しました', 'success');
+  } catch (err) {
+    toast(`削除失敗: ${err.message}`, 'error');
   }
 }
 

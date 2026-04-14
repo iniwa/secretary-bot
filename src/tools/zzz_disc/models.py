@@ -130,6 +130,16 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "fingerprint", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
+    # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "email", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "password", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "auto_login_enabled", "INTEGER DEFAULT 0")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "last_auto_login_at", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "last_auto_login_error", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "account_mid_v2", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "account_id_v2", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "cookie_token_v2", "TEXT")
+    await _maybe_add_column(db, "zzz_hoyolab_accounts", "ltmid_v2", "TEXT")
     # fingerprint 用 UNIQUE インデックスは列追加後に作成
     await db.db.executescript(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_zzz_discs_fingerprint "
@@ -629,7 +639,9 @@ async def find_shared_discs(db) -> list[dict]:
 async def get_hoyolab_account(db) -> dict | None:
     """単一アカウント想定（自宅 Pi 用途）。"""
     row = await db.fetchone(
-        "SELECT id, uid, region, ltuid_v2, ltoken_v2, nickname, last_synced_at "
+        "SELECT id, uid, region, ltuid_v2, ltoken_v2, nickname, last_synced_at, "
+        "email, password, auto_login_enabled, last_auto_login_at, last_auto_login_error, "
+        "account_mid_v2, account_id_v2, cookie_token_v2, ltmid_v2 "
         "FROM zzz_hoyolab_accounts ORDER BY id LIMIT 1"
     )
     return dict(row) if row else None
@@ -637,22 +649,82 @@ async def get_hoyolab_account(db) -> dict | None:
 
 async def upsert_hoyolab_account(db, *, uid: str, region: str,
                                  ltuid_v2: str, ltoken_v2: str,
-                                 nickname: str | None = None) -> None:
+                                 nickname: str | None = None,
+                                 email: str | None = None,
+                                 password: str | None = None,
+                                 auto_login_enabled: bool | None = None,
+                                 account_mid_v2: str | None = None,
+                                 account_id_v2: str | None = None,
+                                 cookie_token_v2: str | None = None,
+                                 ltmid_v2: str | None = None) -> None:
+    """主要 cookies と任意で認証情報・追加 cookies を upsert。
+
+    credentials・追加 cookies は None のとき既存値を維持する。
+    auto_login_enabled も None のとき既存値維持。
+    """
     now = _now()
+    auto_flag = None if auto_login_enabled is None else (1 if auto_login_enabled else 0)
     existing = await db.fetchone(
         "SELECT id FROM zzz_hoyolab_accounts WHERE uid = ?", (uid,)
     )
     if existing:
         await db.execute(
             "UPDATE zzz_hoyolab_accounts SET region = ?, ltuid_v2 = ?, ltoken_v2 = ?, "
-            "nickname = COALESCE(?, nickname), updated_at = ? WHERE id = ?",
-            (region, ltuid_v2, ltoken_v2, nickname, now, existing["id"]),
+            "nickname = COALESCE(?, nickname), "
+            "email = COALESCE(?, email), "
+            "password = COALESCE(?, password), "
+            "auto_login_enabled = COALESCE(?, auto_login_enabled), "
+            "account_mid_v2 = COALESCE(?, account_mid_v2), "
+            "account_id_v2 = COALESCE(?, account_id_v2), "
+            "cookie_token_v2 = COALESCE(?, cookie_token_v2), "
+            "ltmid_v2 = COALESCE(?, ltmid_v2), "
+            "updated_at = ? WHERE id = ?",
+            (region, ltuid_v2, ltoken_v2, nickname,
+             email, password, auto_flag,
+             account_mid_v2, account_id_v2, cookie_token_v2, ltmid_v2,
+             now, existing["id"]),
         )
         return
     await db.execute(
         "INSERT INTO zzz_hoyolab_accounts (uid, region, ltuid_v2, ltoken_v2, "
-        "nickname, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (uid, region, ltuid_v2, ltoken_v2, nickname, now, now),
+        "nickname, email, password, auto_login_enabled, "
+        "account_mid_v2, account_id_v2, cookie_token_v2, ltmid_v2, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid, region, ltuid_v2, ltoken_v2, nickname, email, password,
+         auto_flag if auto_flag is not None else 0,
+         account_mid_v2, account_id_v2, cookie_token_v2, ltmid_v2,
+         now, now),
+    )
+
+
+async def update_hoyolab_cookies(db, *, uid: str,
+                                 ltuid_v2: str, ltoken_v2: str,
+                                 account_mid_v2: str | None = None,
+                                 account_id_v2: str | None = None,
+                                 cookie_token_v2: str | None = None,
+                                 ltmid_v2: str | None = None,
+                                 error: str | None = None) -> None:
+    """自動ログイン成功時に cookies のみ更新（credentials は触らない）。"""
+    await db.execute(
+        "UPDATE zzz_hoyolab_accounts SET ltuid_v2 = ?, ltoken_v2 = ?, "
+        "account_mid_v2 = COALESCE(?, account_mid_v2), "
+        "account_id_v2 = COALESCE(?, account_id_v2), "
+        "cookie_token_v2 = COALESCE(?, cookie_token_v2), "
+        "ltmid_v2 = COALESCE(?, ltmid_v2), "
+        "last_auto_login_at = ?, last_auto_login_error = ?, updated_at = ? "
+        "WHERE uid = ?",
+        (ltuid_v2, ltoken_v2,
+         account_mid_v2, account_id_v2, cookie_token_v2, ltmid_v2,
+         _now(), error, _now(), uid),
+    )
+
+
+async def record_auto_login_error(db, *, uid: str, error: str) -> None:
+    await db.execute(
+        "UPDATE zzz_hoyolab_accounts SET last_auto_login_at = ?, "
+        "last_auto_login_error = ?, updated_at = ? WHERE uid = ?",
+        (_now(), error, _now(), uid),
     )
 
 

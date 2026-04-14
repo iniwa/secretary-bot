@@ -22,7 +22,8 @@ from fastapi.responses import StreamingResponse
 from . import models
 from .schema import (
     DiscIn, BuildMetaIn, BuildSavePresetIn, BuildSlotAssignIn,
-    HoyolabAccountIn, JobConfirmIn, JobCaptureIn,
+    HoyolabAccountIn, HoyolabCredentialsIn, HoyolabAutoLoginIn,
+    JobConfirmIn, JobCaptureIn,
 )
 
 
@@ -253,7 +254,7 @@ def build_router(bot, config: dict) -> APIRouter:
         acc = await models.get_hoyolab_account(db)
         if not acc:
             raise HTTPException(404, "no account configured")
-        # 自宅 Pi 前提のため cookie は平文で返す
+        # 自宅 Pi 前提のため cookie は平文で返す。password は返さない。
         return {
             "uid": acc["uid"],
             "region": acc["region"],
@@ -261,6 +262,11 @@ def build_router(bot, config: dict) -> APIRouter:
             "ltoken_v2": acc.get("ltoken_v2"),
             "nickname": acc.get("nickname"),
             "last_synced_at": acc.get("last_synced_at"),
+            "email": acc.get("email"),
+            "auto_login_enabled": bool(acc.get("auto_login_enabled")),
+            "has_password": bool(acc.get("password")),
+            "last_auto_login_at": acc.get("last_auto_login_at"),
+            "last_auto_login_error": acc.get("last_auto_login_error"),
         }
 
     @router.put("/api/hoyolab/account")
@@ -277,6 +283,120 @@ def build_router(bot, config: dict) -> APIRouter:
     async def del_hoyolab_account():
         await db.execute("DELETE FROM zzz_hoyolab_accounts")
         return {"deleted": True}
+
+    # ---------------- HoYoLAB 自動ログイン ----------------
+
+    @router.put("/api/hoyolab/credentials")
+    async def put_hoyolab_credentials(payload: HoyolabCredentialsIn):
+        """既存アカウントに自動ログイン用 email/password を保存。"""
+        acc = await models.get_hoyolab_account(db)
+        if not acc:
+            raise HTTPException(400,
+                "先に uid/region/cookie を登録してください")
+        await models.upsert_hoyolab_account(
+            db,
+            uid=acc["uid"], region=acc["region"],
+            ltuid_v2=acc["ltuid_v2"], ltoken_v2=acc["ltoken_v2"],
+            email=payload.email, password=payload.password,
+            auto_login_enabled=payload.auto_login_enabled,
+        )
+        return {"ok": True}
+
+    @router.delete("/api/hoyolab/credentials")
+    async def del_hoyolab_credentials():
+        await db.execute(
+            "UPDATE zzz_hoyolab_accounts SET email = NULL, password = NULL, "
+            "auto_login_enabled = 0"
+        )
+        return {"ok": True}
+
+    @router.post("/api/hoyolab/auto-login")
+    async def post_hoyolab_auto_login(payload: HoyolabAutoLoginIn):
+        """email/password で自動ログインし cookies を取得・保存。
+
+        既存アカウントがある場合は uid/region を流用し cookie を更新。
+        無い場合は payload の uid/region で新規作成（どちらも必須）。
+        save_credentials=True なら email/password と auto_login_enabled=1 を保存。
+        """
+        try:
+            from .hoyolab_auth import (
+                auto_login, HoyolabLoginError, InvalidCredentials, CaptchaRequired,
+            )
+        except ImportError as e:
+            raise HTTPException(503, f"hoyolab auth unavailable: {e}")
+
+        try:
+            cookies = await auto_login(payload.email, payload.password)
+        except InvalidCredentials as e:
+            raise HTTPException(401, f"認証情報が不正です: {e}")
+        except CaptchaRequired as e:
+            raise HTTPException(409, f"captcha required: {e}")
+        except HoyolabLoginError as e:
+            raise HTTPException(502, f"ログイン失敗: {e}")
+
+        existing = await models.get_hoyolab_account(db)
+        if existing:
+            uid = existing["uid"]
+            region = existing["region"]
+            nickname = payload.nickname or existing.get("nickname")
+        else:
+            if not payload.uid or not payload.region:
+                raise HTTPException(400,
+                    "初回登録時は uid と region が必要です")
+            uid = payload.uid
+            region = payload.region
+            nickname = payload.nickname
+
+        await models.upsert_hoyolab_account(
+            db,
+            uid=uid, region=region,
+            ltuid_v2=cookies["ltuid_v2"], ltoken_v2=cookies["ltoken_v2"],
+            nickname=nickname,
+            email=payload.email if payload.save_credentials else None,
+            password=payload.password if payload.save_credentials else None,
+            auto_login_enabled=True if payload.save_credentials else None,
+            account_mid_v2=cookies.get("account_mid_v2"),
+            account_id_v2=cookies.get("account_id_v2"),
+            cookie_token_v2=cookies.get("cookie_token_v2"),
+            ltmid_v2=cookies.get("ltmid_v2"),
+        )
+        # last_auto_login_at を刻む
+        await models.update_hoyolab_cookies(
+            db, uid=uid,
+            ltuid_v2=cookies["ltuid_v2"],
+            ltoken_v2=cookies["ltoken_v2"],
+            error=None,
+        )
+        return {
+            "ok": True,
+            "saved_credentials": payload.save_credentials,
+            "ltuid_v2": cookies["ltuid_v2"],
+        }
+
+    @router.post("/api/hoyolab/refresh")
+    async def post_hoyolab_refresh():
+        """保存済み email/password で cookies を再取得。"""
+        try:
+            from .hoyolab_auth import (
+                refresh_account_cookies,
+                HoyolabLoginError, InvalidCredentials, CaptchaRequired,
+            )
+        except ImportError as e:
+            raise HTTPException(503, f"hoyolab auth unavailable: {e}")
+        acc = await models.get_hoyolab_account(db)
+        if not acc:
+            raise HTTPException(400, "no hoyolab account configured")
+        if not acc.get("email") or not acc.get("password"):
+            raise HTTPException(400, "credentials が保存されていません")
+        try:
+            cookies = await refresh_account_cookies(db, acc)
+        except InvalidCredentials as e:
+            raise HTTPException(401, f"認証情報が不正です: {e}")
+        except CaptchaRequired as e:
+            raise HTTPException(409, f"captcha required: {e}")
+        except HoyolabLoginError as e:
+            raise HTTPException(502, f"再ログイン失敗: {e}")
+        return {"ok": True, "ltuid_v2": cookies["ltuid_v2"]}
 
     @router.post("/api/hoyolab/sync")
     async def post_hoyolab_sync():
