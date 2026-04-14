@@ -111,7 +111,8 @@ def _rolls_for(name: str, value: float, rarity: str | None, level: int) -> int:
     # 割り切れない値は未知フォーマットの可能性 → 0 で返す（誤表示防止）
     if abs(ratio - nearest) > 0.05 or nearest < 1:
         return 0
-    return nearest
+    # 初期 1 ロールは 0 ドット、強化のたびに +1 ドット
+    return nearest - 1
 
 
 def _extract_substats(disc_obj) -> list[dict]:
@@ -132,10 +133,11 @@ def _extract_substats(disc_obj) -> list[dict]:
         # HoYoLAB API は roll 回数を公開していないため、値から逆算する
         # (S-rank Lv15 のみ精度保証。それ以外は 0=不明 を返す)
         rolls = _rolls_for(name, value, rarity, level)
+        # upgrades = 強化回数（初期 = 0、強化 1 回ごとに +1）
         result.append({
             "name": name,
             "value": value,
-            "upgrades": rolls,  # 初期1 + 強化回数 を含む総ロール数
+            "upgrades": rolls,
             "is_percent": is_percent,
         })
     return result
