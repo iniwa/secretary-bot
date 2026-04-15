@@ -305,6 +305,17 @@ function renderBuildsSection() {
   wireUp();
 }
 
+function _updatePinInState(discId, pinned) {
+  const visit = (build) => {
+    if (!build?.slots) return;
+    for (const s of build.slots) {
+      if (s?.disc?.id === discId) s.disc.is_pinned = pinned;
+    }
+  };
+  visit(state.current);
+  for (const p of state.presets || []) visit(p);
+}
+
 function wireUp() {
   document.querySelectorAll('.build-card').forEach(card => {
     const buildId = Number(card.dataset.buildId);
@@ -318,10 +329,11 @@ function wireUp() {
         else if (act === 'pin-all') pinAllBuild(buildId);
       });
     });
-    // disc-tile クリックでスワップモーダル
+    // disc-tile クリックでスワップモーダル（ピンボタンクリック時は除外）
     const allTiles = card.querySelectorAll('.disc-tile');
     allTiles.forEach(tile => {
       tile.addEventListener('click', (e) => {
+        if (e.target.closest('[data-act="toggle-pin"]')) return;
         e.stopPropagation();
         const slot = Number(tile.dataset.slot);
         if (!slot) return;
@@ -329,6 +341,30 @@ function wireUp() {
         openSwapModal({ buildId, slot, currentDiscId });
       });
       tile.style.cursor = 'pointer';
+    });
+    // disc-tile のピントグル
+    card.querySelectorAll('.disc-pin-btn[data-act="toggle-pin"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.discId);
+        if (!id) return;
+        const next = !btn.classList.contains('on');
+        btn.disabled = true;
+        try {
+          const res = await api(`/discs/${id}/pin`, { method: 'PUT', body: { pinned: next } });
+          const on = !!res?.disc?.is_pinned;
+          btn.classList.toggle('on', on);
+          btn.closest('.disc-tile')?.classList.toggle('pinned', on);
+          btn.title = on ? 'ピン解除' : 'ピン留め';
+          // state 側の disc にも反映
+          _updatePinInState(id, on);
+          toast(on ? '📌 ピン留めしました' : 'ピン解除しました', 'success');
+        } catch (err) {
+          toast(`ピン操作失敗: ${err.message}`, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
     });
   });
 }

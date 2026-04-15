@@ -1137,15 +1137,38 @@ h3 { font-size: 1rem; font-weight: 600; }
 .swap-row.pinned {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
 }
-/* Disc tile pin badge */
+/* Disc tile pin button */
 .disc-tile { position: relative; }
-.disc-pin-badge {
+.disc-pin-btn {
   position: absolute;
   top: 4px;
   right: 4px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--text-muted);
+  border-radius: 3px;
+  width: 24px;
+  height: 22px;
+  padding: 0;
   font-size: 0.85rem;
-  filter: drop-shadow(0 0 2px rgba(0,0,0,0.6));
-  pointer-events: none;
+  line-height: 1;
+  cursor: pointer;
+  filter: grayscale(1) opacity(0.55);
+  z-index: 2;
+}
+.disc-pin-btn:hover { filter: none; border-color: var(--accent); }
+.disc-pin-btn.on {
+  filter: none;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, rgba(0,0,0,0.35));
+}
+.disc-pin-btn:disabled { cursor: wait; opacity: 0.6; }
+.disc-pin-btn.inline {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 2px 6px;
+  background: transparent;
 }
 .disc-tile.pinned {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent) inset;

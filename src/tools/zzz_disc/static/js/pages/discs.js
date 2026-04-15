@@ -293,6 +293,27 @@ function renderTable() {
       location.hash = `#/discs/${btn.dataset.detailId}`;
     });
   });
+  container.querySelectorAll('[data-pin-id]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.pinId);
+      const next = !btn.classList.contains('on');
+      btn.disabled = true;
+      try {
+        const res = await api(`/discs/${id}/pin`, { method: 'PUT', body: { pinned: next } });
+        const on = !!res?.disc?.is_pinned;
+        btn.classList.toggle('on', on);
+        btn.title = on ? 'ピン解除' : 'ピン留め';
+        const d = state.discs.find(x => x.id === id);
+        if (d) d.is_pinned = on;
+        toast(on ? '📌 ピン留めしました' : 'ピン解除しました', 'success');
+      } catch (err) {
+        toast(`ピン操作失敗: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 function rowHtml(d) {
@@ -315,7 +336,10 @@ function rowHtml(d) {
       <td>${escapeHtml(mainText)}</td>
       <td class="text-sm text-secondary">${escapeHtml(subText)}</td>
       <td class="text-sm">${usageText}</td>
-      <td>${d.is_pinned ? '<span title="ピン留め済み">📌</span>' : ''}${isShared ? ' <span class="conflict-mark" title="複数ビルドで使用中">⚠</span>' : ''}</td>
+      <td>
+        <button class="disc-pin-btn inline ${d.is_pinned ? 'on' : ''}" data-pin-id="${d.id}" title="${d.is_pinned ? 'ピン解除' : 'ピン留め'}">📌</button>
+        ${isShared ? ' <span class="conflict-mark" title="複数ビルドで使用中">⚠</span>' : ''}
+      </td>
       <td><button class="btn btn-sm" data-detail-id="${d.id}">詳細</button></td>
     </tr>
   `;

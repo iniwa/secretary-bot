@@ -204,13 +204,11 @@ function renderDiscTile(entry, recommended = new Set(), setsMap = new Map(), rec
     suffix: suffixParts.join(''),
   });
   const tooltip = shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : '';
-  const pinBadge = d.is_pinned
-    ? `<span class="disc-pin-badge" title="ピン留め済み">📌</span>`
-    : '';
+  const pinBtn = `<button class="disc-pin-btn ${d.is_pinned ? 'on' : ''}" data-act="toggle-pin" data-disc-id="${d.id}" title="${d.is_pinned ? 'ピン解除' : 'ピン留め'}">📌</button>`;
   return `
     <div class="disc-tile ${sharedCount ? 'shared' : ''} ${isRecSet ? 'rec-set' : ''} ${d.is_pinned ? 'pinned' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
       <span class="disc-slot-badge">${d.slot}</span>
-      ${pinBadge}
+      ${pinBtn}
       <div class="disc-tile-header">
         ${iconHtml}
         <span class="disc-tile-set">${setNameHtml}</span>
