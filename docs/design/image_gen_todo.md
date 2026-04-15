@@ -47,7 +47,11 @@
   - 他ユニット参照 API: `get_active_prompt(user_id, platform)` / `craft(...)` / `clear_active(...)`
   - `image_gen._discord_generate` が positive 抽出失敗時にアクティブセッションを自動参照するよう連携
   - config: `units.prompt_crafter.{session_ttl_days, cleanup_interval_seconds}` を追加
-- [ ] **WebGUI `/api/image/prompts` 一式 + 専用ページ**
+- [x] **WebGUI `/api/image/prompts` 一式 + 専用ページ**
+  - 実装日: 2026-04-16
+  - `src/web/app.py` に `/api/image/prompts` (list/active GET, craft POST, active/session DELETE) を追加
+  - `src/web/static/js/pages/prompts.js` を新規作成（指示入力・アクティブセッション表示・履歴一覧・削除）
+  - `index.html` / `app.js` のナビゲーションに `Prompts` ページを登録
 
 ## Phase 4（LoRA 学習）
 

@@ -2514,6 +2514,78 @@ def create_web_app(bot) -> FastAPI:
         ]
         return {"workflows": out}
 
+    # --- prompt_crafter セッション API ---
+
+    def _get_prompt_crafter_unit():
+        u = bot.unit_manager.get("prompt_crafter")
+        if not u:
+            raise HTTPException(503, "prompt_crafter unit not loaded")
+        return u
+
+    def _prompt_session_to_dict(row: dict) -> dict:
+        return {
+            "id": row.get("id"),
+            "user_id": row.get("user_id"),
+            "platform": row.get("platform"),
+            "positive": row.get("positive") or "",
+            "negative": row.get("negative") or "",
+            "base_workflow_id": row.get("base_workflow_id"),
+            "updated_at": row.get("updated_at"),
+            "expires_at": row.get("expires_at"),
+        }
+
+    @app.get("/api/image/prompts", dependencies=[Depends(_verify)])
+    async def prompts_list(limit: int = 20):
+        limit = max(1, min(100, int(limit)))
+        user_id = _webgui_user_id or "webgui"
+        rows = await bot.database.prompt_session_list(user_id=user_id, limit=limit)
+        return {"sessions": [_prompt_session_to_dict(r) for r in rows]}
+
+    @app.get("/api/image/prompts/active", dependencies=[Depends(_verify)])
+    async def prompts_active():
+        user_id = _webgui_user_id or "webgui"
+        unit = _get_prompt_crafter_unit()
+        sess = await unit.get_active_prompt(user_id, "web")
+        return {"session": sess}
+
+    @app.post("/api/image/prompts/craft", dependencies=[Depends(_verify)])
+    async def prompts_craft(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        instruction = (body.get("instruction") or "").strip()
+        if not instruction:
+            raise HTTPException(400, "instruction is required")
+        base_workflow_id = body.get("base_workflow_id")
+        if base_workflow_id is not None:
+            try:
+                base_workflow_id = int(base_workflow_id)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "base_workflow_id must be integer")
+        user_id = _webgui_user_id or "webgui"
+        unit = _get_prompt_crafter_unit()
+        try:
+            result = await unit.craft(
+                user_id=user_id, platform="web",
+                instruction=instruction,
+                base_workflow_id=base_workflow_id,
+            )
+        except Exception as e:
+            raise HTTPException(500, f"craft failed: {e}")
+        return result
+
+    @app.delete("/api/image/prompts/active", dependencies=[Depends(_verify)])
+    async def prompts_clear_active():
+        user_id = _webgui_user_id or "webgui"
+        unit = _get_prompt_crafter_unit()
+        ok = await unit.clear_active(user_id, "web")
+        return {"ok": bool(ok)}
+
+    @app.delete("/api/image/prompts/{session_id}", dependencies=[Depends(_verify)])
+    async def prompts_delete(session_id: int):
+        await bot.database.prompt_session_delete(int(session_id))
+        return {"ok": True}
+
     @app.get("/api/image/agents", dependencies=[Depends(_verify)])
     async def image_agents():
         """ComfyUI へのリンク用に agent_pool の host 情報を返す。"""

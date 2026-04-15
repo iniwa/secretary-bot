@@ -21,6 +21,7 @@ import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
 import * as pending from './pages/pending.js';
 import * as imageGen from './pages/image-gen.js';
+import * as prompts from './pages/prompts.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -42,6 +43,7 @@ const pages = {
   stt:          { title: 'STT',              module: stt },
   activity:     { title: 'Activity',         module: activity },
   'image-gen':  { title: 'Image Gen',        module: imageGen },
+  prompts:      { title: 'Prompts',          module: prompts },
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
   'docker-monitor': { title: 'Docker Monitor', module: dockerMonitor },
