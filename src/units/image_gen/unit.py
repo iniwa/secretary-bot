@@ -1,26 +1,56 @@
 """ImageGenUnit — ジョブ受付・状態参照・キャンセル・イベント pub/sub。
 
-Phase 1 の Walking Skeleton。Discord 連携（execute）は Phase 3。
 WebGUI からは enqueue / get_job / list_jobs / list_gallery / cancel_job /
 subscribe_events / unsubscribe_events を直接呼ぶ。
+Discord 連携は execute() + Discord 向け完了通知タスク。
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import os
 from typing import Any
 
+import discord
+
 from src.errors import ValidationError
+from src.flow_tracker import get_flow_tracker
 from src.logger import get_logger
 from src.units.base_unit import BaseUnit
 from src.units.image_gen.dispatcher import Dispatcher
 from src.units.image_gen.models import (
-    JobStatus, TransitionEvent, STATUS_DONE, DEFAULT_PARAMS,
+    JobStatus, TransitionEvent, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED,
+    PLATFORM_DISCORD, DEFAULT_PARAMS,
 )
 from src.units.image_gen.workflow_mgr import WorkflowManager
 
 log = get_logger(__name__)
+
+
+_EXTRACT_PROMPT = """\
+あなたは画像生成ユニットの意図抽出アシスタント。以下のユーザー入力を分析し JSON で返してください。
+
+## アクション一覧
+- generate: 新しく画像を生成（positive が必要、negative は任意）
+- status:   ジョブの状態を確認（job_id が必要。省略時は最新の自分のジョブ）
+- cancel:   ジョブをキャンセル（job_id が必要）
+- list:     自分の最近のジョブ一覧
+
+## 補助パラメータ（generate のときだけ任意）
+- preset: プリセット名（workflows.name）。省略時は既定プリセット
+- width / height / steps / cfg: 数値で上書き
+
+## 出力形式（厳守）
+{{"action": "...", "positive": "...", "negative": "...", "preset": "...", "job_id": "...", "width": 0, "height": 0, "steps": 0, "cfg": 0.0}}
+
+- 不要なフィールドは省略。
+- JSON 1 個だけ。他テキストは禁止。
+
+## ユーザー入力
+{user_input}
+"""
 
 
 class ImageGenUnit(BaseUnit):
@@ -36,6 +66,9 @@ class ImageGenUnit(BaseUnit):
         self.dispatcher = Dispatcher(bot, self)
         self._event_subscribers: set[asyncio.Queue] = set()
         self._started = False
+        # Discord 通知用: Discord 経由の job_id → {"channel_id", "user_id", "message_id"}
+        self._discord_jobs: dict[str, dict] = {}
+        self._discord_notifier_task: asyncio.Task | None = None
 
     # --- lifecycle ---
 
@@ -61,16 +94,202 @@ class ImageGenUnit(BaseUnit):
     async def cog_load(self) -> None:   # discord.py hook: unit ロード直後
         # heartbeat (15分) を待たずに Dispatcher を起動する。
         asyncio.create_task(self.on_ready_hook())
+        # Discord 通知用イベント購読タスクを起動
+        if self._discord_notifier_task is None or self._discord_notifier_task.done():
+            self._discord_notifier_task = asyncio.create_task(
+                self._discord_notifier_loop(), name="img_discord_notifier",
+            )
 
     async def cog_unload(self) -> None:   # discord.py hook
         await self.dispatcher.stop()
+        if self._discord_notifier_task and not self._discord_notifier_task.done():
+            self._discord_notifier_task.cancel()
+            try:
+                await self._discord_notifier_task
+            except asyncio.CancelledError:
+                pass
 
-    # --- Discord 連携（Phase3 で実装） ---
+    # --- Discord 連携 ---
 
     async def execute(self, ctx, parsed: dict) -> str | None:
-        raise NotImplementedError(
-            "image_gen.execute is Phase3 (Discord slash commands)"
+        ft = get_flow_tracker()
+        flow_id = parsed.get("flow_id")
+        await ft.emit("CB_CHECK", "active", {"unit": self.UNIT_NAME}, flow_id)
+        self.breaker.check()
+        await ft.emit("CB_CHECK", "done", {"state": self.breaker.state}, flow_id)
+        await ft.emit("UNIT_EXEC", "active", {"unit": self.UNIT_NAME}, flow_id)
+
+        message = parsed.get("message", "")
+        user_id = parsed.get("user_id", "")
+        channel = parsed.get("channel", "")
+        try:
+            extracted = await self._extract_params(message, channel)
+            action = (extracted.get("action") or "generate").lower()
+            if action == "status":
+                result = await self._discord_status(extracted, user_id)
+            elif action == "cancel":
+                result = await self._discord_cancel(extracted, user_id)
+            elif action == "list":
+                result = await self._discord_list(user_id)
+            else:
+                result = await self._discord_generate(ctx, parsed, extracted, user_id)
+            self.session_done = True
+            self.breaker.record_success()
+            await ft.emit("UNIT_EXEC", "done", {"unit": self.UNIT_NAME, "action": action}, flow_id)
+            return result
+        except Exception:
+            self.breaker.record_failure()
+            await ft.emit("UNIT_EXEC", "error", {"unit": self.UNIT_NAME}, flow_id)
+            raise
+
+    async def _extract_params(self, user_input: str, channel: str = "") -> dict:
+        prompt = _EXTRACT_PROMPT.format(user_input=user_input)
+        return await self.llm.extract_json(prompt)
+
+    async def _discord_generate(
+        self, ctx, parsed: dict, extracted: dict, user_id: str,
+    ) -> str:
+        positive = (extracted.get("positive") or "").strip()
+        if not positive:
+            # ユーザー入力そのものをプロンプトに流用（抽出失敗時の救済）
+            positive = (parsed.get("message") or "").strip()
+        if not positive:
+            return "画像生成するプロンプトを教えてください。"
+        negative = (extracted.get("negative") or "").strip() or None
+
+        ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
+        preset = (extracted.get("preset") or "").strip() or ig_cfg.get("default_preset", "t2i_base")
+
+        params: dict[str, Any] = {}
+        for key_in, key_out in [("width", "WIDTH"), ("height", "HEIGHT"),
+                                 ("steps", "STEPS"), ("cfg", "CFG")]:
+            v = extracted.get(key_in)
+            if v is None:
+                continue
+            try:
+                params[key_out] = int(v) if key_out != "CFG" else float(v)
+            except (TypeError, ValueError):
+                continue
+
+        job_id = await self.enqueue(
+            user_id=user_id, platform=PLATFORM_DISCORD,
+            workflow_name=preset, positive=positive, negative=negative,
+            params=params or None,
         )
+
+        # Discord 通知用にチャンネルを記録
+        ch_id = getattr(getattr(ctx, "channel", None), "id", 0)
+        msg_id = getattr(getattr(ctx, "message", None), "id", 0)
+        self._discord_jobs[job_id] = {
+            "channel_id": int(ch_id) if ch_id else 0,
+            "user_id": user_id,
+            "message_id": int(msg_id) if msg_id else 0,
+        }
+        return f"🎨 受付ました（job_id={job_id[:8]}, preset={preset}）。完了したらここに返します。"
+
+    async def _discord_status(self, extracted: dict, user_id: str) -> str:
+        job_id = str(extracted.get("job_id") or "").strip()
+        if not job_id and user_id:
+            rows = await self.bot.database.image_job_list(user_id=user_id, limit=1)
+            if rows:
+                job_id = rows[0]["id"]
+        if not job_id:
+            return "確認対象のジョブが見つかりません。"
+        job = await self.get_job(job_id)
+        if not job:
+            return f"job_id={job_id[:8]} が見つかりません。"
+        msg = f"job_id={job_id[:8]}: {job['status']} ({job.get('progress', 0)}%)"
+        if job.get("last_error"):
+            msg += f"\nerror: {job['last_error']}"
+        return msg
+
+    async def _discord_cancel(self, extracted: dict, user_id: str) -> str:
+        job_id = str(extracted.get("job_id") or "").strip()
+        if not job_id:
+            return "キャンセルする job_id を教えてください。"
+        ok = await self.cancel_job(job_id)
+        if ok:
+            return f"🛑 job_id={job_id[:8]} をキャンセルしました。"
+        return f"job_id={job_id[:8]} はキャンセルできませんでした（存在しないか既に終端）。"
+
+    async def _discord_list(self, user_id: str) -> str:
+        rows = await self.list_jobs(user_id=user_id or None, limit=5)
+        if not rows:
+            return "最近のジョブはありません。"
+        lines = ["🖼️ 最近のジョブ"]
+        for r in rows:
+            short = r["job_id"][:8]
+            lines.append(
+                f"- {short}  {r['status']}  ({r.get('progress', 0)}%)"
+                f"  {r.get('workflow_name') or ''}"
+            )
+        return "\n".join(lines)
+
+    async def _discord_notifier_loop(self) -> None:
+        """TransitionEvent を購読し、Discord 発のジョブが終端に達したら通知する。"""
+        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        self.subscribe_events(q)
+        try:
+            while True:
+                ev = await q.get()
+                job_id = ev.get("job_id", "")
+                status = ev.get("status", "")
+                meta = self._discord_jobs.get(job_id)
+                if not meta:
+                    continue
+                if status not in (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED):
+                    continue
+                try:
+                    await self._post_discord_result(job_id, status, meta, ev)
+                except Exception as e:
+                    log.warning("discord notify failed for %s: %s", job_id, e)
+                finally:
+                    self._discord_jobs.pop(job_id, None)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self.unsubscribe_events(q)
+
+    async def _post_discord_result(
+        self, job_id: str, status: str, meta: dict, ev: dict,
+    ) -> None:
+        ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
+        output_ch = int(ig_cfg.get("discord_output_channel_id") or 0)
+        ch_id = output_ch or meta.get("channel_id") or 0
+        channel = self.bot.get_channel(int(ch_id)) if ch_id else None
+        if channel is None:
+            # フォールバック: 管理チャンネル
+            channel = self.bot.get_channel(self._admin_channel_id)
+        if channel is None:
+            log.info("discord notify: no destination channel for %s", job_id)
+            return
+
+        uid = meta.get("user_id") or ""
+        prefix = f"<@{uid}> " if uid and uid != "webgui" else ""
+        short = job_id[:8]
+
+        if status == STATUS_DONE:
+            job = await self.get_job(job_id)
+            result_paths: list[str] = (job or {}).get("result_paths") or []
+            files: list[discord.File] = []
+            for p in result_paths[:4]:  # Discord 添付上限に配慮
+                try:
+                    if os.path.exists(p):
+                        files.append(discord.File(p))
+                    else:
+                        # NAS 上のパスが Pi から読めない場合は file 添付を諦める
+                        log.info("discord notify: file not readable %s", p)
+                except Exception as e:
+                    log.warning("discord File open failed %s: %s", p, e)
+            text = f"{prefix}✅ 生成完了 (job_id={short})"
+            if not files:
+                text += f"\n結果ファイル: {', '.join(result_paths) or '(なし)'}"
+            await channel.send(text, files=files or None)
+        elif status == STATUS_FAILED:
+            detail = (ev.get("detail") or {}).get("message", "")
+            await channel.send(f"{prefix}❌ 生成失敗 (job_id={short}) {detail}")
+        elif status == STATUS_CANCELLED:
+            await channel.send(f"{prefix}🛑 生成キャンセル (job_id={short})")
 
     # === WebGUI から呼ばれる外部公開インターフェース ===
 

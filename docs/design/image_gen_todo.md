@@ -34,7 +34,11 @@
 
 ## Phase 3（プロンプト / Discord 連携）
 
-- [ ] **`ImageGenUnit.execute()` 実装** — Discord スラッシュコマンド・メンション経由の enqueue
+- [x] **`ImageGenUnit.execute()` 実装** — Discord スラッシュコマンド・メンション経由の enqueue
+  - 実装日: 2026-04-16
+  - `src/units/image_gen/unit.py` に LLM プロンプト抽出（`_EXTRACT_PROMPT`）、`_discord_generate` / `_discord_status` / `_discord_cancel` / `_discord_list` を追加
+  - `_discord_notifier_loop` が `subscribe_events` 経由でジョブの DONE/FAILED/CANCELLED を監視し、Discord チャンネルへ画像（最大4件）やステータスを投稿
+  - 出力先は `units.image_gen.discord_output_channel_id` → コマンド発信チャンネル → 管理者チャンネルの順にフォールバック
 - [ ] **`src/units/prompt_crafter.py` 新規** — LLM 補助のプロンプト会話編集
 - [ ] **WebGUI `/api/image/prompts` 一式 + 専用ページ**
 
