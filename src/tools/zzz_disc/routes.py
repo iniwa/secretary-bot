@@ -17,7 +17,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from . import models
 from .schema import (
@@ -580,6 +580,23 @@ def build_router(bot, config: dict) -> APIRouter:
         if not job:
             raise HTTPException(404, "job not found")
         return {"job": job}
+
+    @router.get("/api/jobs/{job_id}/image")
+    async def get_job_image(job_id: int):
+        job = await models.get_job(db, job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        path = job.get("image_path")
+        if not path:
+            raise HTTPException(404, "image not captured yet")
+        # パストラバーサル対策: images_dir 配下のファイルのみ許可
+        abs_path = os.path.abspath(path)
+        abs_dir = os.path.abspath(images_dir)
+        if not abs_path.startswith(abs_dir + os.sep) and abs_path != abs_dir:
+            raise HTTPException(403, "forbidden path")
+        if not os.path.exists(abs_path):
+            raise HTTPException(404, "image file missing")
+        return FileResponse(abs_path, media_type="image/png")
 
     @router.post("/api/jobs/{job_id}/confirm")
     async def post_job_confirm(job_id: int, payload: JobConfirmIn):

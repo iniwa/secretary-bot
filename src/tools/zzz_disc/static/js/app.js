@@ -120,12 +120,13 @@ export function toast(message, type = 'info') {
   }, 3000);
 }
 
-export function openModal({ title, body, footer }) {
+export function openModal({ title, body, footer, size }) {
   const root = document.getElementById('modal-root');
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
+  const sizeClass = size === 'lg' ? ' modal-lg' : '';
   backdrop.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal${sizeClass}" role="dialog" aria-modal="true">
       <div class="modal-header">
         <h3>${escapeHtml(title || '')}</h3>
         <button class="close-btn" data-action="close">×</button>

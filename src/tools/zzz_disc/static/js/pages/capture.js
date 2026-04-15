@@ -291,8 +291,9 @@ function openJobModal(job) {
   const data = parseJSON(job.normalized_json) || parseJSON(job.extracted_json) || {};
   const { bodyEl, footerEl, close } = openModal({
     title: `ジョブ #${job.id} を確認`,
+    size: 'lg',
   });
-  bodyEl.appendChild(buildJobForm(data));
+  bodyEl.appendChild(buildJobReview(job, data));
   footerEl.innerHTML = `
     <button class="btn btn-danger" data-act="discard">破棄</button>
     <div class="flex-1"></div>
@@ -316,7 +317,8 @@ function openJobModal(job) {
     }
   });
   footerEl.querySelector('[data-act="save"]').addEventListener('click', async () => {
-    const payload = readJobForm(bodyEl);
+    const formEl = bodyEl.querySelector('[data-job-form]') || bodyEl;
+    const payload = readJobForm(formEl);
     try {
       await api(`/jobs/${job.id}/confirm`, { method: 'POST', body: payload });
       state.jobs.delete(job.id);
@@ -328,6 +330,23 @@ function openJobModal(job) {
       toast(`保存失敗: ${err.message}`, 'error');
     }
   });
+}
+
+function buildJobReview(job, data) {
+  const wrap = document.createElement('div');
+  wrap.className = 'job-review';
+  const imgUrl = job.image_path
+    ? `/tools/zzz-disc/api/jobs/${job.id}/image`
+    : null;
+  const imgHtml = imgUrl
+    ? `<a href="${imgUrl}" target="_blank" rel="noopener"><img src="${imgUrl}" alt="キャプチャ画像" /></a>`
+    : `<div class="job-review-img-missing">画像が保存されていません</div>`;
+  wrap.innerHTML = `
+    <div class="job-review-img">${imgHtml}</div>
+    <div class="job-review-form" data-job-form></div>
+  `;
+  wrap.querySelector('[data-job-form]').appendChild(buildJobForm(data));
+  return wrap;
 }
 
 function buildJobForm(data) {
@@ -438,9 +457,15 @@ function readJobForm(rootEl) {
 }
 
 function openFailedModal(job) {
+  const imgUrl = job.image_path
+    ? `/tools/zzz-disc/api/jobs/${job.id}/image`
+    : null;
+  const imgBlock = imgUrl
+    ? `<div class="job-review-img mt-2"><a href="${imgUrl}" target="_blank" rel="noopener"><img src="${imgUrl}" alt="キャプチャ画像" /></a></div>`
+    : '';
   const { bodyEl, footerEl, close } = openModal({
     title: `ジョブ #${job.id} — 失敗`,
-    body: `<div class="card"><div class="text-muted text-sm mb-1">エラー</div><div>${escapeHtml(job.error_message || '原因不明')}</div></div>`,
+    body: `<div class="card"><div class="text-muted text-sm mb-1">エラー</div><div>${escapeHtml(job.error_message || '原因不明')}</div></div>${imgBlock}`,
   });
   footerEl.innerHTML = `
     <button class="btn btn-danger" data-act="delete">削除</button>

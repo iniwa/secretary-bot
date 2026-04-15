@@ -265,6 +265,15 @@ async def _run_sync_job(sync_id: str, files: list[dict], verify_sha256: bool) ->
                         prog.file_results.append({"filename": filename, "sha256_ok": True, "skipped": True})
                         await _publish_sync(sync_id, "file_done", {"filename": filename, "sha256_ok": True})
                         continue
+                elif not expected_sha:
+                    # sha256 未指定時は filename 一致のみでスキップ（Phase1 挙動）。
+                    # ComfyUI が同ファイルを開いていると os.replace が WinError 5 を起こすため、
+                    # 既存を信頼して再コピーを避ける。
+                    size = os.path.getsize(dst)
+                    prog.bytes_done += int(f.get("size") or size)
+                    prog.file_results.append({"filename": filename, "sha256_ok": None, "skipped": True})
+                    await _publish_sync(sync_id, "file_done", {"filename": filename, "sha256_ok": None})
+                    continue
 
             if not os.path.exists(src):
                 raise FileNotFoundError(f"source not found: {src}")
