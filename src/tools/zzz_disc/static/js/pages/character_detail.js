@@ -229,10 +229,90 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
       mainMatch: !!mainBonus,
     };
   });
-  scored.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return (b.disc.level || 0) - (a.disc.level || 0);
-  });
+
+  // 候補の中から実際に存在する main_stat / sub_stat 名を抽出（プルダウン用）
+  const mainStatOptions = [...new Set(scored.map(s => s.disc.main_stat_name).filter(Boolean))].sort();
+  const subStatOptions = [...new Set(
+    scored.flatMap(s => (s.disc.sub_stats || []).map(x => x.name)).filter(Boolean)
+  )].sort();
+
+  const collator = new Intl.Collator('ja');
+  let sortKey = 'score';
+  let subStatFor = recommended.find(r => subStatOptions.includes(r)) || subStatOptions[0] || '';
+
+  function sortRows() {
+    const arr = scored.slice();
+    if (sortKey === 'score') {
+      arr.sort((a, b) => (b.score - a.score) || ((b.disc.level || 0) - (a.disc.level || 0)));
+    } else if (sortKey === 'set') {
+      arr.sort((a, b) => collator.compare(a.disc.set_name_ja || '', b.disc.set_name_ja || '')
+        || (b.disc.level || 0) - (a.disc.level || 0));
+    } else if (sortKey === 'main_stat') {
+      arr.sort((a, b) => collator.compare(statLabel(a.disc.main_stat_name) || '', statLabel(b.disc.main_stat_name) || '')
+        || (Number(b.disc.main_stat_value) || 0) - (Number(a.disc.main_stat_value) || 0));
+    } else if (sortKey === 'sub_stat') {
+      const valOf = (d) => {
+        const s = (d.sub_stats || []).find(x => x.name === subStatFor);
+        return s ? Number(s.value) || 0 : -1;
+      };
+      arr.sort((a, b) => valOf(b.disc) - valOf(a.disc));
+    } else if (sortKey === 'level') {
+      arr.sort((a, b) => (b.disc.level || 0) - (a.disc.level || 0));
+    }
+    return arr;
+  }
+
+  function renderRows() {
+    const arr = sortRows();
+    const listEl = bodyEl.querySelector('.swap-list');
+    if (!listEl) return;
+    listEl.innerHTML = arr.length === 0
+      ? '<div class="text-muted">スロット ' + slot + ' のディスクがありません</div>'
+      : arr.map(({ disc: d, score, mainMatch }) => {
+          const inUse = usageByDisc.get(d.id) || [];
+          const inUseHere = usedDiscIds.has(d.id);
+          const isSelected = currentDiscId === d.id;
+          const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
+          return `
+            <div class="swap-row ${isSelected ? 'selected' : ''}" data-disc-id="${d.id}">
+              <div class="swap-row-head">
+                <span class="swap-set">${escapeHtml(d.set_name_ja || d.name || '-')}</span>
+                <span class="swap-level">${d.level != null ? `Lv.${d.level}` : ''}</span>
+                <span class="swap-score">★ ${score.toFixed(1)}</span>
+                ${isSelected ? '<span class="badge badge-current">現在のスロット</span>' : ''}
+                ${inUseHere && !isSelected ? '<span class="badge badge-warn">同ビルドの他スロット</span>' : ''}
+              </div>
+              <div class="swap-main ${mainMatch ? 'recommended' : ''}">
+                ${escapeHtml(statLabel(d.main_stat_name))}
+                <strong>${escapeHtml(formatStatValue(d.main_stat_name, d.main_stat_value))}</strong>
+              </div>
+              <div class="swap-subs">
+                ${subs.map(s => `
+                  <span class="swap-sub ${recommended.includes(s.name) ? 'recommended' : ''} ${sortKey === 'sub_stat' && s.name === subStatFor ? 'sort-key' : ''}">
+                    ${escapeHtml(s.name)} ${escapeHtml(formatStatValue(s.name, s.value))}${
+                      Number(s.upgrades || 0) > 0 ? ` <small>+${s.upgrades}</small>` : ''
+                    }
+                  </span>
+                `).join('')}
+              </div>
+              ${inUse.length ? `
+                <div class="swap-usage text-xs text-muted">
+                  使用中: ${inUse.map(u =>
+                    `${escapeHtml(u.character_name_ja || '-')}${u.is_current ? ' ★' : ` / ${escapeHtml(u.build_name || '')}`}`
+                  ).join(' , ')}
+                </div>` : ''}
+            </div>
+          `;
+        }).join('');
+
+    listEl.querySelectorAll('.swap-row').forEach(row => {
+      row.addEventListener('click', async () => {
+        const newId = Number(row.dataset.discId);
+        if (newId === currentDiscId) { close(); return; }
+        await applySwap({ buildId, slot, discId: newId, isCurrent, close });
+      });
+    });
+  }
 
   bodyEl.innerHTML = `
     ${isCurrent ? `
@@ -242,56 +322,34 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     <div class="text-muted text-sm mb-1">候補 ${scored.length} 件 / 推奨サブステ: ${
       recommended.length ? recommended.map(escapeHtml).join(', ') : '<em>未設定</em>'
     }</div>
-    <div class="swap-list">
-      ${scored.length === 0
-        ? '<div class="text-muted">スロット ' + slot + ' のディスクがありません</div>'
-        : scored.map(({ disc: d, score, matchedSubs, mainMatch }) => {
-            const inUse = usageByDisc.get(d.id) || [];
-            const inUseHere = usedDiscIds.has(d.id);
-            const isSelected = currentDiscId === d.id;
-            const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
-            return `
-              <div class="swap-row ${isSelected ? 'selected' : ''}" data-disc-id="${d.id}">
-                <div class="swap-row-head">
-                  <span class="swap-set">${escapeHtml(d.set_name_ja || d.name || '-')}</span>
-                  <span class="swap-level">${d.level != null ? `Lv.${d.level}` : ''}</span>
-                  <span class="swap-score">★ ${score.toFixed(1)}</span>
-                  ${isSelected ? '<span class="badge badge-current">現在のスロット</span>' : ''}
-                  ${inUseHere && !isSelected ? '<span class="badge badge-warn">同ビルドの他スロット</span>' : ''}
-                </div>
-                <div class="swap-main ${mainMatch ? 'recommended' : ''}">
-                  ${escapeHtml(statLabel(d.main_stat_name))}
-                  <strong>${escapeHtml(formatStatValue(d.main_stat_name, d.main_stat_value))}</strong>
-                </div>
-                <div class="swap-subs">
-                  ${subs.map(s => `
-                    <span class="swap-sub ${recommended.includes(s.name) ? 'recommended' : ''}">
-                      ${escapeHtml(s.name)} ${escapeHtml(formatStatValue(s.name, s.value))}${
-                        Number(s.upgrades || 0) > 0 ? ` <small>+${s.upgrades}</small>` : ''
-                      }
-                    </span>
-                  `).join('')}
-                </div>
-                ${inUse.length ? `
-                  <div class="swap-usage text-xs text-muted">
-                    使用中: ${inUse.map(u =>
-                      `${escapeHtml(u.character_name_ja || '-')}${u.is_current ? ' ★' : ` / ${escapeHtml(u.build_name || '')}`}`
-                    ).join(' , ')}
-                  </div>` : ''}
-              </div>
-            `;
-          }).join('')
-      }
+    <div class="swap-sort-bar">
+      <label class="text-sm text-muted">並び替え:</label>
+      <select id="swap-sort-key" class="select-sm">
+        <option value="score">推奨スコア</option>
+        <option value="set">セット名</option>
+        <option value="main_stat">メインステ</option>
+        <option value="sub_stat">サブステ値</option>
+        <option value="level">Lv</option>
+      </select>
+      <select id="swap-sort-substat" class="select-sm" style="display:none;">
+        ${subStatOptions.map(n => `<option value="${escapeHtml(n)}" ${n === subStatFor ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}
+      </select>
     </div>
+    <div class="swap-list"></div>
   `;
 
-  bodyEl.querySelectorAll('.swap-row').forEach(row => {
-    row.addEventListener('click', async () => {
-      const newId = Number(row.dataset.discId);
-      if (newId === currentDiscId) { close(); return; }
-      await applySwap({ buildId, slot, discId: newId, isCurrent, close });
-    });
+  const sortSel = bodyEl.querySelector('#swap-sort-key');
+  const subSel = bodyEl.querySelector('#swap-sort-substat');
+  sortSel.addEventListener('change', () => {
+    sortKey = sortSel.value;
+    subSel.style.display = sortKey === 'sub_stat' ? '' : 'none';
+    renderRows();
   });
+  subSel.addEventListener('change', () => {
+    subStatFor = subSel.value;
+    renderRows();
+  });
+  renderRows();
 }
 
 async function applySwap({ buildId, slot, discId, isCurrent, close }) {
