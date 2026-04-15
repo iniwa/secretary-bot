@@ -32,9 +32,12 @@ class ActivityCollector:
         cfg = bot.config.get("activity", {})
         self._poll_interval = max(10, int(cfg.get("poll_interval_seconds", 60)))
         self._retention_days = int(cfg.get("sample_retention_days", 7))
+        # 連続失敗がこの回数に達したら進行中セッションを _last_alive_ts で close する
+        self._unreachable_close_polls = max(2, int(cfg.get("unreachable_close_polls", 3)))
         self._poll_task: asyncio.Task | None = None
         self._poll_stop = asyncio.Event()
         self._consecutive_failures = 0
+        self._last_alive_ts: str | None = None
 
     async def poll(self) -> dict:
         """1tickの取得→記録。戻り値は Heartbeat のデバッグログ用。"""
@@ -48,8 +51,14 @@ class ActivityCollector:
 
         data = await monitor.fetch(main_agent)
         if data is None:
-            # agent 未応答: 進行中セッションは一旦 close せず保持（復帰時に継続扱い）
             self._consecutive_failures += 1
+            # 閾値に達したら進行中セッションを直近生存時刻で close（未応答時間を計上しない）
+            if (
+                self._consecutive_failures == self._unreachable_close_polls
+                and self._last_alive_ts is not None
+                and (self._cur_game_session_id is not None or self._cur_fg_session_id is not None)
+            ):
+                await self._close_on_unreachable()
             if self._consecutive_failures in (1, 10, 60):
                 log.info("activity poll: Main PC agent unreachable (%d consecutive)", self._consecutive_failures)
             return result
@@ -62,6 +71,7 @@ class ActivityCollector:
         fg = data.get("foreground_process") or None
         is_fullscreen = 1 if data.get("is_fullscreen") else 0
         ts = jst_now()
+        self._last_alive_ts = ts
 
         # 生サンプル記録
         try:
@@ -119,6 +129,23 @@ class ActivityCollector:
         )
         self._cur_fg_session_id = cursor.lastrowid
 
+    async def _close_on_unreachable(self) -> None:
+        """Main PC 未応答が続いた場合、進行中セッションを直近生存時刻で close する。
+        カレント状態もリセットし、復旧後は新しいセッションが開く。"""
+        close_ts = self._last_alive_ts
+        if not close_ts:
+            return
+        log.info(
+            "activity poll: closing open sessions at last-alive %s (agent unreachable %d polls)",
+            close_ts, self._consecutive_failures,
+        )
+        if self._cur_game_session_id is not None:
+            await self._close_game_session(close_ts)
+            self._cur_game = None
+        if self._cur_fg_session_id is not None:
+            await self._close_fg_session(close_ts)
+            self._cur_fg = None
+
     async def _close_fg_session(self, ts: str) -> None:
         row = await self.bot.database.fetchone(
             "SELECT start_at FROM foreground_sessions WHERE id = ?",
@@ -175,21 +202,62 @@ class ActivityCollector:
         return 0
 
     async def restore_open_sessions(self) -> None:
-        """起動時: DBに end_at=NULL のセッションが残っていたら、メモリ状態として拾う。
-        Main PC 再接続後に同じ game/fg なら継続、違えば close する。
+        """起動時: DBに end_at=NULL のセッションが残っていたら拾う。
+        直近の activity_samples.ts（最後に Main PC agent が alive だった時刻）を基点に判断:
+        - 基点が新しい（RESTORE_MAX_AGE_SEC 以内）→ 継続し、_last_alive_ts を基点で初期化
+        - 基点が古い／サンプルなし → その基点（or start_at）で close して破棄（実プレイ分を保持）
         """
-        game_row = await self.bot.database.fetchone(
-            "SELECT id, game_name FROM game_sessions WHERE end_at IS NULL ORDER BY id DESC LIMIT 1"
+        RESTORE_MAX_AGE_SEC = 15 * 60
+        now = datetime.now(tz=_JST)
+
+        sample_row = await self.bot.database.fetchone(
+            "SELECT MAX(ts) AS ts FROM activity_samples"
         )
-        if game_row:
-            self._cur_game = game_row["game_name"]
-            self._cur_game_session_id = game_row["id"]
-        fg_row = await self.bot.database.fetchone(
-            "SELECT id, process_name FROM foreground_sessions WHERE end_at IS NULL ORDER BY id DESC LIMIT 1"
-        )
-        if fg_row:
-            self._cur_fg = fg_row["process_name"]
-            self._cur_fg_session_id = fg_row["id"]
+        last_sample_ts = sample_row["ts"] if sample_row else None
+        sample_age = _age_seconds(last_sample_ts, now) if last_sample_ts else None
+        stale = sample_age is None or sample_age > RESTORE_MAX_AGE_SEC
+
+        async def _handle(table: str, name_col: str, id_attr: str, name_attr: str) -> None:
+            row = await self.bot.database.fetchone(
+                f"SELECT id, {name_col}, start_at FROM {table} WHERE end_at IS NULL ORDER BY id DESC LIMIT 1"
+            )
+            if not row:
+                return
+            if stale:
+                close_ts = last_sample_ts or row["start_at"]
+                dur = _duration_sec(row["start_at"], close_ts) or 0
+                await self.bot.database.execute(
+                    f"UPDATE {table} SET end_at = ?, duration_sec = ? WHERE id = ?",
+                    (close_ts, max(dur, 0), row["id"]),
+                )
+                log.info(
+                    "activity restore: closed stale %s id=%s (sample_age=%s, dur=%ss)",
+                    table, row["id"],
+                    f"{int(sample_age)}s" if sample_age is not None else "no-samples",
+                    max(dur, 0),
+                )
+                return
+            setattr(self, name_attr, row[name_col])
+            setattr(self, id_attr, row["id"])
+
+        await _handle("game_sessions", "game_name", "_cur_game_session_id", "_cur_game")
+        await _handle("foreground_sessions", "process_name", "_cur_fg_session_id", "_cur_fg")
+
+        # 継続するセッションがあれば _last_alive_ts を直近生存時刻で初期化
+        if not stale and (
+            self._cur_game_session_id is not None or self._cur_fg_session_id is not None
+        ):
+            self._last_alive_ts = last_sample_ts
+
+
+def _age_seconds(start: str, now: datetime) -> float | None:
+    try:
+        s = datetime.fromisoformat(start)
+        if s.tzinfo is None:
+            s = s.replace(tzinfo=_JST)
+        return (now - s).total_seconds()
+    except Exception:
+        return None
 
 
 def _duration_sec(start: str, end: str) -> int | None:

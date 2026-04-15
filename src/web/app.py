@@ -1874,12 +1874,14 @@ def create_web_app(bot) -> FastAPI:
     # --- Activity history (Main PC 過去プレイ履歴) ---
 
     def _activity_cutoff(days: int) -> str | None:
-        """days=0 は全期間（None）。それ以外は days 日前の ISO 文字列。"""
+        """days=0 は全期間（None）。それ以外は「今日を含む直近 days 日」の起点 00:00（JST）。
+        例: days=7 かつ今日=2026-04-15 → '2026-04-09 00:00:00'。"""
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         if days <= 0:
             return None
         _JST = _tz(_td(hours=9))
-        return (_dt.now(tz=_JST) - _td(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        start_date = _dt.now(tz=_JST).date() - _td(days=days - 1)
+        return start_date.strftime("%Y-%m-%d 00:00:00")
 
     def _activity_range(
         days: int, start: str | None = None, end: str | None = None
