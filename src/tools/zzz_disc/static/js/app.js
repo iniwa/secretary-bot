@@ -183,9 +183,59 @@ export function promptDialog({ title = '入力', label = '', value = '', placeho
   });
 }
 
+/**
+ * セット効果ポップオーバー（position: fixed）のグローバル配置ハンドラ。
+ * 理由: absolute 配置だと親の overflow:auto や stacking context に隠れるため。
+ */
+function setupSetPopovers() {
+  let activePop = null;
+  const hide = () => {
+    if (activePop) {
+      activePop.classList.remove('is-visible');
+      activePop = null;
+    }
+  };
+  const position = (host, pop) => {
+    const r = host.getBoundingClientRect();
+    // 先に可視化してサイズを確定
+    pop.style.top = '0px';
+    pop.style.left = '0px';
+    pop.classList.add('is-visible');
+    const pr = pop.getBoundingClientRect();
+    const margin = 6;
+    let top = r.top - pr.height - margin;
+    if (top < margin) top = r.bottom + margin;
+    let left = r.left;
+    const maxLeft = window.innerWidth - pr.width - margin;
+    if (left > maxLeft) left = maxLeft;
+    if (left < margin) left = margin;
+    pop.style.top = `${Math.round(top)}px`;
+    pop.style.left = `${Math.round(left)}px`;
+  };
+  document.addEventListener('mouseover', (e) => {
+    const host = e.target.closest?.('.set-name.has-popover');
+    if (!host) return;
+    const pop = host.querySelector(':scope > .set-effect-popover');
+    if (!pop) return;
+    if (activePop && activePop !== pop) hide();
+    activePop = pop;
+    position(host, pop);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const host = e.target.closest?.('.set-name.has-popover');
+    if (!host) return;
+    const related = e.relatedTarget;
+    if (related && host.contains(related)) return;
+    hide();
+  });
+  window.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+}
+
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
   applyUiPrefs();
+  setupSetPopovers();
   if (!location.hash) location.hash = '#/characters';
   navigate();
 });

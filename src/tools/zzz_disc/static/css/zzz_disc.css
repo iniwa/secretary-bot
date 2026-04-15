@@ -884,8 +884,8 @@ h3 { font-size: 1rem; font-weight: 600; }
   border-bottom: 1px dotted var(--text-muted);
 }
 .set-effect-popover {
-  position: absolute;
-  bottom: calc(100% + 6px);
+  position: fixed;
+  top: 0;
   left: 0;
   min-width: 280px;
   max-width: 420px;
@@ -897,16 +897,13 @@ h3 { font-size: 1rem; font-weight: 600; }
   font-weight: normal;
   white-space: normal;
   line-height: 1.4;
-  z-index: 9999;
+  z-index: 100000;
   display: none;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   color: var(--text);
   pointer-events: none;
 }
-.set-name.has-popover:hover .set-effect-popover,
-.set-name.has-popover:focus .set-effect-popover {
-  display: block;
-}
+.set-effect-popover.is-visible { display: block; }
 .set-effect-popover .popover-title {
   font-weight: 700;
   margin-bottom: 4px;
