@@ -1,6 +1,6 @@
 # LLM設定（APIキーは.envで管理）
 llm:
-  ollama_model: "gemma4"
+  ollama_model: "gemma4:e2b"
   ollama_timeout: 300  # Ollama生成タイムアウト（秒）。デフォルト300秒（5分）
   ollama_cooldown_sec: 60  # Ollama失敗検出後のクールダウン秒数。/api/tagsのゾンビ誤判定を防ぐ
   # ollama_url: "http://localhost:11434"  # 省略時はlocalhost:11434を自動使用
@@ -159,7 +159,7 @@ units:
 tools:
   zzz_disc:
     enabled: true                      # デフォルト ON
-    vlm_model: "gemma4"                # Windows Agent 側 Ollama に pull 済みのモデル
+    vlm_model: "gemma4:e2b"            # Windows Agent 側 Ollama に pull 済みのモデル
     delegate_to: "windows"             # AgentPool role
     match_threshold: 3.0               # マッチングスコアの候補閾値
     capture:
