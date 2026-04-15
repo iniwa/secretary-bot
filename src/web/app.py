@@ -2514,6 +2514,25 @@ def create_web_app(bot) -> FastAPI:
         ]
         return {"workflows": out}
 
+    @app.get("/api/image/agents", dependencies=[Depends(_verify)])
+    async def image_agents():
+        """ComfyUI へのリンク用に agent_pool の host 情報を返す。"""
+        ig_cfg = (bot.config.get("units") or {}).get("image_gen") or {}
+        comfy_port = int(ig_cfg.get("comfyui_port", 8188))
+        agents = getattr(bot.unit_manager.agent_pool, "_agents", []) or []
+        out = []
+        for a in agents:
+            host = a.get("host") or ""
+            if not host:
+                continue
+            out.append({
+                "id": a.get("id", ""),
+                "name": a.get("name") or a.get("id", ""),
+                "role": a.get("role", ""),
+                "comfyui_url": f"http://{host}:{comfy_port}/",
+            })
+        return {"agents": out}
+
     @app.get("/api/image/file", dependencies=[Depends(_verify)])
     async def image_file(path: str):
         """NAS 配下の画像ファイルを配信（path traversal ガード付き）。"""

@@ -76,6 +76,32 @@ export function render() {
     font-size: 0.95rem;
     color: var(--text-primary);
   }
+  .imggen-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+  .imggen-header h3 { margin: 0; }
+  .imggen-comfy-links {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .imggen-comfy-links a {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-base);
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+  .imggen-comfy-links a:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .imggen-form label {
     display: block;
     font-size: 0.75rem;
@@ -191,7 +217,10 @@ export function render() {
 <div class="imggen-grid">
   <!-- Generate -->
   <section class="card imggen-section imggen-gen">
-    <h3>Generate</h3>
+    <div class="imggen-header">
+      <h3>Generate</h3>
+      <div id="ig-comfy-links" class="imggen-comfy-links"></div>
+    </div>
     <div class="imggen-form">
       <label for="ig-workflow">Workflow</label>
       <select id="ig-workflow" class="form-input"><option value="">Loading...</option></select>
@@ -276,6 +305,29 @@ async function loadWorkflows() {
   } catch (err) {
     console.error('workflows load failed', err);
     sel.innerHTML = '<option value="">(load failed)</option>';
+  }
+}
+
+// ============================================================
+// ComfyUI links
+// ============================================================
+async function loadComfyLinks() {
+  const el = $('ig-comfy-links');
+  if (!el) return;
+  try {
+    const data = await api('/api/image/agents');
+    const agents = data?.agents || [];
+    if (!agents.length) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = agents.map(a => {
+      const label = `ComfyUI (${esc(a.name || a.id)})`;
+      return `<a href="${esc(a.comfyui_url)}" target="_blank" rel="noopener" title="${esc(a.comfyui_url)}">${label}</a>`;
+    }).join('');
+  } catch (err) {
+    console.error('agents load failed', err);
+    el.innerHTML = '';
   }
 }
 
@@ -480,6 +532,7 @@ export async function mount() {
     loadWorkflows(),
     loadJobs(),
     loadGallery(),
+    loadComfyLinks(),
   ]);
 
   // SSE（SSE が動けば jobs はそれで更新されるが、念のためポーリングも 10s で回す）
