@@ -132,6 +132,13 @@ function wireRecommendedEditors() {
     wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
       cb.addEventListener('change', () => {
         cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+        // 楽観的に state を更新し、ビルドカードを即時再描画
+        const picked = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(x => x.dataset.val);
+        if (state.character) {
+          state.character = { ...state.character, [cfg.stateKey]: picked };
+        }
+        renderBuildsSection();
         clearTimeout(_recSaveTimers[kind]);
         _recSaveTimers[kind] = setTimeout(doSave, 250);
       });
@@ -141,13 +148,27 @@ function wireRecommendedEditors() {
 
 function renderBody() {
   const el = document.getElementById('detail-body');
-  const chunks = [];
+  el.innerHTML = `
+    <div id="rec-editors-area"></div>
+    <div id="builds-area"></div>
+  `;
+  renderRecEditorsSection();
+  renderBuildsSection();
+}
+
+function renderRecEditorsSection() {
+  const el = document.getElementById('rec-editors-area');
+  if (!el) return;
   const setsMap = setsByName(state.sets);
+  el.innerHTML = renderRecommendedEditor() + renderRecommendedDiscEditor(setsMap);
+  wireRecommendedEditors();
+}
 
-  chunks.push(renderRecommendedEditor());
-  chunks.push(renderRecommendedDiscEditor(setsMap));
-
-  // 現在の装備
+function renderBuildsSection() {
+  const el = document.getElementById('builds-area');
+  if (!el) return;
+  const setsMap = setsByName(state.sets);
+  const chunks = [];
   chunks.push('<h3 class="mb-1">● 現在の装備</h3>');
   if (state.current) {
     chunks.push(`<div class="build-wrap" data-kind="current">${renderBuildCard({ character: state.character, build: state.current, actions: ['clone'], setsByName: setsMap })}</div>`);
@@ -160,8 +181,6 @@ function renderBody() {
       </div>
     `);
   }
-
-  // プリセット装備
   chunks.push(`<h3 class="mb-1 mt-2">📦 プリセット装備 (${state.presets.length})</h3>`);
   if (!state.presets.length) {
     chunks.push('<div class="text-muted text-sm mb-2">プリセットはまだありません。「現在の装備」から「プリセットへ複製」で保存できます。</div>');
@@ -170,9 +189,7 @@ function renderBody() {
       chunks.push(`<div class="build-wrap" data-kind="preset">${renderBuildCard({ character: state.character, build: b, actions: ['edit', 'delete'], setsByName: setsMap })}</div>`);
     }
   }
-
   el.innerHTML = chunks.join('');
-  wireRecommendedEditors();
   wireUp();
 }
 

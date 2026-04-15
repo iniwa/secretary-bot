@@ -23,6 +23,7 @@ export function renderBuildCard({ character, build, actions = [], setsByName = n
   if (!build) return '';
   const stats = build.stats || {};
   const recommended = new Set(character?.recommended_substats || []);
+  const recommendedSets = new Set(character?.recommended_disc_sets || []);
   const setsMap = setsByName || new Map();
   const portraitStyle = character?.icon_url ? `background-image:url(${escapeHtml(character.icon_url)});` : '';
   const rank = build.rank || '';
@@ -54,7 +55,7 @@ export function renderBuildCard({ character, build, actions = [], setsByName = n
       </div>
 
       <div class="disc-grid">
-        ${renderDiscs(build.slots || [], recommended, setsMap)}
+        ${renderDiscs(build.slots || [], recommended, setsMap, recommendedSets)}
       </div>
     </div>
   `;
@@ -108,7 +109,7 @@ function renderStats(stats) {
   }).join('');
 }
 
-function renderDiscs(slots, recommended = new Set(), setsMap = new Map()) {
+function renderDiscs(slots, recommended = new Set(), setsMap = new Map(), recommendedSets = new Set()) {
   // 1..6 の空セルを埋める
   const map = new Map();
   for (const s of slots) {
@@ -126,12 +127,12 @@ function renderDiscs(slots, recommended = new Set(), setsMap = new Map()) {
       `);
       continue;
     }
-    cells.push(renderDiscTile(entry, recommended, setsMap));
+    cells.push(renderDiscTile(entry, recommended, setsMap, recommendedSets));
   }
   return cells.join('');
 }
 
-function renderDiscTile(entry, recommended = new Set(), setsMap = new Map()) {
+function renderDiscTile(entry, recommended = new Set(), setsMap = new Map(), recommendedSets = new Set()) {
   const d = entry.disc || {};
   const shared = Array.isArray(entry.shared_with) ? entry.shared_with.filter(x => x) : [];
   const sharedCount = shared.length;
@@ -146,12 +147,16 @@ function renderDiscTile(entry, recommended = new Set(), setsMap = new Map()) {
   // setName が未解決 (「-」) のときは d.name をフォールバック表示
   const displayName = (setName && setName !== '-') ? setName : (rawName || '-');
   const setMaster = setsMap.get(displayName) || null;
+  const isRecSet = recommendedSets.has(displayName);
+  const suffixParts = [];
+  if (isRecSet) suffixParts.push('<span class="rec-set-mark" title="推奨セット">★</span>');
+  if (sharedCount) suffixParts.push(`<span class="shared-warning">⚠${sharedCount}</span>`);
   const setNameHtml = setNameWithPopover(displayName, setMaster, {
-    suffix: sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : '',
+    suffix: suffixParts.join(''),
   });
   const tooltip = shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : '';
   return `
-    <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
+    <div class="disc-tile ${sharedCount ? 'shared' : ''} ${isRecSet ? 'rec-set' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
       <span class="disc-slot-badge">${d.slot}</span>
       <div class="disc-tile-header">
         ${iconHtml}

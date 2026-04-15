@@ -721,6 +721,13 @@ h3 { font-size: 1rem; font-weight: 600; }
   cursor: default;
 }
 .disc-tile.shared { border-left-color: var(--warning); }
+.disc-tile.rec-set { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.rec-set-mark {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 2px;
+  font-size: 0.85em;
+}
 
 .disc-tile-header {
   display: flex;
