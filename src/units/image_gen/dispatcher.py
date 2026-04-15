@@ -88,6 +88,9 @@ class Dispatcher:
         # ここでは起動時に既存の warming_cache / running を復帰監視する。
         self._tasks.append(asyncio.create_task(
             self._resume_monitors(), name="img_resume_monitors"))
+        # 起動時ウォームアップ: 定常ベースモデルを NAS→ローカルに事前キャッシュ
+        self._tasks.append(asyncio.create_task(
+            self._warmup_agents(), name="img_warmup"))
         log.info("Dispatcher started (workers=%d)", len(self._tasks))
 
     async def stop(self) -> None:
@@ -632,6 +635,18 @@ class Dispatcher:
                     asyncio.create_task(self._monitor_running(row["id"], agent))
         except Exception as e:
             log.warning("resume_monitors failed: %s", e)
+
+    # --- warmup (起動時) ---
+
+    async def _warmup_agents(self) -> None:
+        """起動時に全 Agent のキャッシュ状態を同期し、定常モデルを事前取得する。
+
+        best-effort。失敗はログに残すだけでジョブ処理へは影響させない。
+        定期実行は model_sync ユニットが担当する。
+        """
+        await asyncio.sleep(2.0)
+        from src.units.image_gen.warmup import warmup_all_agents
+        await warmup_all_agents(self.bot, trigger_sync=True)
 
     # --- 遷移ヘルパー ---
 
