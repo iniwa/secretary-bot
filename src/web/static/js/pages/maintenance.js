@@ -613,6 +613,27 @@ async function loadOllamaStatus() {
         activeHtml = `<span style="color:var(--primary)"><strong>${esc(r.purpose || '?')}</strong> (${r.elapsed_sec}s)</span>`;
       }
 
+      // インスタンス別メトリクス
+      let statsHtml = '';
+      const st = inst.stats;
+      if (st && (st.success > 0 || st.failure > 0)) {
+        const total = st.success + st.failure;
+        const rate = st.success_rate != null ? `${(st.success_rate * 100).toFixed(1)}%` : '---';
+        const rateColor = st.success_rate == null
+          ? 'var(--text-muted)'
+          : (st.success_rate >= 0.95 ? 'var(--success)'
+            : st.success_rate >= 0.8 ? 'var(--warning)' : 'var(--error)');
+        const avgMs = st.avg_latency_ms ? `${(st.avg_latency_ms / 1000).toFixed(2)}s` : '---';
+        const lastMs = st.last_latency_ms ? `${(st.last_latency_ms / 1000).toFixed(2)}s` : '---';
+        const errLine = st.last_error
+          ? `<div><span class="detail-label">Last error:</span> <span style="color:var(--error);font-size:0.75rem">${esc(st.last_error)}</span></div>`
+          : '';
+        statsHtml = `
+          <div><span class="detail-label">Success rate:</span> <span style="color:${rateColor}">${rate}</span> <span style="color:var(--text-muted)">(${st.success}/${total})</span></div>
+          <div><span class="detail-label">Latency:</span> avg ${avgMs} / last ${lastMs}</div>
+          ${errLine}`;
+      }
+
       html += `<div class="ollama-instance-card">
         <div class="ollama-instance-header">
           <span class="check-icon ${statusClass}">${statusClass === 'ok' ? '&#10003;' : '&#10007;'}</span>
@@ -622,6 +643,7 @@ async function loadOllamaStatus() {
         <div class="ollama-instance-details">
           <div><span class="detail-label">Models:</span> ${models}</div>
           <div><span class="detail-label">Status:</span> ${activeHtml}</div>
+          ${statsHtml}
         </div>
       </div>`;
     }

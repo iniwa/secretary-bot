@@ -19,6 +19,8 @@ let _gameFilter = '';
 let _dayFilter = '';              // YYYY-MM-DD。カレンダーから1日絞込み
 let _sessionOffset = 0;
 let _viewMode = 'bar';            // 'bar' | 'calendar'
+let _fgPc = 'main';               // 'main' | 'sub'
+let _lastFg = [];                 // 直近の foreground データ（トグル切替時の再レンダ用）
 let _calYear = 0;
 let _calMonth = 0;                // 1〜12
 const SESSION_PAGE_SIZE = 50;
@@ -121,6 +123,7 @@ export function render() {
     <div class="mini-card"><div class="mini-value" id="a-sum-active">-</div><div class="mini-label">アクティブ日数</div></div>
     <div class="mini-card"><div class="mini-value" id="a-sum-longest">-</div><div class="mini-label">最長セッション</div></div>
     <div class="mini-card"><div class="mini-value" id="a-sum-games">-</div><div class="mini-label">ゲーム種類</div></div>
+    <div class="mini-card"><div class="mini-value" id="a-sum-simul">-</div><div class="mini-label">両PC同時操作</div></div>
   </section>
 
   <section class="card">
@@ -173,7 +176,11 @@ export function render() {
 
     <div class="card">
       <div class="card-header">
-        <h3>ゲーム中以外の作業アプリ</h3>
+        <h3>作業アプリ</h3>
+        <div id="a-fg-pc-toggle" style="display:flex;gap:0.25rem">
+          <button class="pill" data-pc="main">Main</button>
+          <button class="pill" data-pc="sub">Sub</button>
+        </div>
       </div>
       <div id="a-fg-ranking" style="display:flex;flex-direction:column;gap:0.5rem"></div>
     </div>
@@ -228,9 +235,10 @@ async function loadSummaryAndStats() {
     [`/api/activity/stats?${qs}`, {}],
   ]);
 
-  renderSummary(summary);
+  renderSummary(summary, stats);
   renderGameRanking(stats?.games || []);
-  renderFgRanking(stats?.foreground || []);
+  _lastFg = stats?.foreground || [];
+  renderFgRanking(_lastFg);
   renderRangeInfo(summary);
   updateSectionTitles();
 }
@@ -281,7 +289,7 @@ async function loadSessions(reset) {
   renderSessions(data || { sessions: [], total: 0 });
 }
 
-function renderSummary(s) {
+function renderSummary(s, stats) {
   const $ = id => document.getElementById(id);
   if (!s) return;
   $('a-sum-total').textContent = fmtDuration(s.total_sec);
@@ -289,6 +297,8 @@ function renderSummary(s) {
   $('a-sum-active').textContent = `${s.active_days ?? 0}日`;
   $('a-sum-longest').textContent = fmtDuration(s.longest_sec);
   $('a-sum-games').textContent = s.distinct_games ?? 0;
+  const simEl = $('a-sum-simul');
+  if (simEl) simEl.textContent = fmtDuration(stats?.simultaneous_sec || 0);
 }
 
 function renderRangeInfo(s) {
@@ -335,8 +345,27 @@ function renderGameRanking(games) {
 function renderFgRanking(fg) {
   const root = document.getElementById('a-fg-ranking');
   if (!root) return;
-  // during_game=0 のみ（純粋な作業時間）
-  const work = fg.filter(r => !r.during_game).slice(0, 15);
+  // PC トグル状態を反映
+  document.querySelectorAll('#a-fg-pc-toggle .pill').forEach(el => {
+    el.classList.toggle('active', el.dataset.pc === _fgPc);
+  });
+  // Main はゲーム中以外のみ（純粋な作業時間）、Sub は全件（Sub でゲームは想定外）
+  // pc フィールドが無い旧データは main 扱い
+  const filtered = fg.filter(r => {
+    const pc = r.pc || 'main';
+    if (pc !== _fgPc) return false;
+    if (pc === 'main' && r.during_game) return false;
+    return true;
+  });
+  // 同一 process_name を集約（during_game で分かれている可能性があるため）
+  const agg = new Map();
+  for (const r of filtered) {
+    const cur = agg.get(r.process_name) || { process_name: r.process_name, sec: 0, sessions: 0 };
+    cur.sec += r.sec || 0;
+    cur.sessions += r.sessions || 0;
+    agg.set(r.process_name, cur);
+  }
+  const work = [...agg.values()].sort((a, b) => b.sec - a.sec).slice(0, 15);
   if (!work.length) {
     root.innerHTML = '<div style="color:var(--text-muted);padding:1rem;text-align:center">データなし</div>';
     return;
@@ -616,6 +645,14 @@ export async function mount() {
     });
   });
 
+  // FG PC トグル（Main / Sub）
+  document.getElementById('a-fg-pc-toggle').addEventListener('click', ev => {
+    const btn = ev.target.closest('.pill');
+    if (!btn) return;
+    _fgPc = btn.dataset.pc;
+    renderFgRanking(_lastFg);
+  });
+
   // 表示モード切替
   document.getElementById('a-view-toggle').addEventListener('click', ev => {
     const btn = ev.target.closest('.pill');
@@ -700,4 +737,6 @@ export function unmount() {
   _rangeEnd = '';
   _sessionOffset = 0;
   _viewMode = 'bar';
+  _fgPc = 'main';
+  _lastFg = [];
 }

@@ -1,7 +1,10 @@
 ## 未実装項目サマリ
 ## 改善案
 ### ACtivity
-- [ ] `docs/design/activity_multi_pc_detection.md` を参照
+- [x] `docs/design/activity_multi_pc_detection.md` を参照
+  - Phase A/B + C-1/C-4 は先行実装済み
+  - C-2 (WebGUI: Main/Sub FG トグル + 両PC同時操作表示) / C-3 (daily_summary の PC 別集計) も実装完了
+  - C-5 (habit_detector) は「大きな変更は不要」のため現状維持
 
 ### AI画像生成機能
 - [ ] `image_gen_**.md` を参照。
@@ -28,5 +31,7 @@
 - [ ] MainPCのollamaがCPU稼働してたかも？
 
 ### 並列 LLM 最適化
-- [ ] Ollama インスタンス別の成功率・レイテンシ追跡
-  - データ集まってから確認
+- [x] Ollama インスタンス別の成功率・レイテンシ追跡
+  - `OllamaClient._instance_stats` にプロセス内メトリクスを記録（成功数・失敗数・平均/直近レイテンシ・最終エラー）
+  - `/api/ollama-status` の `instances[].stats` で公開、メンテナンス画面で表示
+  - 永続化は未実装（プロセス再起動でリセット）。長期傾向が必要になったら DB 化を検討

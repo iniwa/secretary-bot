@@ -58,6 +58,9 @@ class OllamaClient:
         self._seq = itertools.count()
         # アクティブリクエスト追跡（WebGUI表示用）
         self._active_requests: dict[str, dict] = {}  # url → {purpose, started_at}
+        # インスタンス別メトリクス（プロセス内・永続化なし）
+        # url → {success, failure, total_latency_ms, last_latency_ms, last_used_at, last_error}
+        self._instance_stats: dict[str, dict] = {}
         # GPUメモリ監視（他プロセスがGPUを占有中のインスタンスを除外）
         self.gpu_monitor = gpu_monitor
 
@@ -288,6 +291,22 @@ class OllamaClient:
             if self._active_count.get(url, 0) > 0:
                 self._release_instance(url)
 
+    def _record_stats(self, url: str, latency_ms: float, success: bool, error: str | None = None) -> None:
+        """インスタンス別の成功/失敗・レイテンシを記録する（プロセス内のみ）。"""
+        st = self._instance_stats.setdefault(url, {
+            "success": 0, "failure": 0,
+            "total_latency_ms": 0.0, "last_latency_ms": 0.0,
+            "last_used_at": 0.0, "last_error": None,
+        })
+        if success:
+            st["success"] += 1
+        else:
+            st["failure"] += 1
+            st["last_error"] = error
+        st["total_latency_ms"] += latency_ms
+        st["last_latency_ms"] = latency_ms
+        st["last_used_at"] = time.time()
+
     async def _do_generate(self, url: str, prompt: str, system: str | None, model: str | None) -> tuple[str, dict]:
         """指定URLのOllamaインスタンスで生成を実行する。"""
         use_model = model or self.model
@@ -308,6 +327,7 @@ class OllamaClient:
             "options": options,
         }
 
+        started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.post(f"{url}/api/chat", json=payload)
@@ -331,9 +351,13 @@ class OllamaClient:
                     "instance": url,
                 }
 
-                log.debug("Ollama generate on %s: %.1f tok/s", url, tokens_per_sec)
+                latency_ms = (time.monotonic() - started) * 1000.0
+                self._record_stats(url, latency_ms, success=True)
+                log.debug("Ollama generate on %s: %.1f tok/s (%.0f ms)", url, tokens_per_sec, latency_ms)
                 return self._clean_response(text), metrics
         except Exception as e:
+            latency_ms = (time.monotonic() - started) * 1000.0
+            self._record_stats(url, latency_ms, success=False, error=str(e)[:200])
             raise OllamaUnavailableError(f"Ollama generation failed ({url}): {e}") from e
 
     # --- ステータス（WebGUI用） ---
@@ -345,6 +369,26 @@ class OllamaClient:
             available = url in self._available_urls
             active = self._active_count.get(url, 0)
             active_req = self._active_requests.get(url)
+            st = self._instance_stats.get(url)
+            if st:
+                total = st["success"] + st["failure"]
+                success_rate = (st["success"] / total) if total > 0 else None
+                avg_latency_ms = (st["total_latency_ms"] / total) if total > 0 else 0.0
+                stats = {
+                    "success": st["success"],
+                    "failure": st["failure"],
+                    "success_rate": round(success_rate, 4) if success_rate is not None else None,
+                    "avg_latency_ms": round(avg_latency_ms, 1),
+                    "last_latency_ms": round(st["last_latency_ms"], 1),
+                    "last_used_at": st["last_used_at"] or None,
+                    "last_error": st["last_error"],
+                }
+            else:
+                stats = {
+                    "success": 0, "failure": 0, "success_rate": None,
+                    "avg_latency_ms": 0.0, "last_latency_ms": 0.0,
+                    "last_used_at": None, "last_error": None,
+                }
             instances.append({
                 "url": url,
                 "available": available,
@@ -354,6 +398,7 @@ class OllamaClient:
                     "purpose": active_req["purpose"],
                     "elapsed_sec": round(time.time() - active_req["started_at"], 1),
                 } if active_req and active > 0 else None,
+                "stats": stats,
             })
         return {
             "instances": instances,

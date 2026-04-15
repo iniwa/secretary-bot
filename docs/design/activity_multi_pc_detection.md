@@ -266,13 +266,16 @@ Sub 側のサンプルは `pc="sub"` で同じく INSERT。`active_pcs` は Main
 
 `ActivityDetector.get_status()` の新しい戻り値をそのままフロントに流す。シリアライズでリストを落とさないこと。
 
-### C-2. `src/web/static/js/pages/activity.js`
+### C-2. `src/web/static/js/pages/activity.js` ✅ 実装済み（簡易版）
+
+> サマリに「両PC同時操作」ミニカードを追加。作業アプリランキングに Main/Sub トグルを追加。
+> タイムラインの並列帯とセッション一覧の pc 列は今後の拡張（現状は activity_samples/foreground_sessions に pc が入っているので、必要になったら追加可能）。
 
 1. 現在状態カード: Main / Sub の foreground を 2 列で並べる。`active_pcs` のバッジを表示（`["main","sub"]` なら両方ハイライト）。
 2. タイムライン: Main active / Sub active の帯を 2 本並列表示。両方点灯する時間帯が「同時操作」として直感的に見える。
 3. foreground セッション一覧: `pc` カラムを列追加し、Main / Sub でフィルタ可能にする。
 
-### C-3. `src/activity/daily_summary.py`
+### C-3. `src/activity/daily_summary.py` ✅ 実装済み
 
 foreground 集計を `pc` でグルーピング:
 

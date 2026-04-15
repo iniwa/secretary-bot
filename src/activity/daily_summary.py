@@ -16,15 +16,22 @@ _SYSTEM = (
 _PROMPT = """\
 以下はいにわ（ユーザー）の {date} のPC活動データです。
 
-## ゲーム別時間（psutil 連続検知）
+## ゲーム別時間（Main PC・psutil 連続検知）
 {games}
 
-## フォアグラウンド別時間（ゲーム中以外）
-{fg}
+## Main PC フォアグラウンド別時間（ゲーム中以外）
+{fg_main}
+
+## Sub PC フォアグラウンド別時間
+{fg_sub}
+
+## 両 PC 同時操作時間（SF6 等プレイ中に Sub PC でも作業していた時間）
+{simultaneous}
 
 ## 指示
 - 上記データをもとに、1〜3文で「いにわは {date} に何をしていたか」を短くまとめてください
 - ゲーム時間が主ならゲーム中心、作業アプリが主なら作業中心で要約
+- Main / Sub を同時に使っていた時間が目立つ場合は「Main でゲーム中に Sub で作業」のように明記
 - 合間に別のことをしていた場合はカッコで補足してもよい（例：「5時間Factorio（合間にブラウザとDiscord）」）
 - 時間は「X時間Y分」または「X分」で表記
 """
@@ -53,24 +60,45 @@ async def run_daily_summary(bot, target_date: str | None = None) -> bool:
 
     fg_rows = await bot.database.fetchall(
         """
-        SELECT process_name, SUM(COALESCE(duration_sec, 0)) AS sec, during_game
+        SELECT pc, process_name, SUM(COALESCE(duration_sec, 0)) AS sec, during_game
         FROM foreground_sessions
         WHERE start_at BETWEEN ? AND ? AND end_at IS NOT NULL
-        GROUP BY process_name, during_game HAVING sec > 0 ORDER BY sec DESC
+        GROUP BY pc, process_name, during_game HAVING sec > 0 ORDER BY sec DESC
         """,
         (day_start, day_end),
     )
-    # ゲーム中以外だけ抽出、ゲーム中の寄り道は別途文脈
-    fg_work = [r for r in fg_rows if not r["during_game"]]
+    # Main はゲーム中以外だけ抽出（ゲーム中の寄り道は別文脈）、Sub は全部
+    fg_main = [r for r in fg_rows if r["pc"] == "main" and not r["during_game"]]
+    fg_sub = [r for r in fg_rows if r["pc"] == "sub"]
 
-    if not games and not fg_work:
+    # 両 PC 同時操作時間（Main サンプルの active_pcs に main と sub 両方含む回数 × poll間隔）
+    sim_row = await bot.database.fetchone(
+        """
+        SELECT COUNT(*) AS c FROM activity_samples
+        WHERE pc='main' AND ts BETWEEN ? AND ?
+          AND active_pcs LIKE '%main%' AND active_pcs LIKE '%sub%'
+        """,
+        (day_start, day_end),
+    )
+    poll_interval = int(bot.config.get("activity", {}).get("poll_interval_seconds", 60))
+    simultaneous_sec = int((sim_row["c"] if sim_row else 0) * poll_interval)
+
+    if not games and not fg_main and not fg_sub:
         log.debug("daily_summary: no activity for %s", target_date)
         return False
 
     games_text = "\n".join(f"- {g['game_name']}: {_fmt(g['sec'])}" for g in games) or "なし"
-    fg_text = "\n".join(f"- {f['process_name']}: {_fmt(f['sec'])}" for f in fg_work[:10]) or "なし"
+    fg_main_text = "\n".join(f"- {f['process_name']}: {_fmt(f['sec'])}" for f in fg_main[:10]) or "なし"
+    fg_sub_text = "\n".join(f"- {f['process_name']}: {_fmt(f['sec'])}" for f in fg_sub[:10]) or "なし"
+    sim_text = _fmt(simultaneous_sec) if simultaneous_sec > 0 else "なし"
 
-    prompt = _PROMPT.format(date=target_date, games=games_text, fg=fg_text)
+    prompt = _PROMPT.format(
+        date=target_date,
+        games=games_text,
+        fg_main=fg_main_text,
+        fg_sub=fg_sub_text,
+        simultaneous=sim_text,
+    )
 
     try:
         summary = await bot.llm_router.generate(
