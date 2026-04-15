@@ -101,6 +101,20 @@ class ComfyUIManager:
             return False
         return self._proc.poll() is None
 
+    def _probe_existing(self) -> bool:
+        """ポートに既に別プロセスが応答していないか確認する。
+
+        エージェント再起動などで ``self._proc`` を失った状態で ``start()`` を
+        呼ぶと、ポート衝突した二重起動になる。HTTP で ``/system_stats`` を
+        短時間叩いて既存インスタンスを検出する。
+        """
+        try:
+            with httpx.Client(timeout=1.0) as client:
+                r = client.get(f"{self.base_url}/system_stats")
+                return r.status_code == 200
+        except Exception:
+            return False
+
     async def wait_until_ready(self, timeout: Optional[int] = None) -> bool:
         deadline = time.time() + (timeout or self.startup_timeout_seconds)
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -125,6 +139,16 @@ class ComfyUIManager:
         with self._lock:
             if self.is_running():
                 return {"ok": True, "pid": self._proc.pid, "already_running": True}
+            # エージェント再起動後は self._proc が None のまま、外部で ComfyUI が
+            # 生き残っているケースがある。二重起動による VRAM 競合を防ぐため
+            # ポートに応答があれば既存インスタンスを採用する。
+            if self._probe_existing():
+                self.state.available = True
+                self.state.last_health_at = time.time()
+                self.state.last_error = None
+                self._log("info", f"adopted existing ComfyUI at {self.base_url}")
+                self._ensure_monitor()
+                return {"ok": True, "pid": None, "already_running": True, "adopted": True}
             cmd = self._resolve_entry()
             if cmd is None:
                 self.state.last_error = "ComfyUI not installed"
@@ -178,28 +202,32 @@ class ComfyUIManager:
         interval = max(self.health_check_interval_seconds, 5)
         while not self._monitor_stop.is_set():
             time.sleep(interval)
-            if not self.is_running():
-                if self.state.restart_count >= self.crash_restart_max_retries:
-                    self.state.available = False
-                    self.state.last_error = "restart retries exceeded"
-                    self._log("error", self.state.last_error)
-                    return
-                self.state.restart_count += 1
-                self._log("warn", f"crash detected, auto-restarting (#{self.state.restart_count})")
-                self.start()
-                continue
-            # health
+            healthy = False
             try:
                 with httpx.Client(timeout=3.0) as client:
                     r = client.get(f"{self.base_url}/system_stats")
                     if r.status_code == 200:
+                        healthy = True
                         self.state.available = True
                         self.state.last_health_at = time.time()
-                    else:
-                        self.state.available = False
             except Exception as e:
-                self.state.available = False
                 self.state.last_error = f"health failed: {e}"
+
+            if healthy:
+                continue
+            self.state.available = False
+
+            # 採用済み外部プロセスは勝手に再起動しない（管理外のため）。
+            # 自前で spawn した Popen が死んでいる場合のみ再起動する。
+            if self._proc is None or self._proc.poll() is None:
+                continue
+            if self.state.restart_count >= self.crash_restart_max_retries:
+                self.state.last_error = "restart retries exceeded"
+                self._log("error", self.state.last_error)
+                return
+            self.state.restart_count += 1
+            self._log("warn", f"crash detected, auto-restarting (#{self.state.restart_count})")
+            self.start()
 
     def stop(self, timeout: float = 10.0) -> dict:
         with self._lock:
@@ -220,11 +248,13 @@ class ComfyUIManager:
                 return {"ok": False, "error": str(e)}
 
     def status_snapshot(self) -> dict:
-        running = self.is_running()
+        owned = self.is_running()
+        # 採用した外部プロセスは owned=False でもヘルスが通っていれば動作中とみなす
+        running = owned or self.state.available
         return {
             "running": running,
-            "available": self.state.available and running,
-            "pid": self.state.pid if running else None,
+            "available": self.state.available,
+            "pid": self._proc.pid if owned and self._proc else None,
             "base_url": self.base_url,
             "started_at": self.state.started_at,
             "last_health_at": self.state.last_health_at,
