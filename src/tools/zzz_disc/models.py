@@ -449,9 +449,34 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
                       name: str | None = None,
                       source_image_path: str | None = None,
                       note: str | None = None) -> int:
-    """fingerprint で既存検索して重複排除。既存があれば既存 id を返す。
-    既存に icon_url / name が無く今回取得できた場合は補填する。"""
+    """既存検索の優先順位:
+    1. hoyolab_disc_id 一致 → 強化スナップショットなので最新値で UPDATE
+    2. fingerprint 一致 → 同一内容の手動登録/旧データ、既存 id を返す
+    どちらにも該当しなければ新規 INSERT。"""
     fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
+    if hoyolab_disc_id:
+        existing = await db.fetchone(
+            "SELECT id FROM zzz_discs WHERE hoyolab_disc_id = ?",
+            (hoyolab_disc_id,),
+        )
+        if existing:
+            # fingerprint UNIQUE と衝突しないかを事前確認（異常データ保護）
+            clash = await db.fetchone(
+                "SELECT id FROM zzz_discs WHERE fingerprint = ? AND id != ?",
+                (fp, existing["id"]),
+            )
+            if not clash:
+                await db.execute(
+                    "UPDATE zzz_discs SET slot = ?, set_id = ?, "
+                    "main_stat_name = ?, main_stat_value = ?, sub_stats_json = ?, "
+                    "level = ?, rarity = ?, fingerprint = ?, "
+                    "icon_url = COALESCE(?, icon_url), name = COALESCE(?, name), "
+                    "updated_at = ? WHERE id = ?",
+                    (slot, set_id, main_stat_name, main_stat_value,
+                     json.dumps(sub_stats, ensure_ascii=False),
+                     level, rarity, fp, icon_url, name, _now(), existing["id"]),
+                )
+            return existing["id"]
     existing = await db.fetchone(
         "SELECT id, icon_url, name FROM zzz_discs WHERE fingerprint = ?", (fp,))
     if existing:
@@ -460,6 +485,9 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
             sets.append("icon_url = ?"); params.append(icon_url)
         if name and not existing.get("name"):
             sets.append("name = ?"); params.append(name)
+        if hoyolab_disc_id:
+            sets.append("hoyolab_disc_id = COALESCE(hoyolab_disc_id, ?)")
+            params.append(hoyolab_disc_id)
         if sets:
             params.append(existing["id"])
             await db.execute(
