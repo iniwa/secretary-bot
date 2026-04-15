@@ -691,6 +691,26 @@ async def delete_build(db, build_id: int) -> int:
     )
 
 
+async def list_all_disc_usage(db) -> list[dict]:
+    """全 disc × 利用ビルドのフラットな対応表を返す（フィルタUI 用）。
+
+    結果の各行: disc_id, build_id, character_id, character_slug,
+                character_name_ja, build_name, is_current, slot
+    disc が未割当の場合は出現しない（フロントで discs と差分を取る想定）。
+    """
+    rows = await db.fetchall(
+        "SELECT bs.disc_id, bs.slot, b.id AS build_id, b.name AS build_name, "
+        "b.is_current, c.id AS character_id, c.slug AS character_slug, "
+        "c.name_ja AS character_name_ja "
+        "FROM zzz_build_slots bs "
+        "JOIN zzz_builds b ON b.id = bs.build_id "
+        "JOIN zzz_characters c ON c.id = b.character_id "
+        "WHERE bs.disc_id IS NOT NULL "
+        "ORDER BY c.display_order, c.id, b.is_current DESC, b.id"
+    )
+    return rows
+
+
 async def find_shared_discs(db) -> list[dict]:
     """複数ビルドで使われている disc を返す。"""
     rows = await db.fetchall(

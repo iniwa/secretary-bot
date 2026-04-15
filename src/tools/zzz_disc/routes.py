@@ -271,6 +271,12 @@ def build_router(bot, config: dict) -> APIRouter:
         shared = await models.find_shared_discs(db)
         return {"shared_discs": shared}
 
+    @router.get("/api/disc-usage")
+    async def get_disc_usage():
+        """disc × ビルドのフラットな対応表（フィルタUI 用）。"""
+        rows = await models.list_all_disc_usage(db)
+        return {"usage": rows}
+
     # ---------------- HoYoLAB ----------------
 
     @router.get("/api/hoyolab/account")
