@@ -66,14 +66,22 @@ async def capture_endpoint(request: Request):
 
 
 @router.post("/extract")
-async def extract_endpoint(request: Request, file: UploadFile = File(...)):
-    """multipart で画像受信 → VLM 抽出結果を返す。"""
+async def extract_endpoint(
+    request: Request,
+    file: UploadFile = File(...),
+    model: Optional[str] = None,
+):
+    """multipart で画像受信 → VLM 抽出結果を返す。
+
+    ?model=<name> クエリで VLM モデル名を上書き可能。
+    """
     _verify(request)
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(400, "Empty image")
+    kwargs = {"model": model} if model else {}
     try:
-        result = await vlm_extract(image_bytes)
+        result = await vlm_extract(image_bytes, **kwargs)
     except ValueError as e:
         raise HTTPException(422, f"VLM parse error: {e}")
     except Exception as e:

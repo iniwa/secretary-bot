@@ -26,13 +26,15 @@ class ZzzDiscJobQueue:
     def __init__(self, bot, *, max_concurrent: int = 1,
                  history_retention: int = 200,
                  images_dir: str = "/app/data/zzz_disc_images",
-                 use_capture_and_extract: bool = True):
+                 use_capture_and_extract: bool = True,
+                 vlm_model: str | None = None):
         self.bot = bot
         self.db = bot.database
         self.max_concurrent = max_concurrent
         self.history_retention = history_retention
         self.images_dir = images_dir
         self.use_capture_and_extract = use_capture_and_extract
+        self.vlm_model = vlm_model
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
         self._subscribers: set[asyncio.Queue] = set()
@@ -124,12 +126,12 @@ class ZzzDiscJobQueue:
             with open(image_path, "rb") as f:
                 image_bytes = f.read()
             await self._set_status(job_id, "extracting")
-            extraction = await extract_from_image(self.bot, image_bytes)
+            extraction = await extract_from_image(self.bot, image_bytes, model=self.vlm_model)
         else:
             # capture-mss / capture-obs
             if self.use_capture_and_extract:
                 await self._set_status(job_id, "capturing")
-                png, extraction = await capture_and_extract(self.bot, source=source)
+                png, extraction = await capture_and_extract(self.bot, source=source, model=self.vlm_model)
                 if png is not None:
                     image_path = self._save_image(png)
                     await models.update_job(self.db, job_id, image_path=image_path)
@@ -139,7 +141,7 @@ class ZzzDiscJobQueue:
                 image_path = self._save_image(png)
                 await models.update_job(self.db, job_id, image_path=image_path)
                 await self._set_status(job_id, "extracting")
-                extraction = await extract_from_image(self.bot, png)
+                extraction = await extract_from_image(self.bot, png, model=self.vlm_model)
 
         # セット名正規化
         sets = await models.list_set_masters(self.db)

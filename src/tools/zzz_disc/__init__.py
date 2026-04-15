@@ -71,6 +71,7 @@ def register(app: FastAPI, bot) -> None:
     queue_cfg = cfg.get("queue") or {}
     max_concurrent = int(queue_cfg.get("max_concurrent", 1))
     history_retention = int(queue_cfg.get("history_retention", 200))
+    vlm_model = cfg.get("vlm_model") or "gemma4"
 
     # スキーマ初期化 + マスタ初期投入 + ジョブキュー起動 は startup イベントで行う
     @app.on_event("startup")
@@ -83,6 +84,7 @@ def register(app: FastAPI, bot) -> None:
                 max_concurrent=max_concurrent,
                 history_retention=history_retention,
                 images_dir=images_dir,
+                vlm_model=vlm_model,
             )
             await jq.start()
             bot._zzz_disc_job_queue = jq
