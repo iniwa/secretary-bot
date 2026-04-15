@@ -23,6 +23,7 @@ _UNIT_MODULES = {
     "docker_log_monitor": "src.units.docker_log_monitor",
     "image_gen": "src.units.image_gen",
     "model_sync": "src.units.model_sync",
+    "prompt_crafter": "src.units.prompt_crafter",
 }
 
 

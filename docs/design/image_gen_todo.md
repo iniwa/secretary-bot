@@ -39,7 +39,14 @@
   - `src/units/image_gen/unit.py` に LLM プロンプト抽出（`_EXTRACT_PROMPT`）、`_discord_generate` / `_discord_status` / `_discord_cancel` / `_discord_list` を追加
   - `_discord_notifier_loop` が `subscribe_events` 経由でジョブの DONE/FAILED/CANCELLED を監視し、Discord チャンネルへ画像（最大4件）やステータスを投稿
   - 出力先は `units.image_gen.discord_output_channel_id` → コマンド発信チャンネル → 管理者チャンネルの順にフォールバック
-- [ ] **`src/units/prompt_crafter.py` 新規** — LLM 補助のプロンプト会話編集
+- [x] **`src/units/prompt_crafter.py` 新規** — LLM 補助のプロンプト会話編集
+  - 実装日: 2026-04-16
+  - `PromptCrafterUnit` を追加（`DELEGATE_TO=None`, TTL 7日, 定期 cleanup タスク付き）
+  - `database.py` に `prompt_session_get_active/insert/update/list/delete/cleanup_expired` を追加
+  - `execute` で LLM による action 抽出 (`craft/show/clear`) + SDXL 向け positive/negative 生成（差分編集対応）
+  - 他ユニット参照 API: `get_active_prompt(user_id, platform)` / `craft(...)` / `clear_active(...)`
+  - `image_gen._discord_generate` が positive 抽出失敗時にアクティブセッションを自動参照するよう連携
+  - config: `units.prompt_crafter.{session_ttl_days, cleanup_interval_seconds}` を追加
 - [ ] **WebGUI `/api/image/prompts` 一式 + 専用ページ**
 
 ## Phase 4（LoRA 学習）

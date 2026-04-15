@@ -148,9 +148,10 @@ units:
     sample_every_n_epochs: 1
     save_every_n_epochs: 2
   # プロンプト編集セッション（画像生成用プロンプトを LLM と対話しながら編集）
-  prompt_session:
-    ttl_days: 7
-    history_max_turns: 6
+  prompt_crafter:
+    enabled: true
+    session_ttl_days: 7                       # prompt_sessions の TTL
+    cleanup_interval_seconds: 3600            # TTL 切れセッションを掃除する間隔
     llm:
       temperature: 0.4
       ollama_only: false                      # Ollama 不在時は Gemini fallback 許可

@@ -150,12 +150,30 @@ class ImageGenUnit(BaseUnit):
         self, ctx, parsed: dict, extracted: dict, user_id: str,
     ) -> str:
         positive = (extracted.get("positive") or "").strip()
+        negative = (extracted.get("negative") or "").strip() or None
+
+        # positive が空なら prompt_crafter のアクティブセッションを流用
         if not positive:
-            # ユーザー入力そのものをプロンプトに流用（抽出失敗時の救済）
+            crafter = None
+            um = getattr(self.bot, "unit_manager", None)
+            if um is not None:
+                crafter = um.get("prompt_crafter")
+            if crafter is not None and hasattr(crafter, "get_active_prompt"):
+                try:
+                    sess = await crafter.get_active_prompt(user_id, PLATFORM_DISCORD)
+                except Exception as e:
+                    log.warning("prompt_crafter lookup failed: %s", e)
+                    sess = None
+                if sess and sess.get("positive"):
+                    positive = sess["positive"]
+                    if not negative and sess.get("negative"):
+                        negative = sess["negative"]
+
+        if not positive:
+            # 最後の砦: ユーザー入力そのものをプロンプトに流用
             positive = (parsed.get("message") or "").strip()
         if not positive:
             return "画像生成するプロンプトを教えてください。"
-        negative = (extracted.get("negative") or "").strip() or None
 
         ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
         preset = (extracted.get("preset") or "").strip() or ig_cfg.get("default_preset", "t2i_base")
