@@ -230,18 +230,32 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     };
   });
 
-  // 候補の中から実際に存在する main_stat / sub_stat 名を抽出（プルダウン用）
+  // 候補の中から実際に存在する set / main_stat / sub_stat 名を抽出（プルダウン用）
+  const collator = new Intl.Collator('ja');
+  const setOptions = [...new Set(scored.map(s => s.disc.set_name_ja || s.disc.name || '').filter(Boolean))]
+    .sort((a, b) => collator.compare(a, b));
   const mainStatOptions = [...new Set(scored.map(s => s.disc.main_stat_name).filter(Boolean))].sort();
   const subStatOptions = [...new Set(
     scored.flatMap(s => (s.disc.sub_stats || []).map(x => x.name)).filter(Boolean)
   )].sort();
 
-  const collator = new Intl.Collator('ja');
   let sortKey = 'score';
   let subStatFor = recommended.find(r => subStatOptions.includes(r)) || subStatOptions[0] || '';
+  let filterSet = '';
+  let filterMain = '';
+  let filterSub = '';
+
+  function filteredRows() {
+    return scored.filter(({ disc: d }) => {
+      if (filterSet && (d.set_name_ja || d.name || '') !== filterSet) return false;
+      if (filterMain && d.main_stat_name !== filterMain) return false;
+      if (filterSub && !(d.sub_stats || []).some(s => s.name === filterSub)) return false;
+      return true;
+    });
+  }
 
   function sortRows() {
-    const arr = scored.slice();
+    const arr = filteredRows();
     if (sortKey === 'score') {
       arr.sort((a, b) => (b.score - a.score) || ((b.disc.level || 0) - (a.disc.level || 0)));
     } else if (sortKey === 'set') {
@@ -265,9 +279,11 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
   function renderRows() {
     const arr = sortRows();
     const listEl = bodyEl.querySelector('.swap-list');
+    const countEl = bodyEl.querySelector('#swap-count');
     if (!listEl) return;
+    if (countEl) countEl.textContent = `表示 ${arr.length} / 全 ${scored.length} 件`;
     listEl.innerHTML = arr.length === 0
-      ? '<div class="text-muted">スロット ' + slot + ' のディスクがありません</div>'
+      ? '<div class="text-muted">条件に一致するディスクがありません</div>'
       : arr.map(({ disc: d, score, mainMatch }) => {
           const inUse = usageByDisc.get(d.id) || [];
           const inUseHere = usedDiscIds.has(d.id);
@@ -319,9 +335,25 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
       <div class="alert alert-warning text-sm mb-1">
         ⚠ 「現在の装備」を変更すると HoYoLAB 同期で上書きされます。残したい構成は「プリセットへ複製」してから編集してください。
       </div>` : ''}
-    <div class="text-muted text-sm mb-1">候補 ${scored.length} 件 / 推奨サブステ: ${
+    <div class="text-muted text-sm mb-1">推奨サブステ: ${
       recommended.length ? recommended.map(escapeHtml).join(', ') : '<em>未設定</em>'
-    }</div>
+    } / <span id="swap-count">表示 ${scored.length} / 全 ${scored.length} 件</span></div>
+    <div class="swap-sort-bar">
+      <label class="text-sm text-muted">フィルタ:</label>
+      <select id="swap-filter-set" class="select-sm">
+        <option value="">セット (全て)</option>
+        ${setOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')}
+      </select>
+      <select id="swap-filter-main" class="select-sm">
+        <option value="">メインステ (全て)</option>
+        ${mainStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(statLabel(n))}</option>`).join('')}
+      </select>
+      <select id="swap-filter-sub" class="select-sm">
+        <option value="">サブステ含む (全て)</option>
+        ${subStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm" id="swap-filter-clear">クリア</button>
+    </div>
     <div class="swap-sort-bar">
       <label class="text-sm text-muted">並び替え:</label>
       <select id="swap-sort-key" class="select-sm">
@@ -338,8 +370,20 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     <div class="swap-list"></div>
   `;
 
+  const filterSetSel = bodyEl.querySelector('#swap-filter-set');
+  const filterMainSel = bodyEl.querySelector('#swap-filter-main');
+  const filterSubSel = bodyEl.querySelector('#swap-filter-sub');
   const sortSel = bodyEl.querySelector('#swap-sort-key');
   const subSel = bodyEl.querySelector('#swap-sort-substat');
+
+  filterSetSel.addEventListener('change', () => { filterSet = filterSetSel.value; renderRows(); });
+  filterMainSel.addEventListener('change', () => { filterMain = filterMainSel.value; renderRows(); });
+  filterSubSel.addEventListener('change', () => { filterSub = filterSubSel.value; renderRows(); });
+  bodyEl.querySelector('#swap-filter-clear').addEventListener('click', () => {
+    filterSet = filterMain = filterSub = '';
+    filterSetSel.value = filterMainSel.value = filterSubSel.value = '';
+    renderRows();
+  });
   sortSel.addEventListener('change', () => {
     sortKey = sortSel.value;
     subSel.style.display = sortKey === 'sub_stat' ? '' : 'none';
