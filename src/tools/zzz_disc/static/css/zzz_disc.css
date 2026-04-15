@@ -1207,3 +1207,55 @@ h3 { font-size: 1rem; font-weight: 600; }
   border-radius: 4px;
 }
 .team-conflicts ul { margin: 4px 0 0 16px; padding: 0; }
+
+/* ========== スキル ========== */
+.skills-block {
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 12px 0;
+  background: color-mix(in srgb, #fff 2%, transparent);
+}
+.skills-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.skill-summary {
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: color-mix(in srgb, #fff 3%, transparent);
+  border-left: 2px solid var(--accent, #8fb);
+  border-radius: 2px;
+}
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.skill-item {
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.skill-item > summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.skill-kind {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-right: 4px;
+}
+.skill-desc {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, #fff 3%, transparent);
+  border-radius: 2px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}

@@ -276,3 +276,17 @@ class TeamGroupUpdateIn(BaseModel):
     name: str | None = None
     description: str | None = None
     display_order: int | None = None
+
+
+# ---------- Character skills ----------
+
+class CharacterSkill(BaseModel):
+    name: str
+    description: str = ""
+    # 6 種（通常攻撃/回避/支援/特殊攻撃/連携攻撃/コアスキル）など自由
+    kind: str | None = None
+
+
+class CharacterSkillsIn(BaseModel):
+    skills: list[CharacterSkill] = Field(default_factory=list)
+    summary: str | None = None

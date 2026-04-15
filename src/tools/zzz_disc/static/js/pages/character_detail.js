@@ -150,10 +150,122 @@ function renderBody() {
   const el = document.getElementById('detail-body');
   el.innerHTML = `
     <div id="rec-editors-area"></div>
+    <div id="skills-area"></div>
     <div id="builds-area"></div>
   `;
   renderRecEditorsSection();
+  renderSkillsSection();
   renderBuildsSection();
+}
+
+const SKILL_KINDS = ['通常攻撃', '回避', '支援', '特殊攻撃', '連携攻撃', 'コアスキル', 'その他'];
+
+function renderSkillsSection() {
+  const el = document.getElementById('skills-area');
+  if (!el) return;
+  const skills = state.character?.skills || [];
+  const summary = state.character?.skill_summary || '';
+  const listHtml = skills.length
+    ? skills.map(s => `
+        <details class="skill-item">
+          <summary>
+            ${s.kind ? `<span class="skill-kind">[${escapeHtml(s.kind)}]</span>` : ''}
+            <strong>${escapeHtml(s.name || '-')}</strong>
+          </summary>
+          <div class="skill-desc">${escapeHtml(s.description || '')}</div>
+        </details>`).join('')
+    : '<div class="text-muted text-sm">スキル情報は未登録です。</div>';
+  el.innerHTML = `
+    <div class="skills-block">
+      <div class="skills-head">
+        <h3 class="mb-1">📘 スキル / 要約</h3>
+        <button class="btn btn-sm" id="skills-edit-btn">編集</button>
+      </div>
+      ${summary ? `<div class="skill-summary">${escapeHtml(summary)}</div>` : ''}
+      <div class="skills-list">${listHtml}</div>
+    </div>
+  `;
+  document.getElementById('skills-edit-btn').addEventListener('click', openSkillsEditor);
+}
+
+function openSkillsEditor() {
+  const ch = state.character;
+  const skills = (ch?.skills || []).map(s => ({ ...s }));
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <label class="text-secondary text-sm">要約（自由記入・キャラ運用メモ）</label>
+    <textarea id="sk-summary" rows="3" style="width:100%;margin:4px 0 12px;">${escapeHtml(ch?.skill_summary || '')}</textarea>
+    <div class="flex-between mb-1">
+      <strong>スキル一覧</strong>
+      <button class="btn btn-sm" id="sk-add">＋ スキル追加</button>
+    </div>
+    <div id="sk-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+  `;
+  const { footerEl, close } = openModal({ title: 'スキル編集', body: wrap });
+  footerEl.innerHTML = `
+    <button class="btn" data-act="cancel">キャンセル</button>
+    <button class="btn btn-primary" data-act="ok">保存</button>
+  `;
+  const rowsEl = wrap.querySelector('#sk-rows');
+
+  function rowHtml(idx, s) {
+    const kindOpts = ['', ...SKILL_KINDS].map(k =>
+      `<option value="${escapeHtml(k)}" ${s.kind === k ? 'selected' : ''}>${escapeHtml(k || '（種類）')}</option>`
+    ).join('');
+    return `
+      <div class="sk-row" data-idx="${idx}" style="border:1px solid var(--border,#333);border-radius:4px;padding:6px;">
+        <div style="display:flex;gap:4px;margin-bottom:4px;">
+          <select class="sk-kind" style="width:120px;">${kindOpts}</select>
+          <input class="sk-name" type="text" placeholder="スキル名" value="${escapeHtml(s.name || '')}" style="flex:1;" />
+          <button class="btn btn-sm btn-danger sk-del">×</button>
+        </div>
+        <textarea class="sk-desc" rows="2" placeholder="説明" style="width:100%;">${escapeHtml(s.description || '')}</textarea>
+      </div>
+    `;
+  }
+  function draw() {
+    rowsEl.innerHTML = skills.map((s, i) => rowHtml(i, s)).join('');
+    rowsEl.querySelectorAll('.sk-row').forEach(row => {
+      const idx = Number(row.dataset.idx);
+      row.querySelector('.sk-del').addEventListener('click', () => {
+        skills.splice(idx, 1);
+        draw();
+      });
+      row.querySelector('.sk-name').addEventListener('input', (e) => {
+        skills[idx].name = e.target.value;
+      });
+      row.querySelector('.sk-kind').addEventListener('change', (e) => {
+        skills[idx].kind = e.target.value || null;
+      });
+      row.querySelector('.sk-desc').addEventListener('input', (e) => {
+        skills[idx].description = e.target.value;
+      });
+    });
+  }
+  wrap.querySelector('#sk-add').addEventListener('click', () => {
+    skills.push({ name: '', description: '', kind: null });
+    draw();
+  });
+  draw();
+
+  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
+    const summary = wrap.querySelector('#sk-summary').value;
+    const clean = skills
+      .map(s => ({ name: (s.name || '').trim(), description: s.description || '', kind: s.kind || null }))
+      .filter(s => s.name);
+    try {
+      const res = await api(`/characters/${ch.id}/skills`, {
+        method: 'PUT', body: { skills: clean, summary: summary || null },
+      });
+      state.character = res.character || state.character;
+      close();
+      toast('保存しました', 'success');
+      renderSkillsSection();
+    } catch (err) {
+      toast(err.message || String(err), 'error');
+    }
+  });
 }
 
 function renderRecEditorsSection() {

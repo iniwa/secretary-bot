@@ -25,6 +25,7 @@ from .schema import (
     HoyolabAccountIn, HoyolabCredentialsIn, HoyolabAutoLoginIn,
     JobConfirmIn, JobCaptureIn,
     TeamIn, TeamUpdateIn, TeamSlotIn, TeamGroupIn, TeamGroupUpdateIn,
+    CharacterSkillsIn,
     SLOT_FIXED_MAIN_STAT, SLOT_ALLOWED_MAIN_STATS, RARITY_LEVEL_MAX,
 )
 
@@ -161,6 +162,19 @@ def build_router(bot, config: dict) -> APIRouter:
         if not isinstance(stats, list) or not all(isinstance(s, str) for s in stats):
             raise HTTPException(400, "stats must be list[str]")
         await models.update_character_recommended_substats(db, character_id, stats)
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
+    @router.put("/api/characters/{character_id}/skills")
+    async def put_character_skills(character_id: int, payload: CharacterSkillsIn):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        await models.update_character_skills(
+            db, character_id,
+            skills=[s.model_dump() for s in payload.skills],
+            summary=payload.summary,
+        )
         ch = await models.get_character(db, character_id)
         return {"character": ch}
 

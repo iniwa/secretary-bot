@@ -162,6 +162,9 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_substats_json", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_disc_sets_json", "TEXT")
+    # スキル情報（手動入力）
+    await _maybe_add_column(db, "zzz_characters", "skills_json", "TEXT")
+    await _maybe_add_column(db, "zzz_characters", "skill_summary", "TEXT")
     # 音動機（W-Engine）情報を build に保存
     await _maybe_add_column(db, "zzz_builds", "w_engine_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
@@ -341,12 +344,18 @@ def _decode_char_row(row: dict) -> dict:
         row["recommended_disc_sets"] = json.loads(raw_sets) if raw_sets else []
     except Exception:
         row["recommended_disc_sets"] = []
+    raw_skills = row.pop("skills_json", None)
+    try:
+        row["skills"] = json.loads(raw_skills) if raw_skills else []
+    except Exception:
+        row["skills"] = []
     return row
 
 
 _CHAR_COLS = (
     "id, slug, name_ja, element, faction, icon_url, display_order, "
-    "hoyolab_agent_id, recommended_substats_json, recommended_disc_sets_json"
+    "hoyolab_agent_id, recommended_substats_json, recommended_disc_sets_json, "
+    "skills_json, skill_summary"
 )
 
 
@@ -372,6 +381,15 @@ async def update_character_recommended_disc_sets(db, character_id: int,
     return await db.execute_returning_rowcount(
         "UPDATE zzz_characters SET recommended_disc_sets_json = ? WHERE id = ?",
         (payload, character_id),
+    )
+
+
+async def update_character_skills(db, character_id: int,
+                                  skills: list[dict], summary: str | None) -> int:
+    payload = json.dumps(list(skills or []), ensure_ascii=False)
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET skills_json = ?, skill_summary = ? WHERE id = ?",
+        (payload, summary, character_id),
     )
 
 
