@@ -24,10 +24,32 @@ export function parseStatNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** base 文字列が % を含むか（= 表示が常に % の stat か） */
+/** stat が % 表示か（base または final から判定） */
 function isPercentBaseStat(statEntry) {
-  return !!statEntry && typeof statEntry === 'object'
-    && typeof statEntry.base === 'string' && statEntry.base.includes('%');
+  if (!statEntry || typeof statEntry !== 'object') return false;
+  if (typeof statEntry.base === 'string' && statEntry.base.includes('%')) return true;
+  if (typeof statEntry.final === 'string' && statEntry.final.includes('%')) return true;
+  return false;
+}
+
+/** base が空の stat（final のみ）かを判定 */
+function isFinalOnly(v) {
+  return !(v && typeof v === 'object' && typeof v.base === 'string' && v.base !== '');
+}
+
+/** stat entry からベース数値を取り出す（base が空なら final を base とみなす） */
+function baseNumberOf(v) {
+  if (!v || typeof v !== 'object') return 0;
+  if (typeof v.base === 'string' && v.base !== '') return parseStatNumber(v.base);
+  if (v.final != null) return parseStatNumber(v.final);
+  return 0;
+}
+
+/** 元の add（base が空のときは 0 相当とみなす） */
+function originalAddOf(v) {
+  if (!v || typeof v !== 'object') return 0;
+  if (typeof v.base === 'string' && v.base !== '') return parseStatNumber(v.add);
+  return 0;
 }
 
 /** 値を元の表示形式（% or 整数）に整形 */
@@ -105,8 +127,8 @@ function ensureResidual(build) {
   const residual = {};
   for (const [name, v] of Object.entries(stats)) {
     if (name.startsWith('_')) continue;
-    if (!v || typeof v !== 'object' || !('add' in v)) continue;
-    const curAdd = parseStatNumber(v.add);
+    if (!v || typeof v !== 'object' || !('final' in v)) continue;
+    const curAdd = originalAddOf(v);
     residual[name] = curAdd - (discAdd[name] || 0) - (wengAdd[name] || 0);
   }
   // 内訳もキャッシュしておく（UI 表示・デバッグ用）
@@ -130,12 +152,21 @@ export function derivedStats(build) {
   for (const [name, v] of Object.entries(stats)) {
     if (name.startsWith('_')) { out[name] = v; continue; }
     if (!v || typeof v !== 'object' || !('final' in v)) { out[name] = v; continue; }
-    const baseNum = parseStatNumber(v.base);
+    const baseNum = baseNumberOf(v);
+    const origAdd = originalAddOf(v);
     const newAdd = (residual[name] || 0) + (discAdd[name] || 0) + (wengAdd[name] || 0);
     const newFinal = baseNum + newAdd;
+    const finalOnly = isFinalOnly(v);
+    // 元々 final のみだった stat は、ディスク差し替え差分だけを add として表示
+    const displayAdd = finalOnly ? (newAdd - origAdd) : newAdd;
+    const formatRef = v.add || v.final;
+    const addStr = finalOnly && Math.abs(displayAdd) < 0.05
+      ? ''
+      : formatLikeOriginal(displayAdd, formatRef);
     out[name] = {
       ...v,
-      add: formatLikeOriginal(newAdd, v.add),
+      add: addStr,
+      base: finalOnly ? '' : v.base,
       final: formatLikeOriginal(newFinal, v.final),
       _disc_add: discAdd[name] || 0,
       _weng_add: wengAdd[name] || 0,

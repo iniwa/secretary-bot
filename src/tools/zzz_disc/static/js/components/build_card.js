@@ -124,10 +124,14 @@ function renderStats(stats) {
     // v: {base, add, final} 形式 or 旧レガシー（数値/文字列）
     if (v && typeof v === 'object' && 'final' in v) {
       const finalTxt = v.final || '-';
-      const addTxt = v.add && v.add !== '' && v.add !== '0' ? v.add : '';
+      const addRaw = v.add && v.add !== '' && v.add !== '0' ? v.add : '';
       const baseTxt = v.base && v.base !== '' ? v.base : '';
+      const addIsNeg = typeof addRaw === 'string' && addRaw.trim().startsWith('-');
+      const addSign = addIsNeg ? '' : '+';
+      const addTxt = addRaw;
+      const addCls = addIsNeg ? 'stat-add stat-add-neg' : 'stat-add';
       const breakdown = (baseTxt || addTxt)
-        ? `<span class="stat-breakdown">${escapeHtml(baseTxt || '-')}${addTxt ? ` <span class="stat-add">+${escapeHtml(addTxt)}</span>` : ''}</span>`
+        ? `<span class="stat-breakdown">${baseTxt ? escapeHtml(baseTxt) : ''}${addTxt ? `${baseTxt ? ' ' : ''}<span class="${addCls}">${addSign}${escapeHtml(addTxt)}</span>` : ''}</span>`
         : '';
       return `
         <div class="stat-row">

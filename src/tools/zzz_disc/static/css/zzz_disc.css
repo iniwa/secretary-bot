@@ -695,6 +695,7 @@ h3 { font-size: 1rem; font-weight: 600; }
 .stat-final { color: var(--text-primary); }
 .stat-breakdown { font-weight: 400; font-size: 0.72rem; color: var(--text-muted); }
 .stat-add { color: var(--success, #4ade80); }
+.stat-add-neg { color: var(--danger, #f87171); }
 .disc-tile-name {
   font-size: 0.7rem;
   color: var(--text-muted);
