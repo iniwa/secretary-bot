@@ -283,7 +283,7 @@ function renderBuildsSection() {
   const chunks = [];
   chunks.push('<h3 class="mb-1">● 現在の装備</h3>');
   if (state.current) {
-    chunks.push(`<div class="build-wrap" data-kind="current">${renderBuildCard({ character: state.character, build: state.current, actions: ['clone'], setsByName: setsMap })}</div>`);
+    chunks.push(`<div class="build-wrap" data-kind="current">${renderBuildCard({ character: state.character, build: state.current, actions: ['pin-all', 'clone'], setsByName: setsMap })}</div>`);
   } else {
     chunks.push(`
       <div class="placeholder" style="padding:24px;">
@@ -298,7 +298,7 @@ function renderBuildsSection() {
     chunks.push('<div class="text-muted text-sm mb-2">プリセットはまだありません。「現在の装備」から「プリセットへ複製」で保存できます。</div>');
   } else {
     for (const b of state.presets) {
-      chunks.push(`<div class="build-wrap" data-kind="preset">${renderBuildCard({ character: state.character, build: b, actions: ['edit', 'delete'], setsByName: setsMap })}</div>`);
+      chunks.push(`<div class="build-wrap" data-kind="preset">${renderBuildCard({ character: state.character, build: b, actions: ['pin-all', 'edit', 'delete'], setsByName: setsMap })}</div>`);
     }
   }
   el.innerHTML = chunks.join('');
@@ -315,6 +315,7 @@ function wireUp() {
         if (act === 'clone') cloneBuild(buildId);
         else if (act === 'edit') editBuild(buildId);
         else if (act === 'delete') deleteBuild(buildId);
+        else if (act === 'pin-all') pinAllBuild(buildId);
       });
     });
     // disc-tile クリックでスワップモーダル
@@ -464,8 +465,9 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
           const isSelected = currentDiscId === d.id;
           const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
           return `
-            <div class="swap-row ${isSelected ? 'selected' : ''}" data-disc-id="${d.id}">
+            <div class="swap-row ${isSelected ? 'selected' : ''} ${d.is_pinned ? 'pinned' : ''}" data-disc-id="${d.id}">
               <div class="swap-row-head">
+                <button class="swap-pin-btn ${d.is_pinned ? 'on' : ''}" data-act="toggle-pin" data-disc-id="${d.id}" title="${d.is_pinned ? 'ピン解除' : 'ピン留め'}">📌</button>
                 <span class="swap-set">${setNameWithPopover(d.set_name_ja || d.name || '-', setsMap.get(d.set_name_ja || d.name || ''))}</span>
                 <span class="swap-level">${d.level != null ? `Lv.${d.level}` : ''}</span>
                 <span class="swap-score">★ ${score.toFixed(1)}</span>
@@ -496,11 +498,34 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
         }).join('');
 
     listEl.querySelectorAll('.swap-row').forEach(row => {
-      row.addEventListener('click', async () => {
+      row.addEventListener('click', async (e) => {
+        if (e.target.closest('[data-act="toggle-pin"]')) return;
         const newId = Number(row.dataset.discId);
         if (newId === currentDiscId) { close(); return; }
         const newDisc = discs.find(x => x.id === newId) || null;
         await applySwap({ buildId, slot, discId: newId, isCurrent, close, newDisc });
+      });
+    });
+    listEl.querySelectorAll('[data-act="toggle-pin"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.discId);
+        const d = discs.find(x => x.id === id);
+        if (!d) return;
+        const next = !d.is_pinned;
+        btn.disabled = true;
+        try {
+          const res = await api(`/discs/${id}/pin`, { method: 'PUT', body: { pinned: next } });
+          d.is_pinned = !!res?.disc?.is_pinned;
+          btn.classList.toggle('on', d.is_pinned);
+          btn.closest('.swap-row')?.classList.toggle('pinned', d.is_pinned);
+          btn.title = d.is_pinned ? 'ピン解除' : 'ピン留め';
+          toast(d.is_pinned ? '📌 ピン留めしました' : 'ピン解除しました', 'success');
+        } catch (err) {
+          toast(`ピン操作失敗: ${err.message}`, 'error');
+        } finally {
+          btn.disabled = false;
+        }
       });
     });
   }
@@ -677,6 +702,17 @@ async function editBuild(buildId) {
     await load(state.character.slug);
   } catch (err) {
     toast(`保存失敗: ${err.message}`, 'error');
+  }
+}
+
+async function pinAllBuild(buildId) {
+  try {
+    const res = await api(`/builds/${buildId}/pin-all`, { method: 'POST' });
+    const n = res?.pinned ?? 0;
+    toast(n ? `📌 ${n} 枚ピン留めしました` : '全てピン済みでした', 'success');
+    await load(state.character.slug);
+  } catch (err) {
+    toast(`ピン操作失敗: ${err.message}`, 'error');
   }
 }
 

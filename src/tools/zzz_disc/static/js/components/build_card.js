@@ -111,6 +111,9 @@ function renderActions(actions, build) {
   if (actions.includes('edit')) {
     parts.push(`<button class="btn btn-sm" data-act="edit">編集</button>`);
   }
+  if (actions.includes('pin-all')) {
+    parts.push(`<button class="btn btn-sm" data-act="pin-all" title="装備中ディスクを全てピン留め">📌 一括ピン</button>`);
+  }
   if (actions.includes('delete')) {
     parts.push(`<button class="btn btn-sm btn-danger" data-act="delete">削除</button>`);
   }
@@ -201,9 +204,13 @@ function renderDiscTile(entry, recommended = new Set(), setsMap = new Map(), rec
     suffix: suffixParts.join(''),
   });
   const tooltip = shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : '';
+  const pinBadge = d.is_pinned
+    ? `<span class="disc-pin-badge" title="ピン留め済み">📌</span>`
+    : '';
   return `
-    <div class="disc-tile ${sharedCount ? 'shared' : ''} ${isRecSet ? 'rec-set' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
+    <div class="disc-tile ${sharedCount ? 'shared' : ''} ${isRecSet ? 'rec-set' : ''} ${d.is_pinned ? 'pinned' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
       <span class="disc-slot-badge">${d.slot}</span>
+      ${pinBadge}
       <div class="disc-tile-header">
         ${iconHtml}
         <span class="disc-tile-set">${setNameHtml}</span>

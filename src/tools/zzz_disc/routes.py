@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import models
 from .schema import (
     DiscIn, BuildMetaIn, BuildSavePresetIn, BuildSlotAssignIn,
+    DiscPinIn,
     HoyolabAccountIn, HoyolabCredentialsIn, HoyolabAutoLoginIn,
     JobConfirmIn, JobCaptureIn,
     TeamIn, TeamUpdateIn, TeamSlotIn, TeamGroupIn, TeamGroupUpdateIn,
@@ -120,6 +121,14 @@ def build_router(bot, config: dict) -> APIRouter:
         )
         if rowcount == -1:
             raise HTTPException(409, "fingerprint collides with another disc")
+        if rowcount == 0:
+            raise HTTPException(404, "disc not found")
+        disc = await models.get_disc(db, disc_id)
+        return {"disc": disc}
+
+    @router.put("/api/discs/{disc_id}/pin")
+    async def put_disc_pin(disc_id: int, payload: DiscPinIn):
+        rowcount = await models.set_disc_pinned(db, disc_id, payload.pinned)
         if rowcount == 0:
             raise HTTPException(404, "disc not found")
         disc = await models.get_disc(db, disc_id)
@@ -277,6 +286,15 @@ def build_router(bot, config: dict) -> APIRouter:
         await models.set_build_slot(db, build_id, slot, payload.disc_id)
         out = await _build_with_slots(build_id)
         return {"build": out}
+
+    @router.post("/api/builds/{build_id}/pin-all")
+    async def post_build_pin_all(build_id: int):
+        build = await models.get_build(db, build_id)
+        if not build:
+            raise HTTPException(404, "build not found")
+        n = await models.pin_build_discs(db, build_id)
+        out = await _build_with_slots(build_id)
+        return {"build": out, "pinned": n}
 
     @router.post("/api/builds/{build_id}/save-as-preset")
     async def post_save_as_preset(build_id: int, payload: BuildSavePresetIn):
@@ -467,6 +485,10 @@ def build_router(bot, config: dict) -> APIRouter:
         result = await models.delete_characters_without_builds(db)
         return {"ok": True, **result}
 
+    async def _sweep_unpinned() -> int:
+        """同期冒頭の掃除: ピン無しディスクを削除（参照スロットは NULL 化）。"""
+        return await models.delete_unpinned_discs(db)
+
     @router.post("/api/hoyolab/sync")
     async def post_hoyolab_sync():
         try:
@@ -476,6 +498,7 @@ def build_router(bot, config: dict) -> APIRouter:
         acc = await models.get_hoyolab_account(db)
         if not acc:
             raise HTTPException(400, "no hoyolab account configured")
+        swept = await _sweep_unpinned()
         try:
             result = await sync_current_builds(db, acc)
         except Exception as e:
@@ -485,6 +508,7 @@ def build_router(bot, config: dict) -> APIRouter:
             "ok": True,
             "synced_characters": result.get("synced_characters", 0),
             "synced_discs": result.get("synced_discs", 0),
+            "swept_unpinned": swept,
             "results": result.get("results", []),
             "errors": result.get("errors", []),
         }

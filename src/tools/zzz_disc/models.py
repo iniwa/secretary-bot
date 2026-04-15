@@ -159,6 +159,7 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_discs", "hoyolab_disc_id", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "icon_url", "TEXT")
     await _maybe_add_column(db, "zzz_discs", "name", "TEXT")
+    await _maybe_add_column(db, "zzz_discs", "is_pinned", "INTEGER DEFAULT 0")
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_substats_json", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_disc_sets_json", "TEXT")
@@ -454,6 +455,7 @@ def _disc_row_to_dict(row: dict) -> dict:
         "hoyolab_disc_id": row.get("hoyolab_disc_id"),
         "icon_url": row.get("icon_url"),
         "name": row.get("name"),
+        "is_pinned": bool(row.get("is_pinned")),
         "source_image_path": row.get("source_image_path"),
         "note": row.get("note"),
         "created_at": row.get("created_at"),
@@ -618,6 +620,44 @@ async def list_builds_using_disc(db, disc_id: int) -> list[dict]:
         (disc_id,),
     )
     return rows
+
+
+async def set_disc_pinned(db, disc_id: int, pinned: bool) -> int:
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_discs SET is_pinned = ?, updated_at = ? WHERE id = ?",
+        (1 if pinned else 0, _now(), disc_id),
+    )
+
+
+async def pin_build_discs(db, build_id: int) -> int:
+    """指定ビルドの装備中ディスク全てに is_pinned=1 を立てる。返値: ピンされた枚数。"""
+    row = await db.fetchone(
+        "SELECT COUNT(*) AS n FROM zzz_build_slots bs "
+        "JOIN zzz_discs d ON d.id = bs.disc_id "
+        "WHERE bs.build_id = ? AND bs.disc_id IS NOT NULL AND d.is_pinned = 0",
+        (build_id,),
+    )
+    n = int(row["n"] if row else 0)
+    if n == 0:
+        return 0
+    await db.execute(
+        "UPDATE zzz_discs SET is_pinned = 1, updated_at = ? "
+        "WHERE id IN (SELECT disc_id FROM zzz_build_slots "
+        "WHERE build_id = ? AND disc_id IS NOT NULL)",
+        (_now(), build_id),
+    )
+    return n
+
+
+async def delete_unpinned_discs(db) -> int:
+    """非ピンディスクを削除。参照している build_slots は先に disc_id を NULL 化。"""
+    await db.execute(
+        "UPDATE zzz_build_slots SET disc_id = NULL "
+        "WHERE disc_id IN (SELECT id FROM zzz_discs WHERE is_pinned = 0)",
+    )
+    return await db.execute_returning_rowcount(
+        "DELETE FROM zzz_discs WHERE is_pinned = 0",
+    )
 
 
 # ---------- Builds ----------

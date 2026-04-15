@@ -85,6 +85,7 @@ class DiscOut(BaseModel):
     hoyolab_disc_id: str | None = None
     icon_url: str | None = None
     name: str | None = None
+    is_pinned: bool = False
     source_image_path: str | None = None
     note: str | None = None
     created_at: str | None = None
@@ -246,6 +247,10 @@ class JobConfirmIn(BaseModel):
 
 class JobCaptureIn(BaseModel):
     source: str = "capture-mss"
+
+
+class DiscPinIn(BaseModel):
+    pinned: bool
 
 
 # ---------- Teams (編成モード) ----------

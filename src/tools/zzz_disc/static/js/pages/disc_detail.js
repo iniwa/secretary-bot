@@ -3,11 +3,14 @@ import { api } from '../api.js';
 import { escapeHtml, toast, confirmDialog } from '../app.js';
 import { statLabel, formatStatValue } from '../labels.js';
 
+let _state = { disc: null };
+
 export function render(params) {
   return `
     <div class="page-header">
       <a href="#/discs" class="btn btn-sm btn-ghost">← 一覧</a>
       <h2>ディスク #${escapeHtml(params.id)}</h2>
+      <button class="btn btn-sm" id="pin-btn">📌 ピン</button>
       <button class="btn btn-sm btn-danger" id="delete-btn">削除</button>
     </div>
     <div id="disc-info" class="card"><div class="spinner"></div></div>
@@ -21,9 +24,12 @@ export function render(params) {
 export async function mount(params) {
   const id = params.id;
   document.getElementById('delete-btn').addEventListener('click', () => deleteDisc(id));
+  document.getElementById('pin-btn').addEventListener('click', () => togglePin(id));
   try {
     const res = await api(`/discs/${id}`);
     const disc = res?.disc || res;
+    _state.disc = disc;
+    refreshPinBtn();
     renderDisc(disc);
     const usedBy = res?.used_by || [];
     if (usedBy.length) renderUsedBy(usedBy);
@@ -95,6 +101,31 @@ function renderUsedBy(builds) {
       </tbody>
     </table>
   `;
+}
+
+function refreshPinBtn() {
+  const btn = document.getElementById('pin-btn');
+  if (!btn || !_state.disc) return;
+  const on = !!_state.disc.is_pinned;
+  btn.textContent = on ? '📌 ピン済み（解除）' : '📌 ピン留め';
+  btn.classList.toggle('btn-primary', on);
+}
+
+async function togglePin(id) {
+  if (!_state.disc) return;
+  const next = !_state.disc.is_pinned;
+  const btn = document.getElementById('pin-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api(`/discs/${id}/pin`, { method: 'PUT', body: { pinned: next } });
+    _state.disc = res?.disc || { ..._state.disc, is_pinned: next };
+    refreshPinBtn();
+    toast(next ? '📌 ピン留めしました' : 'ピン解除しました', 'success');
+  } catch (err) {
+    toast(`ピン操作失敗: ${err.message}`, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteDisc(id) {

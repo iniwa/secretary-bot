@@ -315,7 +315,7 @@ function rowHtml(d) {
       <td>${escapeHtml(mainText)}</td>
       <td class="text-sm text-secondary">${escapeHtml(subText)}</td>
       <td class="text-sm">${usageText}</td>
-      <td>${isShared ? '<span class="conflict-mark" title="複数ビルドで使用中">⚠</span>' : ''}</td>
+      <td>${d.is_pinned ? '<span title="ピン留め済み">📌</span>' : ''}${isShared ? ' <span class="conflict-mark" title="複数ビルドで使用中">⚠</span>' : ''}</td>
       <td><button class="btn btn-sm" data-detail-id="${d.id}">詳細</button></td>
     </tr>
   `;
