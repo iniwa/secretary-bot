@@ -58,6 +58,7 @@ windows_agents:
     priority: 1
     metrics_instance: "192.168.1.101:9182"
     wol_device_id: ""    # WoLツールのデバイスID（curl http://<host>:8090/api/devices で確認）
+    comfyui_public_url: ""  # 例: "https://comfyui-main.iniwach.com/" （Cloudflare Tunnel で公開する場合のみ）
   - id: "pc-sub"
     name: "サブPC"
     role: "sub"          # Input Relay: receiver側
@@ -66,6 +67,7 @@ windows_agents:
     priority: 2
     metrics_instance: "192.168.1.102:9182"
     wol_device_id: ""
+    comfyui_public_url: ""  # 例: "https://comfyui-sub.iniwach.com/"
 
 # 委託可否の閾値
 delegation:

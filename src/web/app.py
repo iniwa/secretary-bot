@@ -2525,11 +2525,13 @@ def create_web_app(bot) -> FastAPI:
             host = a.get("host") or ""
             if not host:
                 continue
+            public_url = (a.get("comfyui_public_url") or "").strip()
+            url = public_url if public_url else f"http://{host}:{comfy_port}/"
             out.append({
                 "id": a.get("id", ""),
                 "name": a.get("name") or a.get("id", ""),
                 "role": a.get("role", ""),
-                "comfyui_url": f"http://{host}:{comfy_port}/",
+                "comfyui_url": url,
             })
         return {"agents": out}
 
