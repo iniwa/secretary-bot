@@ -625,6 +625,55 @@ h3 { font-size: 1rem; font-weight: 600; }
   flex-direction: column;
 }
 
+/* W-Engine (音動機) */
+.w-engine {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+}
+.w-engine.rarity-S { border-left-color: #f5c147; }
+.w-engine.rarity-A { border-left-color: #b56bff; }
+.w-engine.rarity-B { border-left-color: #3aa0ff; }
+.weng-icon {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--bg-overlay);
+  flex-shrink: 0;
+}
+.weng-icon-empty { background: var(--bg-overlay); }
+.weng-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.weng-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.weng-name { font-weight: 600; font-size: 0.95rem; }
+.weng-level { color: var(--accent-hover); font-size: 0.8rem; }
+.weng-refine {
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+}
+.weng-props { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.82rem; color: var(--text-secondary); }
+.weng-prop strong { color: var(--text); }
+.weng-prop-main strong { color: var(--accent-hover); }
+.weng-effect {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* Stats grid */
 .stats-grid {
   display: grid;

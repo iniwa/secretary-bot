@@ -134,6 +134,8 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_characters", "hoyolab_agent_id", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_substats_json", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "recommended_disc_sets_json", "TEXT")
+    # 音動機（W-Engine）情報を build に保存
+    await _maybe_add_column(db, "zzz_builds", "w_engine_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "email", "TEXT")
     await _maybe_add_column(db, "zzz_hoyolab_accounts", "password", "TEXT")
@@ -584,6 +586,7 @@ def _build_row_to_dict(row: dict) -> dict:
         "notes": row.get("notes"),
         "is_current": bool(row["is_current"]),
         "stats": json.loads(row["stats_json"]) if row.get("stats_json") else {},
+        "w_engine": json.loads(row["w_engine_json"]) if row.get("w_engine_json") else None,
         "synced_at": row.get("synced_at"),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -637,27 +640,29 @@ async def get_build_slots(db, build_id: int) -> list[dict]:
 async def upsert_current_build(db, *, character_id: int,
                                name: str = "現在の装備",
                                stats: dict | None = None,
+                               w_engine: dict | None = None,
                                synced_at: str | None = None) -> int:
     """character_id の is_current=1 ビルドを更新（なければ作成）。"""
     now = _now()
     synced_at = synced_at or now
+    stats_j = json.dumps(stats or {}, ensure_ascii=False)
+    weng_j = json.dumps(w_engine, ensure_ascii=False) if w_engine else None
     existing = await db.fetchone(
         "SELECT id FROM zzz_builds WHERE character_id = ? AND is_current = 1",
         (character_id,),
     )
     if existing:
         await db.execute(
-            "UPDATE zzz_builds SET name = ?, stats_json = ?, synced_at = ?, "
-            "updated_at = ? WHERE id = ?",
-            (name, json.dumps(stats or {}, ensure_ascii=False), synced_at,
-             now, existing["id"]),
+            "UPDATE zzz_builds SET name = ?, stats_json = ?, w_engine_json = ?, "
+            "synced_at = ?, updated_at = ? WHERE id = ?",
+            (name, stats_j, weng_j, synced_at, now, existing["id"]),
         )
         return existing["id"]
     cursor = await db.execute(
         "INSERT INTO zzz_builds (character_id, name, is_current, stats_json, "
-        "synced_at, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (character_id, name, json.dumps(stats or {}, ensure_ascii=False),
-         synced_at, now, now),
+        "w_engine_json, synced_at, created_at, updated_at) "
+        "VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+        (character_id, name, stats_j, weng_j, synced_at, now, now),
     )
     return cursor.lastrowid
 
@@ -683,13 +688,15 @@ async def copy_build_as_preset(db, source_build_id: int, *,
     if not src:
         raise ValueError("source build not found")
     now = _now()
+    weng = src.get("w_engine")
+    weng_j = json.dumps(weng, ensure_ascii=False) if weng else None
     cursor = await db.execute(
         "INSERT INTO zzz_builds (character_id, name, tag, rank, notes, is_current, "
-        "stats_json, synced_at, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
+        "stats_json, w_engine_json, synced_at, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
         (src["character_id"], name, tag, rank, notes,
          json.dumps(src.get("stats") or {}, ensure_ascii=False),
-         src.get("synced_at"), now, now),
+         weng_j, src.get("synced_at"), now, now),
     )
     new_id = cursor.lastrowid
     slots = await get_build_slots(db, source_build_id)

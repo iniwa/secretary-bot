@@ -206,6 +206,48 @@ def _extract_set_info(disc_obj) -> tuple[str, str | None, str | None, str | None
     )
 
 
+def _extract_w_engine(agent_obj) -> dict | None:
+    """音動機（W-Engine）を辞書化。main_properties が基礎攻撃力、properties が副ステ。
+
+    disc と同じく % の表記揺れを name 末尾に % を付ける形で統一する。
+    """
+    weng = _pick(agent_obj, "w_engine", default=None)
+    if not weng:
+        return None
+
+    _ALWAYS_PERCENT = {"会心率", "会心ダメージ", "貫通率"}
+
+    def _parse_props(props):
+        out = []
+        for p in props or []:
+            name = str(_pick(p, "name", "property_name", default="") or "")
+            if not name:
+                continue
+            raw_val = _pick(p, "value", "base", default=0)
+            is_percent = _is_percent_value(raw_val) or (name in _ALWAYS_PERCENT)
+            if is_percent and not name.endswith("%"):
+                name = name + "%"
+            out.append({
+                "name": name,
+                "value": _parse_value(raw_val),
+                "is_percent": is_percent,
+            })
+        return out
+
+    return {
+        "id": _pick(weng, "id", default=None),
+        "name": str(_pick(weng, "name", default="") or ""),
+        "icon": str(_pick(weng, "icon", default="") or ""),
+        "level": int(_pick(weng, "level", default=0) or 0),
+        "rarity": str(_pick(weng, "rarity", default="") or ""),
+        "refinement": int(_pick(weng, "refinement", default=1) or 1),
+        "main_properties": _parse_props(_pick(weng, "main_properties", default=[])),
+        "properties": _parse_props(_pick(weng, "properties", default=[])),
+        "effect_title": str(_pick(weng, "effect_title", default="") or ""),
+        "effect_description": str(_pick(weng, "effect_description", default="") or ""),
+    }
+
+
 def _extract_agent_stats(agent_obj) -> dict:
     """エージェントのステータス。値ごとに base/add/final を保持。
 
@@ -474,9 +516,10 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
 
     # current ビルドを更新
     stats = _extract_agent_stats(detail)
+    w_engine = _extract_w_engine(detail)
     build_id = await models.upsert_current_build(
         db, character_id=character_id,
-        name="現在の装備", stats=stats,
+        name="現在の装備", stats=stats, w_engine=w_engine,
     )
     await models.clear_build_slots(db, build_id)
     for slot, disc_id in disc_ids_by_slot.items():

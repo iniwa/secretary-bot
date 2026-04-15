@@ -1,6 +1,7 @@
 /** ビルドカード描画（HoYoLAB 戦績カード風） */
 import { escapeHtml } from '../app.js';
 import { statLabel, formatStatValue, elementLabel, setNameWithPopover } from '../labels.js';
+import { derivedStats } from '../stats_calc.js';
 
 /** STATS の表示順（先頭ほど上に並ぶ） */
 const STATS_ORDER = [
@@ -21,7 +22,7 @@ const STATS_ORDER = [
  */
 export function renderBuildCard({ character, build, actions = [], setsByName = null }) {
   if (!build) return '';
-  const stats = build.stats || {};
+  const stats = derivedStats(build);
   const recommended = new Set(character?.recommended_substats || []);
   const recommendedSets = new Set(character?.recommended_disc_sets || []);
   const setsMap = setsByName || new Map();
@@ -50,12 +51,48 @@ export function renderBuildCard({ character, build, actions = [], setsByName = n
         </div>
       </div>
 
+      ${renderWEngine(build.w_engine)}
+
       <div class="stats-grid">
         ${renderStats(stats)}
       </div>
 
       <div class="disc-grid">
         ${renderDiscs(build.slots || [], recommended, setsMap, recommendedSets)}
+      </div>
+    </div>
+  `;
+}
+
+function renderWEngine(weng) {
+  if (!weng) return '';
+  const iconHtml = weng.icon
+    ? `<img class="weng-icon" src="${escapeHtml(weng.icon)}" alt="" loading="lazy" />`
+    : '<div class="weng-icon weng-icon-empty"></div>';
+  const name = escapeHtml(weng.name || '-');
+  const rarityCls = weng.rarity ? ` rarity-${escapeHtml(weng.rarity)}` : '';
+  const mainProps = (weng.main_properties || []).map(p => `
+    <span class="weng-prop weng-prop-main">
+      ${escapeHtml(p.name || '-')} <strong>${escapeHtml(formatStatValue(p.name, p.value))}</strong>
+    </span>`).join('');
+  const subProps = (weng.properties || []).map(p => `
+    <span class="weng-prop">
+      ${escapeHtml(p.name || '-')} <strong>${escapeHtml(formatStatValue(p.name, p.value))}</strong>
+    </span>`).join('');
+  const effect = weng.effect_title
+    ? `<div class="weng-effect" title="${escapeHtml(weng.effect_description || '')}">✦ ${escapeHtml(weng.effect_title)}</div>`
+    : '';
+  return `
+    <div class="w-engine${rarityCls}">
+      ${iconHtml}
+      <div class="weng-body">
+        <div class="weng-head">
+          <span class="weng-name">${name}</span>
+          ${weng.level != null ? `<span class="weng-level">Lv.${weng.level}</span>` : ''}
+          ${weng.refinement ? `<span class="weng-refine">R${weng.refinement}</span>` : ''}
+        </div>
+        <div class="weng-props">${mainProps}${subProps}</div>
+        ${effect}
       </div>
     </div>
   `;

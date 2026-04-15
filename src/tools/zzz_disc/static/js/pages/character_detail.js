@@ -387,7 +387,8 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
       row.addEventListener('click', async () => {
         const newId = Number(row.dataset.discId);
         if (newId === currentDiscId) { close(); return; }
-        await applySwap({ buildId, slot, discId: newId, isCurrent, close });
+        const newDisc = discs.find(x => x.id === newId) || null;
+        await applySwap({ buildId, slot, discId: newId, isCurrent, close, newDisc });
       });
     });
   }
@@ -493,14 +494,29 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
   renderRows();
 }
 
-async function applySwap({ buildId, slot, discId, isCurrent, close }) {
+async function applySwap({ buildId, slot, discId, isCurrent, close, newDisc = null }) {
   try {
     await api(`/builds/${buildId}/slots/${slot}`, {
       method: 'PUT', body: { disc_id: discId },
     });
     toast(discId == null ? 'スロットを外しました' : 'ディスクを差し替えました', 'success');
     close();
-    await load(state.character.slug);
+    // ローカル更新: stats スナップショットと _residualAdd キャッシュを保持したまま
+    // slots のみ差し替えてビルドカードを即時再描画（リロードすると residual が壊れるので避ける）
+    const build = isCurrent
+      ? state.current
+      : state.presets.find(p => p.id === buildId);
+    if (build) {
+      const slots = build.slots || [];
+      const idx = slots.findIndex(s => s.slot === slot);
+      const entry = { slot, disc_id: discId, disc: newDisc || null };
+      if (idx >= 0) slots[idx] = entry;
+      else slots.push(entry);
+      build.slots = slots;
+      renderBuildsSection();
+    } else {
+      await load(state.character.slug);
+    }
   } catch (err) {
     toast(`差し替え失敗: ${err.message}`, 'error');
   }
