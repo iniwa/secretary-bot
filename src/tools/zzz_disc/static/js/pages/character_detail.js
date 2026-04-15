@@ -1,7 +1,8 @@
 /** キャラ詳細 — 現在の装備 + プリセット装備カード */
 import { api } from '../api.js';
-import { escapeHtml, toast, confirmDialog, promptDialog } from '../app.js';
+import { escapeHtml, toast, confirmDialog, promptDialog, openModal } from '../app.js';
 import { renderBuildCard } from '../components/build_card.js';
+import { statLabel, formatStatValue } from '../labels.js';
 
 let state = { character: null, current: null, presets: [] };
 
@@ -149,14 +150,161 @@ function wireUp() {
         else if (act === 'delete') deleteBuild(buildId);
       });
     });
-    // disc-tile クリックで詳細へ
-    card.querySelectorAll('.disc-tile[data-disc-id]').forEach(tile => {
-      tile.addEventListener('click', () => {
-        const id = tile.dataset.discId;
-        if (id) location.hash = `#/discs/${id}`;
+    // disc-tile クリックでスワップモーダル
+    const allTiles = card.querySelectorAll('.disc-tile');
+    allTiles.forEach(tile => {
+      tile.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const slot = Number(tile.dataset.slot);
+        if (!slot) return;
+        const currentDiscId = tile.dataset.discId ? Number(tile.dataset.discId) : null;
+        openSwapModal({ buildId, slot, currentDiscId });
       });
+      tile.style.cursor = 'pointer';
     });
   });
+}
+
+async function openSwapModal({ buildId, slot, currentDiscId }) {
+  const isCurrent = state.current && state.current.id === buildId;
+  const build = isCurrent
+    ? state.current
+    : state.presets.find(p => p.id === buildId);
+  if (!build) {
+    toast('ビルドが見つかりません', 'error');
+    return;
+  }
+
+  const recommended = state.character?.recommended_substats || [];
+  const usedDiscIds = new Set(
+    (build.slots || []).map(s => s?.disc?.id).filter(Boolean)
+  );
+
+  const { bodyEl, footerEl, close } = openModal({
+    title: `スロット ${slot} のディスクを差し替え`,
+    body: `<div class="placeholder"><div class="spinner"></div></div>`,
+  });
+  footerEl.innerHTML = `
+    ${currentDiscId ? '<button class="btn" data-act="unequip">外す</button>' : ''}
+    <button class="btn" data-act="cancel">キャンセル</button>
+  `;
+  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  footerEl.querySelector('[data-act="unequip"]')?.addEventListener('click', async () => {
+    if (!await confirmDialog('このスロットを未装備にします。よろしいですか？')) return;
+    await applySwap({ buildId, slot, discId: null, isCurrent, close });
+  });
+
+  let discs = [];
+  let usage = [];
+  try {
+    const [dRes, uRes] = await Promise.all([
+      api('/discs', { params: { slot } }),
+      api('/disc-usage'),
+    ]);
+    discs = dRes?.discs || [];
+    usage = uRes?.usage || [];
+  } catch (err) {
+    bodyEl.innerHTML = `<div class="text-muted">候補の取得に失敗: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+
+  const usageByDisc = new Map();
+  for (const u of usage) {
+    if (!usageByDisc.has(u.disc_id)) usageByDisc.set(u.disc_id, []);
+    usageByDisc.get(u.disc_id).push(u);
+  }
+
+  const scored = discs.map(d => {
+    const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
+    const matchedSubs = subs.filter(s => recommended.includes(s.name));
+    const subScore = matchedSubs.reduce(
+      (acc, s) => acc + 2 + Number(s.upgrades || 0) * 0.5,
+      0,
+    );
+    const mainBonus = recommended.includes(d.main_stat_name) ? 3 : 0;
+    return {
+      disc: d,
+      score: subScore + mainBonus + Number(d.level || 0) * 0.1,
+      matchedSubs,
+      mainMatch: !!mainBonus,
+    };
+  });
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (b.disc.level || 0) - (a.disc.level || 0);
+  });
+
+  bodyEl.innerHTML = `
+    ${isCurrent ? `
+      <div class="alert alert-warning text-sm mb-1">
+        ⚠ 「現在の装備」を変更すると HoYoLAB 同期で上書きされます。残したい構成は「プリセットへ複製」してから編集してください。
+      </div>` : ''}
+    <div class="text-muted text-sm mb-1">候補 ${scored.length} 件 / 推奨サブステ: ${
+      recommended.length ? recommended.map(escapeHtml).join(', ') : '<em>未設定</em>'
+    }</div>
+    <div class="swap-list">
+      ${scored.length === 0
+        ? '<div class="text-muted">スロット ' + slot + ' のディスクがありません</div>'
+        : scored.map(({ disc: d, score, matchedSubs, mainMatch }) => {
+            const inUse = usageByDisc.get(d.id) || [];
+            const inUseHere = usedDiscIds.has(d.id);
+            const isSelected = currentDiscId === d.id;
+            const subs = Array.isArray(d.sub_stats) ? d.sub_stats : [];
+            return `
+              <div class="swap-row ${isSelected ? 'selected' : ''}" data-disc-id="${d.id}">
+                <div class="swap-row-head">
+                  <span class="swap-set">${escapeHtml(d.set_name_ja || d.name || '-')}</span>
+                  <span class="swap-level">${d.level != null ? `Lv.${d.level}` : ''}</span>
+                  <span class="swap-score">★ ${score.toFixed(1)}</span>
+                  ${isSelected ? '<span class="badge badge-current">現在のスロット</span>' : ''}
+                  ${inUseHere && !isSelected ? '<span class="badge badge-warn">同ビルドの他スロット</span>' : ''}
+                </div>
+                <div class="swap-main ${mainMatch ? 'recommended' : ''}">
+                  ${escapeHtml(statLabel(d.main_stat_name))}
+                  <strong>${escapeHtml(formatStatValue(d.main_stat_name, d.main_stat_value))}</strong>
+                </div>
+                <div class="swap-subs">
+                  ${subs.map(s => `
+                    <span class="swap-sub ${recommended.includes(s.name) ? 'recommended' : ''}">
+                      ${escapeHtml(s.name)} ${escapeHtml(formatStatValue(s.name, s.value))}${
+                        Number(s.upgrades || 0) > 0 ? ` <small>+${s.upgrades}</small>` : ''
+                      }
+                    </span>
+                  `).join('')}
+                </div>
+                ${inUse.length ? `
+                  <div class="swap-usage text-xs text-muted">
+                    使用中: ${inUse.map(u =>
+                      `${escapeHtml(u.character_name_ja || '-')}${u.is_current ? ' ★' : ` / ${escapeHtml(u.build_name || '')}`}`
+                    ).join(' , ')}
+                  </div>` : ''}
+              </div>
+            `;
+          }).join('')
+      }
+    </div>
+  `;
+
+  bodyEl.querySelectorAll('.swap-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      const newId = Number(row.dataset.discId);
+      if (newId === currentDiscId) { close(); return; }
+      await applySwap({ buildId, slot, discId: newId, isCurrent, close });
+    });
+  });
+}
+
+async function applySwap({ buildId, slot, discId, isCurrent, close }) {
+  try {
+    await api(`/builds/${buildId}/slots/${slot}`, {
+      method: 'PUT', body: { disc_id: discId },
+    });
+    toast(discId == null ? 'スロットを外しました' : 'ディスクを差し替えました', 'success');
+    close();
+    await load(state.character.slug);
+  } catch (err) {
+    toast(`差し替え失敗: ${err.message}`, 'error');
+  }
 }
 
 async function cloneBuild(buildId) {

@@ -22,15 +22,18 @@ export async function mount(params) {
   const id = params.id;
   document.getElementById('delete-btn').addEventListener('click', () => deleteDisc(id));
   try {
-    const disc = await api(`/discs/${id}`);
+    const res = await api(`/discs/${id}`);
+    const disc = res?.disc || res;
     renderDisc(disc);
+    const usedBy = res?.used_by || [];
+    if (usedBy.length) renderUsedBy(usedBy);
   } catch (err) {
     document.getElementById('disc-info').innerHTML = `<div class="text-muted">${escapeHtml(err.message)}</div>`;
   }
   try {
     const res = await api(`/discs/${id}/builds`);
     const builds = Array.isArray(res) ? res : (res?.builds || res?.used_by || []);
-    renderUsedBy(builds);
+    if (builds.length) renderUsedBy(builds);
   } catch (err) {
     document.getElementById('used-by').innerHTML = `<div class="text-muted text-sm">${escapeHtml(err.message)}</div>`;
   }
