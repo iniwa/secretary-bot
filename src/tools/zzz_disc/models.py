@@ -887,13 +887,14 @@ async def delete_characters_without_builds(db) -> dict:
 
 
 async def reset_hoyolab_synced_data(db) -> dict:
-    """HoYoLAB 同期で作られたデータを一掃する。
+    """HoYoLAB 同期で作られたデータを一掃する（再同期準備用）。
 
-    - slug が hoyolab-* の重複キャラを削除（元のプリセットキャラは残す）
     - 全 current ビルドと build_slots を削除（再同期で復活）
     - 全 disc を削除（HoYoLAB 同期由来が大半。手動登録分があれば失われる点に注意）
+    - キャラ自体は削除しない（マスタ刷新後は全キャラが hoyolab-* slug のため、
+      削除すると zzz_presets が連鎖喪失する）
 
-    Returns: {'chars': n, 'builds': n, 'discs': n}
+    Returns: {'slots': n, 'builds': n, 'discs': n, 'chars': 0}
     """
     c = await db.execute_returning_rowcount(
         "DELETE FROM zzz_build_slots WHERE build_id IN "
@@ -903,10 +904,7 @@ async def reset_hoyolab_synced_data(db) -> dict:
         "DELETE FROM zzz_builds WHERE is_current = 1"
     )
     d = await db.execute_returning_rowcount("DELETE FROM zzz_discs")
-    ch = await db.execute_returning_rowcount(
-        "DELETE FROM zzz_characters WHERE slug LIKE 'hoyolab-%'"
-    )
-    return {"slots": c, "builds": b, "discs": d, "chars": ch}
+    return {"slots": c, "builds": b, "discs": d, "chars": 0}
 
 
 # ---------- Jobs（既存維持） ----------
