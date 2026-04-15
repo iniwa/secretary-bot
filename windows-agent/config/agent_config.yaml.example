@@ -48,3 +48,25 @@ stt:
     device: "cuda"
     torch_dtype: "float16"
     unload_after_minutes: 10
+
+# 画像生成（ComfyUI / kohya）
+# Main/Sub 両方に導入する方針。ComfyUI をローカル起動し、
+# 成果物は NAS（SMB マウント）経由で Pi と共有する。
+image_gen:
+  enabled: true
+  root: "C:/secretary-bot"                  # SECRETARY_BOT_ROOT 相当（ComfyUI/kohya インストール先）
+  cache: "C:/secretary-bot-cache"           # SECRETARY_BOT_CACHE 相当（モデルキャッシュ）
+  comfyui:
+    host: "127.0.0.1"
+    port: 8188
+    startup_timeout_seconds: 60
+    health_check_interval_seconds: 30
+    crash_restart_max_retries: 3
+  kohya:
+    enabled: true                           # Main/Sub 両方導入方針。使わない PC は false
+  cache_lru:
+    max_size_gb: 100                        # ローカル SSD キャッシュ上限
+  nas:
+    host: ""                                # NAS SMB ホスト（.env で上書き推奨）
+    share: "ai-image"
+    mount_drive: "N:"                       # Windows 側マウントドライブレター

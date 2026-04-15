@@ -427,6 +427,160 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_pending_actions_status ON pending_actions(status)",
                 "CREATE INDEX IF NOT EXISTS idx_pending_actions_user   ON pending_actions(user_id, status)",
             ],
+            26: [
+                # === AI 画像生成基盤 ===
+                # ComfyUI ワークフロー（プリセット）
+                """CREATE TABLE IF NOT EXISTS workflows (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                TEXT NOT NULL UNIQUE,
+                    description         TEXT,
+                    category            TEXT NOT NULL,
+                    workflow_json       TEXT NOT NULL,
+                    required_nodes      TEXT,
+                    required_models     TEXT,
+                    required_loras      TEXT,
+                    main_pc_only        INTEGER NOT NULL DEFAULT 0,
+                    starred             INTEGER NOT NULL DEFAULT 0,
+                    default_timeout_sec INTEGER NOT NULL DEFAULT 300,
+                    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # プロンプト断片テンプレート
+                """CREATE TABLE IF NOT EXISTS prompt_templates (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name       TEXT NOT NULL,
+                    positive   TEXT,
+                    negative   TEXT,
+                    notes      TEXT,
+                    tags       TEXT,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # 会話的プロンプト編集セッション
+                """CREATE TABLE IF NOT EXISTS prompt_sessions (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id           TEXT NOT NULL,
+                    platform          TEXT NOT NULL,
+                    positive          TEXT,
+                    negative          TEXT,
+                    history_json      TEXT,
+                    base_workflow_id  INTEGER,
+                    params_json       TEXT,
+                    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at        DATETIME
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_prompt_sessions_user ON prompt_sessions(user_id, updated_at)",
+                # 生成ジョブキュー（Dispatcher 状態機械のフィールドを最初から含める）
+                """CREATE TABLE IF NOT EXISTS image_jobs (
+                    id                 TEXT PRIMARY KEY,
+                    user_id            TEXT NOT NULL,
+                    platform           TEXT NOT NULL,
+                    workflow_id        INTEGER,
+                    positive           TEXT,
+                    negative           TEXT,
+                    params_json        TEXT,
+                    status             TEXT NOT NULL DEFAULT 'queued',
+                    assigned_agent     TEXT,
+                    priority           INTEGER NOT NULL DEFAULT 0,
+                    progress           INTEGER NOT NULL DEFAULT 0,
+                    error_message      TEXT,
+                    result_paths       TEXT,
+                    retry_count        INTEGER NOT NULL DEFAULT 0,
+                    max_retries        INTEGER NOT NULL DEFAULT 2,
+                    last_error         TEXT,
+                    cache_sync_id      TEXT,
+                    next_attempt_at    DATETIME,
+                    dispatcher_lock_at DATETIME,
+                    timeout_at         DATETIME,
+                    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    started_at         DATETIME,
+                    finished_at        DATETIME
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_image_jobs_status_next ON image_jobs(status, next_attempt_at)",
+                "CREATE INDEX IF NOT EXISTS idx_image_jobs_user_created ON image_jobs(user_id, created_at)",
+                # ジョブ遷移イベントログ
+                """CREATE TABLE IF NOT EXISTS image_job_events (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id       TEXT NOT NULL,
+                    from_status  TEXT,
+                    to_status    TEXT NOT NULL,
+                    agent_id     TEXT,
+                    detail_json  TEXT,
+                    occurred_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_image_job_events_job ON image_job_events(job_id, occurred_at)",
+                # LoRA プロジェクト
+                """CREATE TABLE IF NOT EXISTS lora_projects (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL UNIQUE,
+                    description  TEXT,
+                    dataset_path TEXT,
+                    base_model   TEXT,
+                    config_json  TEXT,
+                    status       TEXT NOT NULL DEFAULT 'draft',
+                    output_path  TEXT,
+                    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # LoRA データセット項目
+                """CREATE TABLE IF NOT EXISTS lora_dataset_items (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id  INTEGER NOT NULL,
+                    image_path  TEXT NOT NULL,
+                    caption     TEXT,
+                    tags        TEXT,
+                    reviewed_at DATETIME
+                )""",
+                # LoRA 学習ジョブ
+                """CREATE TABLE IF NOT EXISTS lora_train_jobs (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id    INTEGER NOT NULL,
+                    status        TEXT NOT NULL DEFAULT 'queued',
+                    progress      INTEGER NOT NULL DEFAULT 0,
+                    tb_logdir     TEXT,
+                    sample_images TEXT,
+                    started_at    DATETIME,
+                    finished_at   DATETIME,
+                    error_message TEXT
+                )""",
+                # 各 PC のキャッシュ状況
+                """CREATE TABLE IF NOT EXISTS model_cache_manifest (
+                    agent_id     TEXT NOT NULL,
+                    file_type    TEXT NOT NULL,
+                    filename     TEXT NOT NULL,
+                    sha256       TEXT,
+                    size         INTEGER,
+                    last_used_at DATETIME,
+                    starred      INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (agent_id, file_type, filename)
+                )""",
+                # LoRA 学習推奨値テンプレート
+                """CREATE TABLE IF NOT EXISTS lora_config_templates (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category   TEXT NOT NULL,
+                    size_class TEXT NOT NULL,
+                    rank       INTEGER NOT NULL,
+                    alpha      INTEGER NOT NULL,
+                    lr_unet    REAL NOT NULL,
+                    lr_text    REAL NOT NULL,
+                    batch_size INTEGER NOT NULL,
+                    epochs     INTEGER NOT NULL,
+                    scheduler  TEXT NOT NULL,
+                    extra_json TEXT,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # 初期 9 テンプレート（character/outfit/style × small/medium/large）
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('character', 'small',  16,  8, 1e-4,   5e-5,   2, 10, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('character', 'medium', 16,  8, 1e-4,   5e-5,   2,  8, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('character', 'large',  32, 16, 1e-4,   5e-5,   2,  6, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('outfit',    'small',  16,  8, 1e-4,   5e-5,   2, 12, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('outfit',    'medium', 16,  8, 1e-4,   5e-5,   2, 10, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('outfit',    'large',  32, 16, 1e-4,   5e-5,   2,  8, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'small',  32, 16, 5e-5,   2.5e-5, 2, 15, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'medium', 32, 16, 5e-5,   2.5e-5, 2, 12, 'cosine', 1)",
+                "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'large',  64, 32, 5e-5,   2.5e-5, 2, 10, 'cosine', 1)",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
