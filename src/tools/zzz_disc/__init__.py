@@ -49,6 +49,8 @@ async def _seed_master_data(db) -> None:
                     faction=c.get("faction"),
                     icon_url=c.get("icon_url"),
                     display_order=int(c.get("display_order", 0)),
+                    hoyolab_agent_id=(str(c["hoyolab_agent_id"])
+                                      if c.get("hoyolab_agent_id") is not None else None),
                 )
         except Exception as e:
             log.warning("failed to seed zzz_characters: %s", e)

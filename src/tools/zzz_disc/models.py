@@ -211,6 +211,10 @@ async def upsert_character(db, *, slug: str, name_ja: str,
     existing = await db.fetchone(
         "SELECT id, icon_url, element, faction, hoyolab_agent_id "
         "FROM zzz_characters WHERE slug = ?", (slug,))
+    if not existing and hoyolab_agent_id:
+        existing = await db.fetchone(
+            "SELECT id, icon_url, element, faction, hoyolab_agent_id "
+            "FROM zzz_characters WHERE hoyolab_agent_id = ?", (hoyolab_agent_id,))
     if existing:
         sets, params = [], []
         if hoyolab_agent_id and not existing.get("hoyolab_agent_id"):
