@@ -67,6 +67,7 @@ image_gen:
   cache_lru:
     max_size_gb: 100                        # ローカル SSD キャッシュ上限
   nas:
-    host: ""                                # NAS SMB ホスト（.env で上書き推奨）
-    share: "ai-image"
+    host: ""                                # NAS SMB ホスト（.env の NAS_HOST で上書き推奨）
+    share: "ai-image"                       # SMB 共有名。専用共有が無い場合は親共有名にし subpath を指定
+    subpath: ""                             # 共有内のベースサブパス（例: 既存 Work 共有を流用 → share:"Work"/subpath:"ai-image"）
     mount_drive: "N:"                       # Windows 側マウントドライブレター

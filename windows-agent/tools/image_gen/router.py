@@ -168,7 +168,7 @@ async def capability(request: Request):
             "used_gb": cache_usage_gb(cache_root),
             "limit_gb": int((_ctx.image_gen_cfg.get("cache_lru") or {}).get("max_size_gb", 100)),
         },
-        "nas": {"drive": _ctx.nas_drive, "mounted": bool(_ctx.nas_drive)},
+        "nas": {"drive": _ctx.nas_drive, "base": _ctx.nas_drive, "mounted": bool(_ctx.nas_drive)},
     }
     return JSONResponse(body, headers={"X-Trace-Id": trace_id})
 
@@ -202,6 +202,14 @@ async def comfyui_restart(request: Request):
 
 
 # --- /cache/sync ---
+def _nas_base_fallback() -> str:
+    """nas_drive（ensure_mounted 返却値）が未設定のとき用の実効ベースパス生成。"""
+    nas_cfg = (_ctx.image_gen_cfg.get("nas") or {}) if _ctx.image_gen_cfg else {}
+    drive = (nas_cfg.get("mount_drive") or "N:").rstrip("\\")
+    subpath = (nas_cfg.get("subpath") or "").strip("\\/").replace("/", "\\")
+    return f"{drive}\\{subpath}" if subpath else drive
+
+
 def _decide_source_path(cache_root: str, type_: str, filename: str, nas_path: Optional[str]) -> str:
     """NAS の絶対 SMB パス or image_gen.nas.mount_drive ベースで解決。"""
     if nas_path:
@@ -210,10 +218,9 @@ def _decide_source_path(cache_root: str, type_: str, filename: str, nas_path: Op
         if p.startswith(os.sep + os.sep) is False and nas_path.startswith("//"):
             p = "\\\\" + nas_path.lstrip("/").replace("/", "\\")
         return p
-    # ドライブ配下から `models/<type>/<filename>` を参照
-    drive = _ctx.nas_drive or (_ctx.image_gen_cfg.get("nas") or {}).get("mount_drive") or "N:"
-    drive = drive.rstrip("\\")
-    return os.path.join(drive + os.sep, "models", type_, *filename.replace("\\", "/").split("/"))
+    # ベース（ドライブ + 任意 subpath）配下から `models/<type>/<filename>` を参照
+    base = (_ctx.nas_drive or _nas_base_fallback()).rstrip("\\")
+    return os.path.join(base + os.sep, "models", type_, *filename.replace("\\", "/").split("/"))
 
 
 async def _publish_sync(sync_id: str, event: str, data: dict) -> None:
@@ -397,11 +404,10 @@ async def cache_sync_cancel(sync_id: str, request: Request):
 
 # --- /image/generate ---
 def _build_output_dir() -> str:
-    drive = _ctx.nas_drive or (_ctx.image_gen_cfg.get("nas") or {}).get("mount_drive") or "N:"
-    drive = drive.rstrip("\\")
+    base = (_ctx.nas_drive or _nas_base_fallback()).rstrip("\\")
     today = dt.datetime.now()
     rel = os.path.join("outputs", today.strftime("%Y-%m"), today.strftime("%Y-%m-%d"))
-    return os.path.join(drive + os.sep, rel)
+    return os.path.join(base + os.sep, rel)
 
 
 async def _ensure_comfyui_started() -> Optional[dict]:

@@ -132,7 +132,7 @@ units:
       stuck_reaper_interval_seconds: 30
       progress_debounce_seconds: 2            # DB 書き込みデバウンス
     nas:
-      base_path: "/mnt/ai-image"              # Pi からの NAS マウントパス
+      base_path: "/mnt/ai-image"              # Pi からの NAS マウントパス（専用共有）。既存共有流用時は親マウント + subdir を含めた実効パスを指定（例: "/mnt/work/ai-image"）
       outputs_subdir: "outputs"
       workflows_subdir: "workflows"
       lora_datasets_subdir: "lora_datasets"
