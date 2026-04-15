@@ -21,6 +21,7 @@ _UNIT_MODULES = {
     "power": "src.units.power",
     "rss": "src.units.rss",
     "docker_log_monitor": "src.units.docker_log_monitor",
+    "image_gen": "src.units.image_gen",
 }
 
 

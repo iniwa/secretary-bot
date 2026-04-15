@@ -2359,6 +2359,194 @@ def create_web_app(bot) -> FastAPI:
 
     # /api/docker-monitor/settings は廃止（エラー通知は常時有効化されたため）
 
+    # --- Image Gen (Phase 1) ---
+
+    def _get_image_gen_unit():
+        u = bot.unit_manager.get("image_gen")
+        if not u:
+            raise HTTPException(503, "image_gen unit not loaded")
+        return u
+
+    def _get_nas_mount_point() -> str:
+        """NAS マウントポイントを config から取得。"""
+        nas_cfg = bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
+        # prompt 指示は mount_point、実 config は base_path。両対応 + 既定値
+        return nas_cfg.get("mount_point") or nas_cfg.get("base_path") or "/mnt/ai-image"
+
+    _IMG_ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+    @app.post("/api/image/generate", dependencies=[Depends(_verify)])
+    async def image_generate(request: Request):
+        unit = _get_image_gen_unit()
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        workflow_name = (body.get("workflow_name") or "").strip()
+        if not workflow_name:
+            raise HTTPException(400, "workflow_name is required")
+        positive = body.get("positive")
+        negative = body.get("negative")
+        params = body.get("params") or {}
+        if not isinstance(params, dict):
+            raise HTTPException(400, "params must be an object")
+        try:
+            job_id = await unit.enqueue(
+                user_id=_webgui_user_id or "webgui",
+                platform="web",
+                workflow_name=workflow_name,
+                positive=positive,
+                negative=negative,
+                params=params,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, str(e))
+        return {"job_id": job_id}
+
+    @app.get("/api/image/jobs", dependencies=[Depends(_verify)])
+    async def image_jobs_list(status: str | None = None, limit: int = 50, offset: int = 0):
+        unit = _get_image_gen_unit()
+        limit = max(1, min(200, int(limit)))
+        offset = max(0, int(offset))
+        jobs = await unit.list_jobs(
+            user_id=None,  # WebGUI はシングルユーザーなので全件。必要なら _webgui_user_id に絞る
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+        return {"jobs": jobs}
+
+    @app.get("/api/image/jobs/{job_id}", dependencies=[Depends(_verify)])
+    async def image_job_detail(job_id: str):
+        unit = _get_image_gen_unit()
+        job = await unit.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        return job
+
+    @app.post("/api/image/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
+    async def image_job_cancel(job_id: str):
+        unit = _get_image_gen_unit()
+        ok = await unit.cancel_job(job_id)
+        return {"ok": bool(ok)}
+
+    @app.get("/api/image/jobs/stream")
+    async def image_jobs_stream():
+        """ImageGenUnit のイベントを SSE で配信（/api/flow/stream と同じ形）。"""
+        unit = _get_image_gen_unit()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        unit.subscribe_events(queue)
+
+        async def event_generator():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30)
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                unit.unsubscribe_events(queue)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/image/gallery", dependencies=[Depends(_verify)])
+    async def image_gallery(limit: int = 50, offset: int = 0):
+        unit = _get_image_gen_unit()
+        limit = max(1, min(200, int(limit)))
+        offset = max(0, int(offset))
+        rows = await unit.list_gallery(limit=limit, offset=offset)
+        items: list[dict] = []
+        for r in rows:
+            for p in r.get("result_paths") or []:
+                items.append({
+                    "job_id": r.get("job_id"),
+                    "path": p,
+                    "thumb_url": f"/api/image/file?path={p}",
+                    "url": f"/api/image/file?path={p}",
+                    "created_at": r.get("finished_at"),
+                    "positive": r.get("positive"),
+                })
+        return {"items": items}
+
+    @app.get("/api/image/workflows", dependencies=[Depends(_verify)])
+    async def image_workflows():
+        rows = await bot.database.workflow_list()
+        out = [
+            {
+                "name": r.get("name"),
+                "description": r.get("description"),
+                "category": r.get("category"),
+                "main_pc_only": bool(r.get("main_pc_only")),
+                "starred": bool(r.get("starred")),
+            }
+            for r in rows
+        ]
+        return {"workflows": out}
+
+    @app.get("/api/image/file", dependencies=[Depends(_verify)])
+    async def image_file(path: str):
+        """NAS 配下の画像ファイルを配信（path traversal ガード付き）。"""
+        from pathlib import Path
+        from fastapi.responses import FileResponse
+
+        if not path:
+            raise HTTPException(400, "path is required")
+
+        mount_point = _get_nas_mount_point()
+        try:
+            mount_real = Path(mount_point).resolve()
+        except Exception:
+            raise HTTPException(500, "invalid nas mount_point")
+
+        # 入力パス解釈: 絶対パス（mount_point 配下）または mount_point 相対
+        raw = Path(path)
+        target = raw if raw.is_absolute() else (mount_real / raw)
+        try:
+            real = target.resolve(strict=False)
+        except Exception:
+            raise HTTPException(400, "invalid path")
+
+        # mount_point 配下チェック
+        try:
+            real.relative_to(mount_real)
+        except ValueError:
+            raise HTTPException(403, "path outside nas mount")
+
+        # outputs/ 配下のみ許可
+        outputs_subdir = (
+            bot.config.get("units", {}).get("image_gen", {})
+            .get("nas", {}).get("outputs_subdir", "outputs")
+        )
+        outputs_real = (mount_real / outputs_subdir).resolve()
+        try:
+            real.relative_to(outputs_real)
+        except ValueError:
+            raise HTTPException(403, "only outputs/ is allowed")
+
+        if not real.is_file():
+            raise HTTPException(404, "file not found")
+
+        ext = real.suffix.lower()
+        if ext not in _IMG_ALLOWED_EXTS:
+            raise HTTPException(415, f"unsupported extension: {ext}")
+
+        media_map = {
+            ".png": "image/png", ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg", ".webp": "image/webp",
+        }
+        return FileResponse(
+            str(real), media_type=media_map.get(ext, "application/octet-stream"),
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+
     # --- 静的ファイル & フロントエンド ---
 
     # Cloudflare / ブラウザの ES モジュールキャッシュ対策

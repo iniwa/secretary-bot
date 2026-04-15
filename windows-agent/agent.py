@@ -13,6 +13,7 @@ from activity.game_detector import get_activity as get_game_activity, reload_pro
 from activity.obs_manager import OBSManager, create_obs_manager
 from tools.tool_manager import ToolManager, create_tool_manager
 from tools.zzz_disc import router as zzz_disc_router
+from tools.image_gen import router as image_gen_router, init_image_gen
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _tool_manager: ToolManager | None = None
@@ -125,6 +126,11 @@ async def lifespan(app: FastAPI):
     _tool_manager = create_tool_manager(role)
     _tool_manager.start_all()
     _tool_manager.start_monitor()
+    # image_gen: 設定初期化（ComfyUI は遅延起動、NAS は enabled 時にマウント）
+    try:
+        init_image_gen(role, config, os.path.dirname(__file__))
+    except Exception as e:
+        print(f"[Agent] image_gen init failed: {e}")
     # Sub PC: OBS監視 + ファイル整理を開始
     if role == "sub":
         _obs_manager = create_obs_manager(config)
@@ -177,6 +183,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Windows Agent", lifespan=lifespan)
 app.include_router(zzz_disc_router, prefix="/tools/zzz-disc")
+app.include_router(image_gen_router)  # API 仕様書に合わせ prefix なし（/image/*, /cache/*, /capability, /comfyui/*）
 
 
 def _verify_token(request: Request):

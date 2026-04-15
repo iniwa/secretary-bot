@@ -18,3 +18,5 @@ soundfile>=0.12
 mss>=9.0
 obs-websocket-py>=1.0
 Pillow>=10.0
+# image_gen tool: ComfyUI WebSocket 進捗購読用
+websockets>=12.0
