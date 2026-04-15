@@ -77,6 +77,13 @@ export function render() {
       </div>
       <div class="row mt-2">
         <label class="inline-label">
+          <input type="checkbox" id="pref-show-capture" />
+          画面キャプチャ機能を表示
+        </label>
+        <span class="text-sm text-muted">（Windows Agent 経由の VLM 解析。HoYoLAB 同期で基本足りるため既定は非表示）</span>
+      </div>
+      <div class="row mt-2">
+        <label class="inline-label">
           <input type="checkbox" id="pref-show-upload" />
           画像アップロード機能を表示
         </label>
@@ -114,6 +121,13 @@ export async function mount() {
   document.getElementById('clear-cred-btn').addEventListener('click', clearCredentials);
   document.getElementById('reset-btn').addEventListener('click', resetSynced);
   document.getElementById('cleanup-empty-btn').addEventListener('click', cleanupEmpty);
+
+  const captureToggle = document.getElementById('pref-show-capture');
+  captureToggle.checked = !!getUiPrefs().show_capture;
+  captureToggle.addEventListener('change', (ev) => {
+    setUiPref('show_capture', ev.target.checked);
+    toast(ev.target.checked ? 'キャプチャ機能を表示しました' : 'キャプチャ機能を非表示にしました', 'info');
+  });
 
   const uploadToggle = document.getElementById('pref-show-upload');
   uploadToggle.checked = !!getUiPrefs().show_upload;

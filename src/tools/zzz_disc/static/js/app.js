@@ -13,7 +13,7 @@ const routes = [
   { pattern: /^#\/characters\/([^/]+)$/,     module: characterDetail,  nav: 'characters', param: 'slug' },
   { pattern: /^#\/discs$/,                   module: discs,            nav: 'discs' },
   { pattern: /^#\/discs\/([^/]+)$/,          module: discDetail,       nav: 'discs', param: 'id' },
-  { pattern: /^#\/capture$/,                 module: capture,          nav: 'capture' },
+  { pattern: /^#\/capture$/,                 module: capture,          nav: 'capture',      pref: 'show_capture' },
   { pattern: /^#\/upload$/,                  module: upload,           nav: 'upload',       pref: 'show_upload' },
   { pattern: /^#\/shared$/,                  module: shared,           nav: 'shared' },
   { pattern: /^#\/settings$/,                module: settings,         nav: 'settings' },
@@ -21,7 +21,7 @@ const routes = [
 
 // UI 設定（localStorage）: 任意機能の表示切替。デフォルトは全 OFF。
 const PREF_KEY = 'zzz_disc.ui_prefs';
-const PREF_DEFAULTS = { show_upload: false };
+const PREF_DEFAULTS = { show_upload: false, show_capture: false };
 
 export function getUiPrefs() {
   try {

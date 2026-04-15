@@ -33,9 +33,12 @@ def _load_config(bot) -> dict | None:
 
 
 async def _seed_master_data(db) -> None:
-    """master_data/*.json を INSERT OR IGNORE で投入。"""
+    """キャラのみ master_data/characters.json から投入。
+
+    sets.json は seed しない（HoYoLAB 同期が JP 名で動的に作成するため、
+    seed すると未使用な英語 slug 行が選択肢に大量に出てしまう）。
+    """
     chars_path = os.path.join(_MASTER_DIR, "characters.json")
-    sets_path = os.path.join(_MASTER_DIR, "sets.json")
     if os.path.exists(chars_path):
         try:
             with open(chars_path, encoding="utf-8") as f:
@@ -54,21 +57,6 @@ async def _seed_master_data(db) -> None:
                 )
         except Exception as e:
             log.warning("failed to seed zzz_characters: %s", e)
-    if os.path.exists(sets_path):
-        try:
-            with open(sets_path, encoding="utf-8") as f:
-                sets = json.load(f)
-            for s in sets:
-                await models.upsert_set_master(
-                    db,
-                    slug=s["slug"],
-                    name_ja=s["name_ja"],
-                    aliases=s.get("aliases") or [],
-                    two_pc_effect=s.get("two_pc_effect"),
-                    four_pc_effect=s.get("four_pc_effect"),
-                )
-        except Exception as e:
-            log.warning("failed to seed zzz_set_masters: %s", e)
 
 
 def register(app: FastAPI, bot) -> None:
