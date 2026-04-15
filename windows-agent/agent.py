@@ -252,6 +252,23 @@ async def restart_self(request: Request):
     return {"status": "restarting"}
 
 
+def _fetch_input_relay_status() -> dict | None:
+    """Main PC 上のローカル Input-Relay sender `/api/status` を短 timeout で取りに行く。
+
+    secretary-bot 側の active_pcs 判定に使う。sender が未起動／タイムアウトなら None を返す
+    （呼び出し側は従来動作へフォールバック）。
+    """
+    try:
+        import urllib.request
+        import json as _json
+        with urllib.request.urlopen("http://127.0.0.1:8082/api/status", timeout=0.5) as r:
+            if r.status == 200:
+                return _json.loads(r.read())
+    except Exception:
+        return None
+    return None
+
+
 @app.get("/activity")
 async def activity(request: Request):
     _verify_token(request)
@@ -259,6 +276,15 @@ async def activity(request: Request):
     result: dict = {"role": role}
     if role == "main":
         result.update(get_game_activity())
+        ir = _fetch_input_relay_status()
+        if ir is not None:
+            result["input_relay"] = {
+                "remote_mode":       bool(ir.get("remote_mode", False)),
+                "ws_status":         ir.get("ws_status", "disconnected"),
+                "last_kbd_mouse_ts": float(ir.get("last_kbd_mouse_ts") or 0.0),
+                "last_gamepad_ts":   float(ir.get("last_gamepad_ts") or 0.0),
+                "server_time":       ir.get("server_time"),
+            }
     elif role == "sub":
         if _obs_manager:
             result.update(_obs_manager.get_status())
@@ -269,6 +295,11 @@ async def activity(request: Request):
                 "obs_recording": False,
                 "obs_replay_buffer": False,
             })
+        # Sub PC でも foreground / is_fullscreen を返す（VSCode/Unity 等の滞在時間記録用）。
+        # game_detector.get_activity() は OS 汎用実装なので Sub でもそのまま使える（game は通常ヒットしない）。
+        fg = get_game_activity()
+        result["foreground_process"] = fg.get("foreground_process")
+        result["is_fullscreen"] = fg.get("is_fullscreen")
     return result
 
 

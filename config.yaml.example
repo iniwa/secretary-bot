@@ -24,8 +24,12 @@ memory:
 # アクティビティ検出
 activity:
   enabled: true
-  poll_interval_seconds: 60       # Main PC /activity ポーリング間隔（秒）
+  poll_interval_seconds: 60       # Main/Sub PC /activity ポーリング間隔（秒）
   sample_retention_days: 7        # activity_samples 保持日数（sessions は永続）
+  idle_timeout_seconds: 120       # active_pcs 判定のアイドル閾値（秒）
+  input_relay:
+    sender_url: "http://127.0.0.1:8082"  # Main Agent からローカル sender /api/status を叩く URL
+    timeout_seconds: 0.5
   block_rules:
     obs_streaming: true       # 配信中 → ブロック
     obs_recording: true       # 録画中 → ブロック

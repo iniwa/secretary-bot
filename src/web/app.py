@@ -1943,14 +1943,37 @@ def create_web_app(bot) -> FastAPI:
         )
         fg = await bot.database.fetchall(
             f"""
-            SELECT process_name, during_game,
+            SELECT pc, process_name, during_game,
                    SUM(COALESCE(duration_sec, 0)) AS sec, COUNT(*) AS sessions
             FROM foreground_sessions WHERE {where_clause}
-            GROUP BY process_name, during_game ORDER BY sec DESC
+            GROUP BY pc, process_name, during_game ORDER BY sec DESC
             """,
             tuple(params),
         )
-        return {**meta, "games": games, "foreground": fg}
+        # 両 PC 同時操作時間（Main サンプルの active_pcs に main と sub の両方が含まれる回数 × poll間隔）
+        sim_where_parts = ["pc='main'", "active_pcs LIKE '%main%'", "active_pcs LIKE '%sub%'"]
+        sim_params: list = []
+        if day:
+            sim_where_parts.append("date(ts) = ?")
+            sim_params.append(day)
+        elif start or end:
+            r_parts, r_params, _ = _activity_range(days, start, end)
+            # activity_samples.ts を起点にするため start_at を ts へ書き換え
+            for rp in r_parts:
+                sim_where_parts.append(rp.replace("start_at", "ts"))
+            sim_params.extend(r_params)
+        else:
+            cutoff_sim = _activity_cutoff(days)
+            if cutoff_sim:
+                sim_where_parts.append("ts >= ?")
+                sim_params.append(cutoff_sim)
+        sim_row = await bot.database.fetchone(
+            f"SELECT COUNT(*) AS c FROM activity_samples WHERE {' AND '.join(sim_where_parts)}",
+            tuple(sim_params),
+        )
+        poll_interval = int(bot.config.get("activity", {}).get("poll_interval_seconds", 60))
+        simultaneous_sec = (sim_row["c"] if sim_row else 0) * poll_interval
+        return {**meta, "games": games, "foreground": fg, "simultaneous_sec": simultaneous_sec}
 
     @app.get("/api/activity/summary", dependencies=[Depends(_verify)])
     async def activity_summary(

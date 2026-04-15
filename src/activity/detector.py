@@ -1,5 +1,7 @@
 """アクティビティ統合判定。"""
 
+import time
+
 from src.activity.agent_monitor import AgentActivityMonitor
 from src.activity.discord_monitor import DiscordVCMonitor
 from src.logger import get_logger
@@ -23,6 +25,13 @@ class ActivityDetector:
         activity_cfg = config.get("activity", {})
         self._enabled = activity_cfg.get("enabled", True)
         self._block_rules = activity_cfg.get("block_rules", {})
+        # active_pcs 判定のしきい値。poll 間隔の 2 倍を下限にする
+        self._idle_timeout_sec = max(
+            int(activity_cfg.get("poll_interval_seconds", 60)) * 2,
+            int(activity_cfg.get("idle_timeout_seconds", 120)),
+        )
+        # Input-Relay 未起動時の WARN 抑制（1 プロセス寿命で一度だけ）
+        self._ir_warn_emitted = False
 
         agents = config.get("windows_agents", [])
         self._agent_monitor = AgentActivityMonitor(agents)
@@ -63,19 +72,78 @@ class ActivityDetector:
             game_name is not None, discord_vc,
         )
 
+        # PC 別サマリ（Sub PC でも foreground_process / is_fullscreen を返すようになった）
+        main_pc = {
+            "foreground_process": main_data.get("foreground_process"),
+            "is_fullscreen": bool(main_data.get("is_fullscreen", False)),
+            "game": game_name,
+        }
+        sub_pc = {
+            "foreground_process": sub_data.get("foreground_process"),
+            "is_fullscreen": bool(sub_data.get("is_fullscreen", False)),
+        }
+
+        ir = main_data.get("input_relay") or None
+        active_pcs = self._evaluate_active_pcs(main_data, self._idle_timeout_sec)
+
         return {
             "obs_connected": sub_data.get("obs_connected", False),
             "obs_streaming": obs_streaming,
             "obs_recording": obs_recording,
             "obs_replay_buffer": obs_replay_buffer,
             "gaming": {"active": game_name is not None, "game": game_name},
-            "foreground_process": main_data.get("foreground_process"),
-            "is_fullscreen": main_data.get("is_fullscreen", False),
+            # 旧互換（Main PC 基準）
+            "foreground_process": main_pc["foreground_process"],
+            "is_fullscreen": main_pc["is_fullscreen"],
+            # PC 別サマリ（新規）
+            "main": main_pc,
+            "sub": sub_pc,
+            "input_relay": ir,
+            "active_pcs": active_pcs,
             "discord_vc": discord_vc,
             "blocked": blocked,
             "block_reason": reason,
             "enabled": True,
         }
+
+    def _evaluate_active_pcs(self, main_data: dict, timeout_sec: int) -> list[str]:
+        """Input-Relay sender の情報から現在アクティブな PC のリストを返す。
+
+        判定ルール（`docs/design/activity_multi_pc_detection.md` 参照）:
+        - gamepad イベントが idle_timeout 以内 → Main（物理的に Main 接続）
+        - kbd/mouse イベントが idle_timeout 以内:
+          - remote_mode=False → Main
+          - remote_mode=True  → Sub
+        - どれもなければ空リスト
+
+        Input-Relay が未起動（main_data に input_relay が無い）場合は、
+        従来互換として Main agent が応答していれば `["main"]` をフォールバックで返す。
+        """
+        ir = main_data.get("input_relay")
+        if ir is None:
+            # Input-Relay 未検出: Main agent から何らかの応答はあるのか？
+            has_main_response = bool(main_data)
+            if has_main_response and not self._ir_warn_emitted:
+                log.warning("Input-Relay sender /api/status not reachable; active_pcs falls back to ['main']")
+                self._ir_warn_emitted = True
+            return ["main"] if has_main_response else []
+
+        now = ir.get("server_time") or time.time()
+        kbd_ts = float(ir.get("last_kbd_mouse_ts") or 0.0)
+        gp_ts = float(ir.get("last_gamepad_ts") or 0.0)
+        remote = bool(ir.get("remote_mode", False))
+
+        kbd_fresh = bool(kbd_ts) and (now - kbd_ts) <= timeout_sec
+        gp_fresh = bool(gp_ts) and (now - gp_ts) <= timeout_sec
+
+        pcs: list[str] = []
+        if gp_fresh:
+            pcs.append("main")
+        if kbd_fresh:
+            pcs.append("sub" if remote else "main")
+        # 重複除去（順序維持）
+        seen: set[str] = set()
+        return [p for p in pcs if not (p in seen or seen.add(p))]
 
     async def is_blocked(self) -> bool:
         """重い処理をブロックすべきかを返す。"""

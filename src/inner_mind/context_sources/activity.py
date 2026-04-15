@@ -1,4 +1,4 @@
-"""ActivitySource — Main PC のゲーム/フォアグラウンドプロセス状況を InnerMind に提供。"""
+"""ActivitySource — Main/Sub PC のゲーム/フォアグラウンドプロセス状況を InnerMind に提供。"""
 
 from datetime import datetime, timedelta, timezone
 
@@ -15,12 +15,13 @@ class ActivitySource(ContextSource):
     priority = 55
 
     async def collect(self, shared: dict) -> dict | None:
-        # 現在状態（_cur_game / _cur_fg）
+        # 現在状態（_cur_game / _cur_fg は PC 別 dict）
         collector = getattr(self.bot, "activity_collector", None)
-        cur_game = collector._cur_game if collector else None
-        cur_fg = collector._cur_fg if collector else None
+        cur_game = collector._cur_game.get("main") if collector else None
+        cur_fg_main = collector._cur_fg.get("main") if collector else None
+        cur_fg_sub = collector._cur_fg.get("sub") if collector else None
 
-        # 直近6時間のゲーム別合計時間
+        # 直近6時間のゲーム別合計時間（Main のみ）
         now = datetime.now(tz=_JST)
         cutoff = (now - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
         games = await self.bot.database.fetchall(
@@ -34,36 +35,65 @@ class ActivitySource(ContextSource):
             (cutoff,),
         )
 
-        # フォアグラウンド top3（during_game=0 のみ＝純粋な作業時間）
-        fg_top = await self.bot.database.fetchall(
+        # フォアグラウンド top3（during_game=0 のみ＝純粋な作業時間）を Main / Sub 別に取得
+        fg_top_main = await self.bot.database.fetchall(
             """
             SELECT process_name, SUM(COALESCE(duration_sec, 0)) AS sec
             FROM foreground_sessions
-            WHERE start_at >= ? AND during_game = 0
+            WHERE start_at >= ? AND during_game = 0 AND pc = 'main'
+            GROUP BY process_name ORDER BY sec DESC LIMIT 3
+            """,
+            (cutoff,),
+        )
+        fg_top_sub = await self.bot.database.fetchall(
+            """
+            SELECT process_name, SUM(COALESCE(duration_sec, 0)) AS sec
+            FROM foreground_sessions
+            WHERE start_at >= ? AND during_game = 0 AND pc = 'sub'
             GROUP BY process_name ORDER BY sec DESC LIMIT 3
             """,
             (cutoff,),
         )
 
-        if not cur_game and not cur_fg and not games and not fg_top:
+        # 直近サンプルの active_pcs（Main サンプルに CSV 保存されている）
+        active_pcs: list[str] = []
+        row = await self.bot.database.fetchone(
+            "SELECT active_pcs FROM activity_samples WHERE pc = 'main' AND active_pcs IS NOT NULL ORDER BY ts DESC LIMIT 1"
+        )
+        if row and row.get("active_pcs"):
+            active_pcs = [p for p in row["active_pcs"].split(",") if p]
+
+        if not cur_game and not cur_fg_main and not cur_fg_sub and not games and not fg_top_main and not fg_top_sub:
             return None
 
         return {
             "current_game": cur_game,
-            "current_foreground": cur_fg,
+            "current_foreground": {"main": cur_fg_main, "sub": cur_fg_sub},
+            "active_pcs": active_pcs,
             "recent_games": games,
-            "recent_foreground": fg_top,
+            "recent_foreground_main": fg_top_main,
+            "recent_foreground_sub": fg_top_sub,
         }
 
     def format_for_prompt(self, data: dict) -> str:
         lines = ["### いにわのPC活動"]
         cg = data.get("current_game")
-        cf = data.get("current_foreground")
+        cf = data.get("current_foreground") or {}
+        cf_main = cf.get("main") if isinstance(cf, dict) else cf
+        cf_sub = cf.get("sub") if isinstance(cf, dict) else None
+        active = data.get("active_pcs") or []
+
         if cg:
-            lines.append(f"現在プレイ中: {cg}")
-        if cf:
+            lines.append(f"現在プレイ中（Main PC）: {cg}")
+        if cf_main:
             suffix = "（ゲーム中の裏側）" if cg else ""
-            lines.append(f"フォアグラウンド: {cf}{suffix}")
+            lines.append(f"Main PC フォアグラウンド: {cf_main}{suffix}")
+        if cf_sub:
+            lines.append(f"Sub PC フォアグラウンド: {cf_sub}")
+        if "main" in active and "sub" in active:
+            lines.append("※ Main でゲーム/作業中に Sub PC でも並行作業中（両 PC 同時操作）")
+        elif active == ["sub"]:
+            lines.append("※ リモートモード中（Sub PC を操作中）")
 
         games = data.get("recent_games") or []
         if games:
@@ -72,10 +102,19 @@ class ActivitySource(ContextSource):
                 mins = int((g["sec"] or 0) // 60)
                 lines.append(f"- {g['game_name']}: {mins}分")
 
-        fg = data.get("recent_foreground") or []
-        if fg:
-            lines.append("直近6時間の作業アプリ（ゲーム中以外）:")
-            for f in fg:
+        fg_main = data.get("recent_foreground_main") or []
+        if fg_main:
+            lines.append("直近6時間の Main PC 作業アプリ（ゲーム中以外）:")
+            for f in fg_main:
+                mins = int((f["sec"] or 0) // 60)
+                if mins <= 0:
+                    continue
+                lines.append(f"- {f['process_name']}: {mins}分")
+
+        fg_sub = data.get("recent_foreground_sub") or []
+        if fg_sub:
+            lines.append("直近6時間の Sub PC 作業アプリ:")
+            for f in fg_sub:
                 mins = int((f["sec"] or 0) // 60)
                 if mins <= 0:
                     continue

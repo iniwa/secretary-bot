@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 26
+_SCHEMA_VERSION = 27
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -580,6 +580,16 @@ class Database:
                 "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'small',  32, 16, 5e-5,   2.5e-5, 2, 15, 'cosine', 1)",
                 "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'medium', 32, 16, 5e-5,   2.5e-5, 2, 12, 'cosine', 1)",
                 "INSERT OR IGNORE INTO lora_config_templates (category, size_class, rank, alpha, lr_unet, lr_text, batch_size, epochs, scheduler, is_default) VALUES ('style',     'large',  64, 32, 5e-5,   2.5e-5, 2, 10, 'cosine', 1)",
+            ],
+            27: [
+                # Multi-PC activity detection: Sub PC foreground 記録 + active_pcs
+                # `pc` カラム: サンプル/フォアグラウンドセッションがどの PC で発生したか
+                # `active_pcs` カラム: Main サンプル側に CSV で保存（例: "main,sub"）。一次情報源は Main sender の Input-Relay /api/status
+                "ALTER TABLE activity_samples   ADD COLUMN pc TEXT NOT NULL DEFAULT 'main'",
+                "ALTER TABLE foreground_sessions ADD COLUMN pc TEXT NOT NULL DEFAULT 'main'",
+                "ALTER TABLE activity_samples   ADD COLUMN active_pcs TEXT",
+                "CREATE INDEX IF NOT EXISTS idx_foreground_sessions_pc_start ON foreground_sessions(pc, start_at)",
+                "CREATE INDEX IF NOT EXISTS idx_activity_samples_pc_ts ON activity_samples(pc, ts)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
