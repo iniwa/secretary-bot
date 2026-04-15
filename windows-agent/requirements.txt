@@ -7,7 +7,7 @@ pywin32>=306
 httpx>=0.25
 # STT: Main PC (マイクキャプチャ)
 sounddevice>=0.4
-webrtcvad>=2.0.10
+webrtcvad-wheels>=2.0.14  # webrtcvad の Windows 向けプリビルド wheel（MSVC 不要）
 numpy>=1.24
 # STT: Sub PC (Whisperエンジン)
 transformers>=4.36
