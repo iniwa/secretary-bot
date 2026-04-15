@@ -84,12 +84,38 @@ export function render() {
     margin-bottom: 0.6rem;
   }
   .imggen-header h3 { margin: 0; }
-  .imggen-comfy-links {
+  .imggen-comfy-panel {
     display: flex;
+    flex-direction: column;
     gap: 0.3rem;
-    flex-wrap: wrap;
+    margin-bottom: 0.6rem;
   }
-  .imggen-comfy-links a {
+  .imggen-comfy-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-base);
+  }
+  .imggen-comfy-row .name {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .imggen-comfy-row .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-muted, #888);
+    flex-shrink: 0;
+  }
+  .imggen-comfy-row .dot.running { background: #22c55e; }
+  .imggen-comfy-row .dot.starting { background: #eab308; }
+  .imggen-comfy-row .dot.error { background: #ef4444; }
+  .imggen-comfy-row .meta { color: var(--text-secondary); font-size: 0.7rem; }
+  .imggen-comfy-row .spacer { flex: 1; }
+  .imggen-comfy-row button,
+  .imggen-comfy-row a {
     font-size: 0.7rem;
     padding: 0.2rem 0.5rem;
     border-radius: 4px;
@@ -97,10 +123,16 @@ export function render() {
     background: var(--bg-base);
     color: var(--text-secondary);
     text-decoration: none;
+    cursor: pointer;
   }
-  .imggen-comfy-links a:hover {
+  .imggen-comfy-row button:hover:not(:disabled),
+  .imggen-comfy-row a:hover {
     border-color: var(--accent);
     color: var(--accent);
+  }
+  .imggen-comfy-row button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   .imggen-form label {
     display: block;
@@ -219,8 +251,8 @@ export function render() {
   <section class="card imggen-section imggen-gen">
     <div class="imggen-header">
       <h3>Generate</h3>
-      <div id="ig-comfy-links" class="imggen-comfy-links"></div>
     </div>
+    <div id="ig-comfy-panel" class="imggen-comfy-panel"></div>
     <div class="imggen-form">
       <label for="ig-workflow">Workflow</label>
       <select id="ig-workflow" class="form-input"><option value="">Loading...</option></select>
@@ -309,25 +341,98 @@ async function loadWorkflows() {
 }
 
 // ============================================================
-// ComfyUI links
+// ComfyUI control panel (status / start / stop / open)
 // ============================================================
-async function loadComfyLinks() {
-  const el = $('ig-comfy-links');
-  if (!el) return;
+let comfyAgents = [];
+let comfyStatusTimer = null;
+const comfyBusy = new Set();  // agent_id 単位の操作中フラグ
+
+async function loadComfyPanel() {
   try {
     const data = await api('/api/image/agents');
-    const agents = data?.agents || [];
-    if (!agents.length) {
-      el.innerHTML = '';
-      return;
-    }
-    el.innerHTML = agents.map(a => {
-      const label = `ComfyUI (${esc(a.name || a.id)})`;
-      return `<a href="${esc(a.comfyui_url)}" target="_blank" rel="noopener" title="${esc(a.comfyui_url)}">${label}</a>`;
-    }).join('');
+    comfyAgents = data?.agents || [];
   } catch (err) {
     console.error('agents load failed', err);
-    el.innerHTML = '';
+    comfyAgents = [];
+  }
+  renderComfyPanel({});
+  refreshComfyStatus();
+}
+
+function renderComfyPanel(statusMap) {
+  const el = $('ig-comfy-panel');
+  if (!el) return;
+  if (!comfyAgents.length) { el.innerHTML = ''; return; }
+  el.innerHTML = comfyAgents.map(a => {
+    const st = statusMap[a.id] || { loading: true };
+    let dotClass = '';
+    let statusLabel = '読み込み中...';
+    let pidPart = '';
+    if (!st.loading) {
+      if (st.unreachable) {
+        dotClass = 'error';
+        statusLabel = 'Agent 応答なし';
+      } else if (st.available) {
+        dotClass = 'running';
+        statusLabel = '稼働中';
+        if (st.pid) pidPart = ` (PID ${st.pid})`;
+      } else if (st.running) {
+        dotClass = 'starting';
+        statusLabel = '起動中 / 応答待ち';
+      } else {
+        statusLabel = '停止';
+      }
+    }
+    const busy = comfyBusy.has(a.id);
+    const isUp = !st.loading && (st.running || st.available);
+    const actionBtn = isUp
+      ? `<button data-comfy-action="stop" data-agent="${esc(a.id)}" ${busy ? 'disabled' : ''}>停止</button>`
+      : `<button data-comfy-action="start" data-agent="${esc(a.id)}" ${busy ? 'disabled' : ''}>起動</button>`;
+    return `
+      <div class="imggen-comfy-row">
+        <span class="dot ${dotClass}"></span>
+        <span class="name">${esc(a.name || a.id)}</span>
+        <span class="meta">${esc(statusLabel)}${esc(pidPart)}</span>
+        <span class="spacer"></span>
+        ${actionBtn}
+        <a href="${esc(a.comfyui_url)}" target="_blank" rel="noopener" title="${esc(a.comfyui_url)}">開く</a>
+      </div>
+    `;
+  }).join('');
+  // バインド
+  el.querySelectorAll('button[data-comfy-action]').forEach(btn => {
+    btn.addEventListener('click', () => handleComfyAction(btn.dataset.agent, btn.dataset.comfyAction));
+  });
+}
+
+async function refreshComfyStatus() {
+  if (!comfyAgents.length) return;
+  const results = await Promise.all(comfyAgents.map(async a => {
+    try {
+      const s = await api(`/api/image/agents/${encodeURIComponent(a.id)}/comfyui/status`);
+      return [a.id, s];
+    } catch (err) {
+      return [a.id, { unreachable: true }];
+    }
+  }));
+  const map = {};
+  results.forEach(([id, s]) => { map[id] = s; });
+  renderComfyPanel(map);
+}
+
+async function handleComfyAction(agentId, action) {
+  if (!agentId || !action) return;
+  if (comfyBusy.has(agentId)) return;
+  comfyBusy.add(agentId);
+  refreshComfyStatus();
+  try {
+    await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/${action}`, { method: 'POST' });
+    toast(`${action === 'start' ? '起動' : '停止'}リクエストを送信しました`, 'info');
+  } catch (err) {
+    toast(`ComfyUI ${action} 失敗: ${err?.message || err}`, 'error');
+  } finally {
+    comfyBusy.delete(agentId);
+    refreshComfyStatus();
   }
 }
 
@@ -532,20 +637,23 @@ export async function mount() {
     loadWorkflows(),
     loadJobs(),
     loadGallery(),
-    loadComfyLinks(),
+    loadComfyPanel(),
   ]);
 
   // SSE（SSE が動けば jobs はそれで更新されるが、念のためポーリングも 10s で回す）
   connectSSE();
   pollTimer = setInterval(loadJobs, 10000);
   galleryTimer = setInterval(loadGallery, 30000);
+  comfyStatusTimer = setInterval(refreshComfyStatus, 15000);
 }
 
 export function unmount() {
   if (sse) { try { sse.close(); } catch { /* nop */ } sse = null; }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (galleryTimer) { clearInterval(galleryTimer); galleryTimer = null; }
+  if (comfyStatusTimer) { clearInterval(comfyStatusTimer); comfyStatusTimer = null; }
   workflows = [];
   jobs = [];
   gallery = [];
+  comfyAgents = [];
 }

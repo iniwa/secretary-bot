@@ -2535,6 +2535,41 @@ def create_web_app(bot) -> FastAPI:
             })
         return {"agents": out}
 
+    def _find_agent(agent_id: str) -> dict | None:
+        for a in (getattr(bot.unit_manager.agent_pool, "_agents", []) or []):
+            if a.get("id") == agent_id:
+                return a
+        return None
+
+    async def _comfyui_proxy(agent_id: str, method: str, path: str, timeout: float):
+        agent = _find_agent(agent_id)
+        if not agent:
+            raise HTTPException(404, f"agent not found: {agent_id}")
+        url = f"http://{agent['host']}:{agent.get('port', 7777)}{path}"
+        token = os.environ.get("AGENT_SECRET_TOKEN", "")
+        headers = {"X-Agent-Token": token} if token else {}
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.request(method, url, headers=headers)
+            return JSONResponse(
+                content=resp.json() if resp.content else {},
+                status_code=resp.status_code,
+            )
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"agent unreachable: {e}")
+
+    @app.get("/api/image/agents/{agent_id}/comfyui/status", dependencies=[Depends(_verify)])
+    async def image_comfyui_status(agent_id: str):
+        return await _comfyui_proxy(agent_id, "GET", "/comfyui/status", timeout=5.0)
+
+    @app.post("/api/image/agents/{agent_id}/comfyui/start", dependencies=[Depends(_verify)])
+    async def image_comfyui_start(agent_id: str):
+        return await _comfyui_proxy(agent_id, "POST", "/comfyui/start", timeout=120.0)
+
+    @app.post("/api/image/agents/{agent_id}/comfyui/stop", dependencies=[Depends(_verify)])
+    async def image_comfyui_stop(agent_id: str):
+        return await _comfyui_proxy(agent_id, "POST", "/comfyui/stop", timeout=30.0)
+
     @app.get("/api/image/file", dependencies=[Depends(_verify)])
     async def image_file(path: str):
         """NAS 配下の画像ファイルを配信（path traversal ガード付き）。"""

@@ -201,6 +201,34 @@ async def comfyui_restart(request: Request):
     return JSONResponse({"ok": True, "pid": result.get("pid")}, headers={"X-Trace-Id": trace_id})
 
 
+@router.post("/comfyui/start")
+async def comfyui_start(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    if _ctx.comfy is None:
+        return _error_response(503, "ResourceUnavailableError", "image_gen not initialized", True, trace_id=trace_id)
+    snap = _ctx.comfy.status_snapshot()
+    if snap.get("available"):
+        return JSONResponse({"ok": True, "already_running": True, "pid": snap.get("pid")}, headers={"X-Trace-Id": trace_id})
+    result = _ctx.comfy.start()
+    if not result.get("ok"):
+        return _error_response(503, "ResourceUnavailableError", result.get("error", "start failed"), bool(result.get("transient", True)), trace_id=trace_id)
+    ok = await _ctx.comfy.wait_until_ready()
+    if not ok:
+        return _error_response(503, "ResourceUnavailableError", "ComfyUI did not become ready", True, trace_id=trace_id)
+    return JSONResponse({"ok": True, "pid": result.get("pid")}, headers={"X-Trace-Id": trace_id})
+
+
+@router.post("/comfyui/stop")
+async def comfyui_stop(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    if _ctx.comfy is None:
+        return _error_response(503, "ResourceUnavailableError", "image_gen not initialized", True, trace_id=trace_id)
+    result = _ctx.comfy.stop()
+    return JSONResponse({"ok": bool(result.get("ok", True))}, headers={"X-Trace-Id": trace_id})
+
+
 # --- /cache/sync ---
 def _nas_base_fallback() -> str:
     """nas_drive（ensure_mounted 返却値）が未設定のとき用の実効ベースパス生成。"""
