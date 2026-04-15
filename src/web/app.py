@@ -2360,11 +2360,15 @@ def create_web_app(bot) -> FastAPI:
     # --- 静的ファイル & フロントエンド ---
 
     # Cloudflare / ブラウザの ES モジュールキャッシュ対策
-    # JS/CSS は常にオリジンに再検証させる
+    # JS/CSS は常にオリジンに再検証させる（同居ツールの静的配信にも適用）
+    _STATIC_PREFIXES = ("/static/", "/tools/zzz-disc/static/")
+
     @app.middleware("http")
     async def static_cache_control(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/static/") and request.url.path.rsplit(".", 1)[-1] in ("js", "css"):
+        path = request.url.path
+        if any(path.startswith(p) for p in _STATIC_PREFIXES) \
+                and path.rsplit(".", 1)[-1] in ("js", "css"):
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         return response
 

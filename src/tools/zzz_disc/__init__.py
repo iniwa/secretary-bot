@@ -118,13 +118,30 @@ def register(app: FastAPI, bot) -> None:
         )
 
     # SPA エントリ（末尾スラッシュ有無どちらでも）
+    # Cloudflare / ブラウザキャッシュ対策として JS/CSS 参照にバージョンクエリを付与。
+    # 加えて HTML 自体も no-cache で返し、更新直後に古い HTML が配られないようにする。
     @app.get("/tools/zzz-disc/")
     @app.get("/tools/zzz-disc")
     async def _zzz_disc_index():
+        from fastapi.responses import HTMLResponse
+        import hashlib, glob as _glob
         index_path = os.path.join(_STATIC_DIR, "index.html")
         if not os.path.exists(index_path):
             return {"error": "index.html not found", "static_dir": _STATIC_DIR}
-        return FileResponse(index_path)
+        with open(index_path, encoding="utf-8") as f:
+            html = f.read()
+        h = hashlib.md5()
+        for p in sorted(_glob.glob(os.path.join(_STATIC_DIR, "**", "*.js"), recursive=True)):
+            h.update(str(os.path.getmtime(p)).encode())
+        for p in sorted(_glob.glob(os.path.join(_STATIC_DIR, "**", "*.css"), recursive=True)):
+            h.update(str(os.path.getmtime(p)).encode())
+        ver = h.hexdigest()[:8]
+        html = html.replace('src="static/js/app.js"', f'src="static/js/app.js?v={ver}"')
+        html = html.replace('href="static/css/zzz_disc.css"', f'href="static/css/zzz_disc.css?v={ver}"')
+        return HTMLResponse(
+            content=html,
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     # API ルータ
     router = build_router(bot, {
