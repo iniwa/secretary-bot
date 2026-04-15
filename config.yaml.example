@@ -154,6 +154,11 @@ units:
     llm:
       temperature: 0.4
       ollama_only: false                      # Ollama 不在時は Gemini fallback 許可
+  # モデルキャッシュ定期同期（画像生成 Agent の /capability を定期的に引く）
+  model_sync:
+    enabled: true
+    interval_seconds: 1800                    # ポーリング間隔（30分既定）
+    trigger_sync: true                        # default_base_model 未キャッシュ時に /cache/sync を発射するか
 
 # Tools（同居サブツール：BOT本体とは疎結合でホスティング）
 tools:

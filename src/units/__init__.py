@@ -22,6 +22,7 @@ _UNIT_MODULES = {
     "rss": "src.units.rss",
     "docker_log_monitor": "src.units.docker_log_monitor",
     "image_gen": "src.units.image_gen",
+    "model_sync": "src.units.model_sync",
 }
 
 

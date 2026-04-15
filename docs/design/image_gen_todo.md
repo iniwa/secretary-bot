@@ -14,7 +14,11 @@
 
 ## Phase 2（複数 PC 分散）
 
-- [ ] **`src/units/model_sync.py` 新規ユニット** — capability 定期ポーリング / ウォームアップ指示
+- [x] **`src/units/model_sync.py` 新規ユニット** — capability 定期ポーリング / ウォームアップ指示
+  - 実装日: 2026-04-16
+  - `ModelSyncUnit` を追加（30分毎 `warmup_all_agents` を呼び出し）
+  - `units.model_sync.{enabled, interval_seconds, trigger_sync}` を config に追加
+  - `execute` 経由で手動トリガも可能
 - [ ] **Windows Agent セットアップ系 API**
   - [ ] `POST /comfyui/setup` — 未インストール環境で ComfyUI をクローン/依存解決
   - [ ] `POST /comfyui/update` — git pull & 再起動
