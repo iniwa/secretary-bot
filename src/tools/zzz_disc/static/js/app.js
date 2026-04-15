@@ -6,6 +6,7 @@ import * as discDetail from './pages/disc_detail.js';
 import * as capture from './pages/capture.js';
 import * as upload from './pages/upload.js';
 import * as shared from './pages/shared.js';
+import * as teams from './pages/teams.js';
 import * as settings from './pages/settings.js';
 
 const routes = [
@@ -16,6 +17,7 @@ const routes = [
   { pattern: /^#\/capture$/,                 module: capture,          nav: 'capture',      pref: 'show_capture' },
   { pattern: /^#\/upload$/,                  module: upload,           nav: 'upload',       pref: 'show_upload' },
   { pattern: /^#\/shared$/,                  module: shared,           nav: 'shared' },
+  { pattern: /^#\/teams$/,                   module: teams,            nav: 'teams' },
   { pattern: /^#\/settings$/,                module: settings,         nav: 'settings' },
 ];
 

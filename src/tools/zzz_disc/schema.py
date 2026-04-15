@@ -246,3 +246,33 @@ class JobConfirmIn(BaseModel):
 
 class JobCaptureIn(BaseModel):
     source: str = "capture-mss"
+
+
+# ---------- Teams (編成モード) ----------
+
+class TeamIn(BaseModel):
+    name: str
+    group_id: int | None = None
+    display_order: int = 0
+
+
+class TeamUpdateIn(BaseModel):
+    name: str | None = None
+    display_order: int | None = None
+
+
+class TeamSlotIn(BaseModel):
+    character_id: int | None = None
+    build_id: int | None = None
+
+
+class TeamGroupIn(BaseModel):
+    name: str
+    description: str | None = None
+    display_order: int = 0
+
+
+class TeamGroupUpdateIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    display_order: int | None = None

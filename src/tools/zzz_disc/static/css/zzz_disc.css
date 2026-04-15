@@ -1120,3 +1120,71 @@ h3 { font-size: 1rem; font-weight: 600; }
   padding: 6px 10px;
   color: #f5a623;
 }
+
+/* ========== 編成モード ========== */
+.teams-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+.team-group {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 12px;
+  background: color-mix(in srgb, #fff 3%, transparent);
+}
+.team-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.team-group-header h4 { margin: 0; }
+.team-group-header .spacer { flex: 1; }
+.team-block {
+  border: 1px solid var(--border-color, #333);
+  border-radius: 6px;
+  padding: 8px;
+  background: color-mix(in srgb, #fff 2%, transparent);
+}
+.team-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.team-header .spacer { flex: 1; }
+.team-slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.team-slot {
+  border: 1px dashed var(--border-color, #333);
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 12px;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.team-slot.empty {
+  opacity: 0.6;
+}
+.team-slot-name { font-weight: 600; }
+.team-slot-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.team-conflicts {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, #c44 10%, transparent);
+  border: 1px solid #c44;
+  border-radius: 4px;
+}
+.team-conflicts ul { margin: 4px 0 0 16px; padding: 0; }
