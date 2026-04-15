@@ -83,7 +83,12 @@ async def extract_endpoint(request: Request, file: UploadFile = File(...)):
 
 @router.post("/capture-and-extract")
 async def capture_and_extract(request: Request):
-    """キャプチャ + 抽出を 1 コールで実行。"""
+    """キャプチャ + 抽出を 1 コールで実行。
+
+    Response: {"png_base64": str, "extraction": dict}
+    Pi 側 extractor.capture_and_extract がこの構造を期待する。
+    """
+    import base64 as _b64
     _verify(request)
     body = await request.json()
     try:
@@ -108,4 +113,8 @@ async def capture_and_extract(request: Request):
         raise HTTPException(422, f"VLM parse error: {e}")
     except Exception as e:
         raise HTTPException(500, f"VLM call failed: {e}")
-    return result
+    return {
+        "png_base64": _b64.b64encode(png).decode("ascii"),
+        "extraction": result,
+        "model": model,
+    }

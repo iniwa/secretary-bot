@@ -16,7 +16,8 @@ def _headers() -> dict[str, str]:
 
 
 async def extract_from_image(bot, image_bytes: bytes,
-                             *, timeout: float = 120.0) -> dict:
+                             *, model: str | None = None,
+                             timeout: float = 300.0) -> dict:
     """PNG bytes を送って VLM 抽出結果 JSON を返す。"""
     pool = getattr(getattr(bot, "unit_manager", None), "agent_pool", None)
     if pool is None:
@@ -26,9 +27,10 @@ async def extract_from_image(bot, image_bytes: bytes,
         raise RuntimeError("no windows agent available")
 
     url = f"http://{agent['host']}:{agent['port']}/tools/zzz-disc/extract"
+    params = {"model": model} if model else None
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
-            url, headers=_headers(),
+            url, headers=_headers(), params=params,
             files={"file": ("disc.png", image_bytes, "image/png")},
         )
         resp.raise_for_status()
@@ -36,7 +38,8 @@ async def extract_from_image(bot, image_bytes: bytes,
 
 
 async def capture_and_extract(bot, *, source: str = "capture-mss",
-                              timeout: float = 120.0) -> tuple[bytes | None, dict]:
+                              model: str | None = None,
+                              timeout: float = 300.0) -> tuple[bytes | None, dict]:
     """画像キャプチャと VLM 抽出を Windows Agent 側で一括実行。
 
     Returns (png_bytes_or_None, extraction_dict)
@@ -50,9 +53,11 @@ async def capture_and_extract(bot, *, source: str = "capture-mss",
         raise RuntimeError("no windows agent available")
 
     url = f"http://{agent['host']}:{agent['port']}/tools/zzz-disc/capture-and-extract"
-    body = {
+    body: dict = {
         "backend": "obs" if source == "capture-obs" else "mss",
     }
+    if model:
+        body["model"] = model
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, headers=_headers(), json=body)
         resp.raise_for_status()

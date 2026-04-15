@@ -58,6 +58,10 @@ class ImageGenUnit(BaseUnit):
         if not self._started:
             await self.on_ready_hook()
 
+    async def cog_load(self) -> None:   # discord.py hook: unit ロード直後
+        # heartbeat (15分) を待たずに Dispatcher を起動する。
+        asyncio.create_task(self.on_ready_hook())
+
     async def cog_unload(self) -> None:   # discord.py hook
         await self.dispatcher.stop()
 
