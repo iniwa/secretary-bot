@@ -58,39 +58,47 @@ function renderRecommendedEditor() {
   `).join('');
   return `
     <div class="recommended-editor">
-      <h3 class="mb-1">★ 推奨サブステ</h3>
-      <div class="text-muted text-sm mb-1">ここで選択したサブステは、各ディスクで目立つようハイライトされます</div>
+      <h3 class="mb-1">★ 推奨サブステ <span class="text-muted text-sm" id="rec-sub-status"></span></h3>
+      <div class="text-muted text-sm mb-1">チェックを入れると即時保存されます。選択したサブステは各ディスクで強調表示されます</div>
       <div class="rec-sub-chips">${boxes}</div>
-      <div class="mt-1"><button class="btn btn-sm btn-primary" id="save-recommended">保存</button></div>
     </div>
   `;
 }
 
+let _recSaveTimer = null;
+let _recSaveSeq = 0;
+
 function wireRecommendedEditor() {
   const wrap = document.querySelector('.recommended-editor');
   if (!wrap) return;
-  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
-    });
-  });
-  const btn = document.getElementById('save-recommended');
-  btn?.addEventListener('click', async () => {
+  const status = wrap.querySelector('#rec-sub-status');
+
+  const doSave = async () => {
     const picked = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
       .map(cb => cb.dataset.sub);
-    btn.disabled = true;
+    const seq = ++_recSaveSeq;
+    if (status) status.textContent = '保存中…';
     try {
       const res = await api(`/characters/${state.character.id}/recommended-substats`, {
         method: 'PUT', body: { stats: picked },
       });
+      if (seq !== _recSaveSeq) return;
       state.character = res.character || { ...state.character, recommended_substats: picked };
-      toast('推奨サブステを保存しました', 'success');
-      renderBody();
+      if (status) status.textContent = '✓ 保存済み';
+      setTimeout(() => { if (status && seq === _recSaveSeq) status.textContent = ''; }, 1500);
     } catch (err) {
+      if (seq !== _recSaveSeq) return;
+      if (status) status.textContent = '';
       toast(`保存失敗: ${err.message}`, 'error');
-    } finally {
-      btn.disabled = false;
     }
+  };
+
+  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+      clearTimeout(_recSaveTimer);
+      _recSaveTimer = setTimeout(doSave, 250);
+    });
   });
 }
 
