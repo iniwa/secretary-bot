@@ -340,6 +340,67 @@ Get-ChildItem Z:\outputs
 
 ---
 
+## 付録 C. セットアップ系エンドポイント（2026-04-16 追加）
+
+未インストール環境に ComfyUI / kohya_ss を HTTP 経由で導入するための API。実装は
+`windows-agent/tools/image_gen/setup_manager.py` / `router.py` 参照。
+
+### C.1 ComfyUI 初回セットアップ
+
+```bash
+curl -X POST -H "X-Agent-Token: $T" -H "Content-Type: application/json" \
+     -d '{}' http://$MAIN:7777/comfyui/setup
+# => {"task_id": "setup_...", "status": "running", "progress_url": "/tools/image-gen/setup/setup_..."}
+```
+
+body 省略時は `config.image_gen.setup.{comfyui_repo, comfyui_ref, cuda_index_url}` が使われる。
+個別に上書きしたい場合は body で `{"repo_url", "ref", "cuda_index_url"}` を渡す。
+
+進捗は:
+```bash
+curl -H "X-Agent-Token: $T" http://$MAIN:7777/setup/<task_id>
+# => {"task_id", "status": "running|done|failed", "current_step", "log_tail": [...]}
+```
+
+実処理:
+1. `<root>/comfyui` に `git clone`（既存なら `fetch + checkout + pull --ff-only`）
+2. `<root>/venv-comfyui` 生成（無ければ）
+3. `pip install --upgrade pip wheel`
+4. `pip install torch torchvision torchaudio --index-url <cuda_index_url>`
+5. `pip install -r comfyui/requirements.txt`
+
+所要時間は 10〜30 分（PyTorch のダウンロードが支配的）。
+
+### C.2 ComfyUI アップデート
+
+```bash
+curl -X POST -H "X-Agent-Token: $T" -d '{}' http://$MAIN:7777/comfyui/update
+```
+
+稼働中なら自動で `stop()` してから `git pull` → `requirements.txt` 再インストール。再起動は
+別途 `POST /comfyui/start` を叩くか、最初のジョブ投入で遅延起動に任せる。
+
+### C.3 kohya_ss セットアップ（Phase 4 向け）
+
+```bash
+curl -X POST -H "X-Agent-Token: $T" -d '{}' http://$MAIN:7777/kohya/setup
+```
+
+`config.image_gen.kohya.enabled: true` の Agent でのみ 202 が返る。
+`<root>/kohya_ss` にクローンし `<root>/venv-kohya` を作る。
+
+### C.4 全 task の状態確認
+
+```bash
+curl -H "X-Agent-Token: $T" http://$MAIN:7777/setup
+# => {"tasks": [{...snapshot...}, ...]}
+```
+
+task は Agent プロセス内のメモリに保持（再起動で消える）。長期記録が必要になったら
+ログファイル / DB 化を検討。
+
+---
+
 ## 付録 B. 判断分岐の優先順位（Claude Code 向け）
 
 トラブル時の既定の探索順:

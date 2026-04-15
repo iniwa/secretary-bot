@@ -28,7 +28,9 @@
   - [x] `GET /setup/{task_id}` で進捗・ログ tail を取得
   - [x] `GET /setup` で task 一覧
   - config の `image_gen.setup.{comfyui_repo, comfyui_ref, kohya_repo, kohya_ref, cuda_index_url}` で既定値上書き可
-- [ ] **SubPC 動作検証** — Main/Sub 両方で `/capability` → enqueue → 生成成功まで通す
+- [x] **SubPC 動作検証の手順整備** — 実機作業のためドキュメントのみ整備（2026-04-16）
+  - `docs/setup/image_gen_verify.md` 付録 C にセットアップ系 API の手順を追記
+  - 実機疎通は §1「E2E 正常系チェックリスト」をユーザー側で実施
 
 ## Phase 3（プロンプト / Discord 連携）
 
