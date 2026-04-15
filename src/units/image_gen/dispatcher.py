@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from src.database import jst_now
@@ -33,6 +34,20 @@ from src.units.image_gen.models import (
 log = get_logger(__name__)
 
 JST = timezone(timedelta(hours=9))
+
+_PLACEHOLDER_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
+
+
+def _resolve_placeholder(value: str, params: dict) -> str:
+    """`{{KEY}}` を params[KEY] で置換。未解決はそのまま残す。"""
+    if not isinstance(value, str):
+        return value
+
+    def _sub(m: re.Match) -> str:
+        v = params.get(m.group(1))
+        return str(v) if v is not None else m.group(0)
+
+    return _PLACEHOLDER_RE.sub(_sub, value)
 
 # Poll 間隔・タイムアウト設定
 _POLL_INTERVAL_SEC = 2.0
@@ -200,6 +215,19 @@ class Dispatcher:
             required = []
         if not required:
             return []
+        # preset の required_* は `{{CKPT}}` などの placeholder を含む。job.params_json で解決する。
+        try:
+            params = json.loads(job.get("params_json") or "{}")
+        except Exception:
+            params = {}
+        resolved: list[dict] = []
+        for m in required:
+            fn = _resolve_placeholder(m.get("filename", ""), params)
+            if not fn or "{{" in fn:
+                raise ValidationError(
+                    f"unresolved placeholder in required model: {m.get('filename')}"
+                )
+            resolved.append({**m, "filename": fn})
         agent_id = agent.get("id", "")
         rows = await self.bot.database.fetchall(
             "SELECT file_type, filename FROM model_cache_manifest WHERE agent_id = ?",
@@ -207,7 +235,7 @@ class Dispatcher:
         )
         have = {(r["file_type"], r["filename"]) for r in rows}
         missing: list[dict] = []
-        for m in required:
+        for m in resolved:
             key = (m.get("type", ""), m.get("filename", ""))
             if key not in have:
                 missing.append(m)

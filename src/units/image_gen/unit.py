@@ -93,6 +93,15 @@ class ImageGenUnit(BaseUnit):
                 if v is None:
                     continue
                 merged[str(k).upper()] = v
+        # preset 共通の placeholder はユーザー未指定なら config の既定で補完する。
+        ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
+        if "CKPT" not in merged:
+            default_ckpt = ig_cfg.get("default_base_model")
+            if not default_ckpt:
+                lt_cfg = (self.bot.config.get("units") or {}).get("lora_train") or {}
+                default_ckpt = lt_cfg.get("default_base_model")
+            if default_ckpt:
+                merged["CKPT"] = default_ckpt
 
         job_id = await self.bot.database.image_job_insert(
             user_id=user_id, platform=platform,
