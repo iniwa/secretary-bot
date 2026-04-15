@@ -130,6 +130,7 @@ h3 { font-size: 1rem; font-weight: 600; }
 }
 .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
 .nav-item.active { background: var(--accent-muted); color: var(--accent-hover); }
+.nav-item[hidden] { display: none; }
 .nav-icon { width: 20px; text-align: center; }
 
 .main-content {
