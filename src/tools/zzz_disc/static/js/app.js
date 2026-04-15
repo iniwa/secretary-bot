@@ -14,10 +14,38 @@ const routes = [
   { pattern: /^#\/discs$/,                   module: discs,            nav: 'discs' },
   { pattern: /^#\/discs\/([^/]+)$/,          module: discDetail,       nav: 'discs', param: 'id' },
   { pattern: /^#\/capture$/,                 module: capture,          nav: 'capture' },
-  { pattern: /^#\/upload$/,                  module: upload,           nav: 'upload' },
+  { pattern: /^#\/upload$/,                  module: upload,           nav: 'upload',       pref: 'show_upload' },
   { pattern: /^#\/shared$/,                  module: shared,           nav: 'shared' },
   { pattern: /^#\/settings$/,                module: settings,         nav: 'settings' },
 ];
+
+// UI 設定（localStorage）: 任意機能の表示切替。デフォルトは全 OFF。
+const PREF_KEY = 'zzz_disc.ui_prefs';
+const PREF_DEFAULTS = { show_upload: false };
+
+export function getUiPrefs() {
+  try {
+    const raw = localStorage.getItem(PREF_KEY);
+    if (!raw) return { ...PREF_DEFAULTS };
+    return { ...PREF_DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    return { ...PREF_DEFAULTS };
+  }
+}
+
+export function setUiPref(key, value) {
+  const next = { ...getUiPrefs(), [key]: !!value };
+  localStorage.setItem(PREF_KEY, JSON.stringify(next));
+  applyUiPrefs();
+}
+
+function applyUiPrefs() {
+  const prefs = getUiPrefs();
+  document.querySelectorAll('[data-optional]').forEach(el => {
+    const key = `show_${el.dataset.optional}`;
+    el.hidden = !prefs[key];
+  });
+}
 
 let currentModule = null;
 let _navGen = 0;
@@ -38,6 +66,12 @@ async function navigate() {
     return;
   }
   const { route, params } = resolved;
+
+  // 無効化された任意ページ（設定で OFF）への直接遷移は弾く
+  if (route.pref && !getUiPrefs()[route.pref]) {
+    location.hash = '#/characters';
+    return;
+  }
 
   if (currentModule?.unmount) {
     try { currentModule.unmount(); } catch { /* silent */ }
@@ -151,6 +185,7 @@ export function promptDialog({ title = '入力', label = '', value = '', placeho
 
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
+  applyUiPrefs();
   if (!location.hash) location.hash = '#/characters';
   navigate();
 });

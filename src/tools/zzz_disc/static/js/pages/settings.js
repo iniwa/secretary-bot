@@ -1,6 +1,6 @@
 /** HoYoLAB 設定 — cookie 登録・同期 */
 import { api } from '../api.js';
-import { escapeHtml, toast } from '../app.js';
+import { escapeHtml, toast, getUiPrefs, setUiPref } from '../app.js';
 import { HOYOLAB_REGIONS } from '../labels.js';
 
 export function render() {
@@ -71,12 +71,27 @@ export function render() {
     </div>
 
     <div class="settings-section">
+      <h3>🖥️ UI 表示設定</h3>
+      <div class="hint">
+        使わない機能のメニューを非表示にできます。設定はこのブラウザにのみ保存されます。
+      </div>
+      <div class="row mt-2">
+        <label class="inline-label">
+          <input type="checkbox" id="pref-show-upload" />
+          画像アップロード機能を表示
+        </label>
+        <span class="text-sm text-muted">（HoYoLAB 同期で基本足りるため既定は非表示）</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>同期</h3>
       <div class="hint">
         保存済みアカウントを使って、プロフィール（showcase）から装備情報を取り込みます。
       </div>
       <div class="row">
         <button class="btn btn-primary" id="sync-all-btn">全キャラ同期</button>
+        <button class="btn" id="cleanup-empty-btn" title="ビルドが1件も無いキャラ（未所持シード）を削除">未所持キャラを削除</button>
         <button class="btn btn-danger" id="reset-btn" title="HoYoLAB 由来のディスク/ビルド/重複キャラを全削除">同期データをリセット</button>
         <div class="flex-1"></div>
         <span id="sync-status" class="text-sm text-muted"></span>
@@ -98,7 +113,31 @@ export async function mount() {
   document.getElementById('refresh-btn').addEventListener('click', refreshCookie);
   document.getElementById('clear-cred-btn').addEventListener('click', clearCredentials);
   document.getElementById('reset-btn').addEventListener('click', resetSynced);
+  document.getElementById('cleanup-empty-btn').addEventListener('click', cleanupEmpty);
+
+  const uploadToggle = document.getElementById('pref-show-upload');
+  uploadToggle.checked = !!getUiPrefs().show_upload;
+  uploadToggle.addEventListener('change', (ev) => {
+    setUiPref('show_upload', ev.target.checked);
+    toast(ev.target.checked ? 'アップロード機能を表示しました' : 'アップロード機能を非表示にしました', 'info');
+  });
+
   await loadAccount();
+}
+
+async function cleanupEmpty() {
+  if (!confirm('ビルドが 1 件も無いキャラ（未所持シード）を削除します。よろしいですか？')) return;
+  const btn = document.getElementById('cleanup-empty-btn');
+  btn.disabled = true;
+  try {
+    const res = await api('/characters/cleanup-empty', { method: 'POST' });
+    const names = (res.deleted || []).map(d => d.name_ja).join('、') || '（なし）';
+    toast(`削除: ${res.chars} 件 — ${names}`, 'success');
+  } catch (err) {
+    toast(`削除失敗: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function resetSynced() {

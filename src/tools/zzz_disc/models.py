@@ -807,6 +807,33 @@ async def update_hoyolab_synced(db, uid: str) -> None:
     )
 
 
+async def delete_characters_without_builds(db) -> dict:
+    """ビルドが 1 件も無いキャラを削除する（current/preset 両方なし）。
+
+    HoYoLAB 同期で所持キャラのみ current が作られる前提で、
+    所持していないシードキャラ行を掃除する用途。
+
+    Returns: {'chars': n, 'deleted_slugs': [...]}
+    """
+    rows = await db.fetchall(
+        "SELECT c.id, c.slug, c.name_ja FROM zzz_characters c "
+        "LEFT JOIN zzz_builds b ON b.character_id = c.id "
+        "WHERE b.id IS NULL"
+    )
+    if not rows:
+        return {"chars": 0, "deleted": []}
+    ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(ids))
+    await db.execute(
+        f"DELETE FROM zzz_characters WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    return {
+        "chars": len(ids),
+        "deleted": [{"slug": r["slug"], "name_ja": r["name_ja"]} for r in rows],
+    }
+
+
 async def reset_hoyolab_synced_data(db) -> dict:
     """HoYoLAB 同期で作られたデータを一掃する。
 

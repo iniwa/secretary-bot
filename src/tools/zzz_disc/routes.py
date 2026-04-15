@@ -24,6 +24,7 @@ from .schema import (
     DiscIn, BuildMetaIn, BuildSavePresetIn, BuildSlotAssignIn,
     HoyolabAccountIn, HoyolabCredentialsIn, HoyolabAutoLoginIn,
     JobConfirmIn, JobCaptureIn,
+    SLOT_FIXED_MAIN_STAT, SLOT_ALLOWED_MAIN_STATS, RARITY_LEVEL_MAX,
 )
 
 
@@ -53,6 +54,17 @@ def build_router(bot, config: dict) -> APIRouter:
     async def get_sets():
         sets = await models.list_set_masters(db)
         return {"sets": sets}
+
+    @router.get("/api/disc-constraints")
+    async def get_disc_constraints():
+        """手動登録フォーム用: スロット別メインステ候補 + rarity 上限レベル。"""
+        return {
+            "slot_fixed_main_stat": SLOT_FIXED_MAIN_STAT,
+            "slot_allowed_main_stats": {
+                k: sorted(v) for k, v in SLOT_ALLOWED_MAIN_STATS.items()
+            },
+            "rarity_level_max": RARITY_LEVEL_MAX,
+        }
 
     # ---------------- Discs ----------------
 
@@ -414,6 +426,12 @@ def build_router(bot, config: dict) -> APIRouter:
     async def post_hoyolab_reset():
         """HoYoLAB 同期データを一掃（キャラ重複解消・再同期用）。"""
         result = await models.reset_hoyolab_synced_data(db)
+        return {"ok": True, **result}
+
+    @router.post("/api/characters/cleanup-empty")
+    async def post_characters_cleanup():
+        """ビルドが 1 件も無いキャラを削除する（未所持シードの掃除）。"""
+        result = await models.delete_characters_without_builds(db)
         return {"ok": True, **result}
 
     @router.post("/api/hoyolab/sync")

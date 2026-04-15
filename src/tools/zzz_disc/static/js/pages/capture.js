@@ -19,7 +19,20 @@ const STATUS_LABEL = {
   failed: 'FAILED',
 };
 
-const SLOT_LABEL = { 1: '1（攻）', 2: '2（体）', 3: '3（効）', 4: '4（主）', 5: '5（副）', 6: '6（特）' };
+const SLOT_LABEL = {
+  1: '1号位（HP）', 2: '2号位（攻撃力）', 3: '3号位（防御力）',
+  4: '4号位', 5: '5号位', 6: '6号位',
+};
+// slot 1/2/3 は固定、4/5/6 は候補内から選択
+const SLOT_FIXED_MAIN = { 1: 'HP', 2: '攻撃力', 3: '防御力' };
+const SLOT_ALLOWED_MAIN = {
+  4: ['HP%', '攻撃力%', '防御力%', '会心率%', '会心ダメージ%', '異常掌握'],
+  5: ['HP%', '攻撃力%', '防御力%', '貫通率%',
+      '物理属性ダメージ%', '炎属性ダメージ%', '氷属性ダメージ%',
+      '電気属性ダメージ%', 'エーテル属性ダメージ%'],
+  6: ['HP%', '攻撃力%', '防御力%', '異常マスタリー', '異常掌握',
+      '衝撃力%', 'エネルギー自動回復%'],
+};
 
 export function render() {
   return `
@@ -332,11 +345,14 @@ function buildJobForm(data) {
     `<option value="${c.id}">${escapeHtml(c.name_ja)}</option>`
   ).join('');
 
+  const curSlot = Number(data.slot) || 1;
+  const curMain = data.main_stat?.name || '';
+
   root.innerHTML = `
     <div class="form-grid">
       <label>部位 (slot)</label>
-      <select name="slot">
-        ${[1,2,3,4,5,6].map(s => `<option value="${s}" ${Number(data.slot) === s ? 'selected' : ''}>${SLOT_LABEL[s]}</option>`).join('')}
+      <select name="slot" data-slot-select>
+        ${[1,2,3,4,5,6].map(s => `<option value="${s}" ${curSlot === s ? 'selected' : ''}>${SLOT_LABEL[s]}</option>`).join('')}
       </select>
 
       <label>セット</label>
@@ -346,7 +362,7 @@ function buildJobForm(data) {
       </select>
 
       <label>メインステ名</label>
-      <input name="main_stat_name" type="text" value="${escapeHtml(data.main_stat?.name || '')}" />
+      <span data-main-name-wrap>${renderMainNameField(curSlot, curMain)}</span>
 
       <label>メインステ値</label>
       <input name="main_stat_value" type="number" step="0.01" value="${escapeHtml(data.main_stat?.value ?? '')}" />
@@ -369,7 +385,29 @@ function buildJobForm(data) {
       `).join('')}
     </div>
   `;
+
+  // slot 変更時にメインステ候補を差し替え
+  root.querySelector('[data-slot-select]').addEventListener('change', (ev) => {
+    const newSlot = Number(ev.target.value);
+    const wrap = root.querySelector('[data-main-name-wrap]');
+    wrap.innerHTML = renderMainNameField(newSlot, '');
+  });
   return root;
+}
+
+function renderMainNameField(slot, currentValue) {
+  const fixed = SLOT_FIXED_MAIN[slot];
+  if (fixed) {
+    return `<input name="main_stat_name" type="text" value="${escapeHtml(fixed)}" readonly />`;
+  }
+  const allowed = SLOT_ALLOWED_MAIN[slot] || [];
+  const options = allowed.map(n =>
+    `<option value="${escapeHtml(n)}" ${n === currentValue ? 'selected' : ''}>${escapeHtml(n)}</option>`
+  ).join('');
+  return `<select name="main_stat_name">
+    <option value="">（選択）</option>
+    ${options}
+  </select>`;
 }
 
 function readJobForm(rootEl) {

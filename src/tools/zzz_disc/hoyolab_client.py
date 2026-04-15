@@ -384,7 +384,9 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
         or _pick(agent, "banner_icon", default=None)
     )
     # element: ZZZElementType(int enum) → 日本語ラベルに変換
-    _ELEMENT_JA = {200: "物理", 201: "炎", 202: "氷", 203: "電気", 205: "エーテル"}
+    # 206(FROST)/207(AURIC_INK) は方針として氷/エーテルに統合（雅=氷・儀玄/耀嘉音=エーテル扱い）
+    _ELEMENT_JA = {200: "物理", 201: "炎", 202: "氷", 203: "電気", 205: "エーテル",
+                   206: "氷", 207: "エーテル"}
     raw_elem = _pick(agent, "element", default=None) or _pick(detail, "element", default=None)
     if hasattr(raw_elem, "value"):
         raw_elem = raw_elem.value
