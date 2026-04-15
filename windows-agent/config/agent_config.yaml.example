@@ -57,7 +57,7 @@ image_gen:
   root: "C:/secretary-bot"                  # SECRETARY_BOT_ROOT 相当（ComfyUI/kohya インストール先）
   cache: "C:/secretary-bot-cache"           # SECRETARY_BOT_CACHE 相当（モデルキャッシュ）
   comfyui:
-    host: "127.0.0.1"
+    host: "0.0.0.0"                         # WebGUI の ComfyUI リンクを LAN 越しに開く場合は 0.0.0.0。LAN 内限定運用を前提
     port: 8188
     startup_timeout_seconds: 60
     health_check_interval_seconds: 30
