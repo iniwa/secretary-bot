@@ -80,7 +80,12 @@ function renderWEngine(weng) {
       ${escapeHtml(p.name || '-')} <strong>${escapeHtml(formatStatValue(p.name, p.value))}</strong>
     </span>`).join('');
   const effect = weng.effect_title
-    ? `<div class="weng-effect" title="${escapeHtml(weng.effect_description || '')}">✦ ${escapeHtml(weng.effect_title)}</div>`
+    ? (weng.effect_description
+        ? `<details class="weng-effect">
+             <summary>✦ ${escapeHtml(weng.effect_title)}</summary>
+             <div class="weng-effect-desc">${escapeHtml(weng.effect_description)}</div>
+           </details>`
+        : `<div class="weng-effect">✦ ${escapeHtml(weng.effect_title)}</div>`)
     : '';
   return `
     <div class="w-engine${rarityCls}">

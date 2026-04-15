@@ -668,10 +668,29 @@ h3 { font-size: 1rem; font-weight: 600; }
   font-size: 0.75rem;
   color: var(--text-muted);
   font-style: italic;
+}
+.weng-effect > summary {
+  cursor: pointer;
+  list-style: revert;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: help;
+}
+.weng-effect[open] > summary {
+  white-space: normal;
+  font-weight: 600;
+  color: var(--text);
+}
+.weng-effect-desc {
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, #fff 4%, transparent);
+  border-left: 2px solid var(--accent, #8fb);
+  border-radius: 2px;
+  white-space: pre-wrap;
+  font-style: normal;
+  color: var(--text);
+  line-height: 1.5;
 }
 
 /* Stats grid */
