@@ -29,6 +29,13 @@ from .cache_manager import (
 )
 from .comfyui_manager import ComfyUIManager
 from .nas_mount import ensure_mounted
+from .setup_manager import (
+    get_task as _setup_get_task,
+    list_tasks as _setup_list_tasks,
+    run_comfyui_setup,
+    run_comfyui_update,
+    run_kohya_setup,
+)
 from .workflow_runner import ImageJob, WorkflowRunner, substitute_placeholders
 
 
@@ -227,6 +234,128 @@ async def comfyui_stop(request: Request):
         return _error_response(503, "ResourceUnavailableError", "image_gen not initialized", True, trace_id=trace_id)
     result = _ctx.comfy.stop()
     return JSONResponse({"ok": bool(result.get("ok", True))}, headers={"X-Trace-Id": trace_id})
+
+
+# --- /comfyui/setup /comfyui/update /kohya/setup ---
+
+_COMFYUI_DEFAULT_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
+_COMFYUI_DEFAULT_REF = "master"
+_KOHYA_DEFAULT_REPO = "https://github.com/kohya-ss/sd-scripts.git"
+_KOHYA_DEFAULT_REF = "main"
+
+
+def _setup_cfg() -> dict:
+    return (_ctx.image_gen_cfg.get("setup") or {}) if _ctx.image_gen_cfg else {}
+
+
+@router.post("/comfyui/setup")
+async def comfyui_setup_endpoint(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    cfg = _setup_cfg()
+    repo = body.get("repo_url") or cfg.get("comfyui_repo") or _COMFYUI_DEFAULT_REPO
+    ref = body.get("ref") or cfg.get("comfyui_ref") or _COMFYUI_DEFAULT_REF
+    cuda_idx = body.get("cuda_index_url") or cfg.get("cuda_index_url")
+    task = await run_comfyui_setup(root, repo_url=repo, ref=ref, cuda_index_url=cuda_idx)
+    return JSONResponse(
+        {"task_id": task.task_id, "status": task.status, "kind": task.kind,
+         "progress_url": f"/tools/image-gen/setup/{task.task_id}"},
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.post("/comfyui/update")
+async def comfyui_update_endpoint(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    cfg = _setup_cfg()
+    ref = body.get("ref") or cfg.get("comfyui_ref") or _COMFYUI_DEFAULT_REF
+    # ComfyUI プロセスが動いていたら停止してから更新
+    if _ctx.comfy is not None:
+        snap = _ctx.comfy.status_snapshot()
+        if snap.get("available") or snap.get("running"):
+            _ctx.comfy.stop()
+    task = await run_comfyui_update(root, ref=ref)
+    return JSONResponse(
+        {"task_id": task.task_id, "status": task.status, "kind": task.kind,
+         "progress_url": f"/tools/image-gen/setup/{task.task_id}"},
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.post("/kohya/setup")
+async def kohya_setup_endpoint(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    kohya_cfg = _ctx.image_gen_cfg.get("kohya") or {}
+    if not kohya_cfg.get("enabled", False):
+        return _error_response(
+            503, "ResourceUnavailableError",
+            "kohya disabled on this agent", True, trace_id=trace_id,
+        )
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    cfg = _setup_cfg()
+    repo = body.get("repo_url") or cfg.get("kohya_repo") or _KOHYA_DEFAULT_REPO
+    ref = body.get("ref") or cfg.get("kohya_ref") or _KOHYA_DEFAULT_REF
+    cuda_idx = body.get("cuda_index_url") or cfg.get("cuda_index_url")
+    task = await run_kohya_setup(root, repo_url=repo, ref=ref, cuda_index_url=cuda_idx)
+    return JSONResponse(
+        {"task_id": task.task_id, "status": task.status, "kind": task.kind,
+         "progress_url": f"/tools/image-gen/setup/{task.task_id}"},
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.get("/setup/{task_id}")
+async def setup_status_endpoint(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _setup_get_task(task_id)
+    if task is None:
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    return JSONResponse(task.snapshot(), headers={"X-Trace-Id": trace_id})
+
+
+@router.get("/setup")
+async def setup_list_endpoint(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    return JSONResponse(
+        {"tasks": _setup_list_tasks()},
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 # --- /cache/sync ---

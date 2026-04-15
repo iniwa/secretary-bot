@@ -64,6 +64,14 @@ image_gen:
     crash_restart_max_retries: 3
   kohya:
     enabled: true                           # Main/Sub 両方導入方針。使わない PC は false
+  # /comfyui/setup, /comfyui/update, /kohya/setup の既定値。エンドポイント body で上書き可
+  setup:
+    comfyui_repo: "https://github.com/comfyanonymous/ComfyUI.git"
+    comfyui_ref: "master"
+    kohya_repo: "https://github.com/kohya-ss/sd-scripts.git"
+    kohya_ref: "main"
+    # CUDA 対応 PyTorch インデックス（RTX 40/50 は cu124、4080 は cu121 なども可）
+    cuda_index_url: "https://download.pytorch.org/whl/cu124"
   cache_lru:
     max_size_gb: 100                        # ローカル SSD キャッシュ上限
   nas:

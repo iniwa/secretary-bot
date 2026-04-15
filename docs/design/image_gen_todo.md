@@ -19,10 +19,15 @@
   - `ModelSyncUnit` を追加（30分毎 `warmup_all_agents` を呼び出し）
   - `units.model_sync.{enabled, interval_seconds, trigger_sync}` を config に追加
   - `execute` 経由で手動トリガも可能
-- [ ] **Windows Agent セットアップ系 API**
-  - [ ] `POST /comfyui/setup` — 未インストール環境で ComfyUI をクローン/依存解決
-  - [ ] `POST /comfyui/update` — git pull & 再起動
-  - [ ] `POST /kohya/setup` — kohya_ss インストール（Phase 4 の準備）
+- [x] **Windows Agent セットアップ系 API**
+  - 実装日: 2026-04-16
+  - `windows-agent/tools/image_gen/setup_manager.py` を新規作成（task_id で追跡）
+  - [x] `POST /comfyui/setup` — git clone → venv 作成 → torch+requirements インストール
+  - [x] `POST /comfyui/update` — git pull + requirements 再インストール（稼働中は事前に stop）
+  - [x] `POST /kohya/setup` — kohya_ss インストール（Phase 4 準備）
+  - [x] `GET /setup/{task_id}` で進捗・ログ tail を取得
+  - [x] `GET /setup` で task 一覧
+  - config の `image_gen.setup.{comfyui_repo, comfyui_ref, kohya_repo, kohya_ref, cuda_index_url}` で既定値上書き可
 - [ ] **SubPC 動作検証** — Main/Sub 両方で `/capability` → enqueue → 生成成功まで通す
 
 ## Phase 3（プロンプト / Discord 連携）
