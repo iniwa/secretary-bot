@@ -163,6 +163,18 @@ def build_router(bot, config: dict) -> APIRouter:
         ch = await models.get_character(db, character_id)
         return {"character": ch}
 
+    @router.put("/api/characters/{character_id}/recommended-disc-sets")
+    async def put_recommended_disc_sets(character_id: int, payload: dict):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        sets = payload.get("sets") or []
+        if not isinstance(sets, list) or not all(isinstance(s, str) for s in sets):
+            raise HTTPException(400, "sets must be list[str]")
+        await models.update_character_recommended_disc_sets(db, character_id, sets)
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
     @router.get("/api/characters/{character_id}/builds")
     async def get_character_builds(character_id: int):
         ch = await models.get_character(db, character_id)

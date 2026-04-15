@@ -843,6 +843,34 @@ h3 { font-size: 1rem; font-weight: 600; }
 }
 
 /* === Disc swap modal === */
+.swap-filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.swap-filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.swap-filter-row > label.text-sm {
+  min-width: 90px;
+  padding-top: 4px;
+}
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  max-height: 110px;
+  overflow-y: auto;
+}
 .swap-sort-bar {
   display: flex;
   align-items: center;

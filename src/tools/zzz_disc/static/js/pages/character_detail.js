@@ -4,7 +4,7 @@ import { escapeHtml, toast, confirmDialog, promptDialog, openModal } from '../ap
 import { renderBuildCard } from '../components/build_card.js';
 import { statLabel, formatStatValue } from '../labels.js';
 
-let state = { character: null, current: null, presets: [] };
+let state = { character: null, current: null, presets: [], sets: [] };
 
 export function render(params) {
   return `
@@ -34,10 +34,14 @@ async function load(slug) {
     if (!ch) throw new Error(`キャラ "${slug}" が見つかりません`);
     document.getElementById('char-title').textContent = ch.name_ja;
 
-    const data = await api(`/characters/${ch.id}/builds`);
+    const [data, setsRes] = await Promise.all([
+      api(`/characters/${ch.id}/builds`),
+      state.sets.length ? Promise.resolve({ sets: state.sets }) : api('/sets'),
+    ]);
     state.character = data.character || ch;
     state.current = data.current || null;
     state.presets = data.presets || [];
+    state.sets = setsRes?.sets || state.sets;
     renderBody();
   } catch (err) {
     el.innerHTML = `<div class="placeholder"><div class="big-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
@@ -53,52 +57,83 @@ function renderRecommendedEditor() {
   const recommended = new Set(state.character?.recommended_substats || []);
   const boxes = SUB_STAT_CANDIDATES.map(name => `
     <label class="rec-sub-chip ${recommended.has(name) ? 'on' : ''}">
-      <input type="checkbox" data-sub="${escapeHtml(name)}" ${recommended.has(name) ? 'checked' : ''} />
+      <input type="checkbox" data-val="${escapeHtml(name)}" ${recommended.has(name) ? 'checked' : ''} />
       <span>${escapeHtml(name)}</span>
     </label>
   `).join('');
   return `
-    <div class="recommended-editor">
-      <h3 class="mb-1">★ 推奨サブステ <span class="text-muted text-sm" id="rec-sub-status"></span></h3>
-      <div class="text-muted text-sm mb-1">チェックを入れると即時保存されます。選択したサブステは各ディスクで強調表示されます</div>
+    <div class="recommended-editor" data-rec-kind="substats">
+      <h3 class="mb-1">★ 推奨サブステ <span class="text-muted text-sm rec-status"></span></h3>
+      <div class="text-muted text-sm mb-1">チェックで即時保存。選択したサブステは各ディスクで強調表示されます</div>
       <div class="rec-sub-chips">${boxes}</div>
     </div>
   `;
 }
 
-let _recSaveTimer = null;
-let _recSaveSeq = 0;
+function renderRecommendedDiscEditor() {
+  const recommended = new Set(state.character?.recommended_disc_sets || []);
+  // セット名は同期で増えるので state.sets の name_ja を一覧化
+  const names = (state.sets || [])
+    .map(s => s.name_ja)
+    .filter(Boolean)
+    .sort((a, b) => new Intl.Collator('ja').compare(a, b));
+  const boxes = names.map(name => `
+    <label class="rec-sub-chip ${recommended.has(name) ? 'on' : ''}">
+      <input type="checkbox" data-val="${escapeHtml(name)}" ${recommended.has(name) ? 'checked' : ''} />
+      <span>${escapeHtml(name)}</span>
+    </label>
+  `).join('');
+  return `
+    <div class="recommended-editor" data-rec-kind="disc_sets">
+      <h3 class="mb-1">💿 推奨ディスク（セット） <span class="text-muted text-sm rec-status"></span></h3>
+      <div class="text-muted text-sm mb-1">チェックで即時保存。スワップモーダルの初期フィルタに反映されます</div>
+      <div class="rec-sub-chips">${boxes}</div>
+    </div>
+  `;
+}
 
-function wireRecommendedEditor() {
-  const wrap = document.querySelector('.recommended-editor');
-  if (!wrap) return;
-  const status = wrap.querySelector('#rec-sub-status');
+const REC_ENDPOINTS = {
+  substats: { path: 'recommended-substats', body: 'stats', stateKey: 'recommended_substats' },
+  disc_sets: { path: 'recommended-disc-sets', body: 'sets', stateKey: 'recommended_disc_sets' },
+};
 
-  const doSave = async () => {
-    const picked = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
-      .map(cb => cb.dataset.sub);
-    const seq = ++_recSaveSeq;
-    if (status) status.textContent = '保存中…';
-    try {
-      const res = await api(`/characters/${state.character.id}/recommended-substats`, {
-        method: 'PUT', body: { stats: picked },
+const _recSaveTimers = {};
+const _recSaveSeq = {};
+
+function wireRecommendedEditors() {
+  document.querySelectorAll('.recommended-editor').forEach(wrap => {
+    const kind = wrap.dataset.recKind;
+    const cfg = REC_ENDPOINTS[kind];
+    if (!cfg) return;
+    const status = wrap.querySelector('.rec-status');
+
+    const doSave = async () => {
+      const picked = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+        .map(cb => cb.dataset.val);
+      _recSaveSeq[kind] = (_recSaveSeq[kind] || 0) + 1;
+      const seq = _recSaveSeq[kind];
+      if (status) status.textContent = '保存中…';
+      try {
+        const res = await api(`/characters/${state.character.id}/${cfg.path}`, {
+          method: 'PUT', body: { [cfg.body]: picked },
+        });
+        if (seq !== _recSaveSeq[kind]) return;
+        state.character = res.character || { ...state.character, [cfg.stateKey]: picked };
+        if (status) status.textContent = '✓ 保存済み';
+        setTimeout(() => { if (status && seq === _recSaveSeq[kind]) status.textContent = ''; }, 1500);
+      } catch (err) {
+        if (seq !== _recSaveSeq[kind]) return;
+        if (status) status.textContent = '';
+        toast(`保存失敗: ${err.message}`, 'error');
+      }
+    };
+
+    wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+        clearTimeout(_recSaveTimers[kind]);
+        _recSaveTimers[kind] = setTimeout(doSave, 250);
       });
-      if (seq !== _recSaveSeq) return;
-      state.character = res.character || { ...state.character, recommended_substats: picked };
-      if (status) status.textContent = '✓ 保存済み';
-      setTimeout(() => { if (status && seq === _recSaveSeq) status.textContent = ''; }, 1500);
-    } catch (err) {
-      if (seq !== _recSaveSeq) return;
-      if (status) status.textContent = '';
-      toast(`保存失敗: ${err.message}`, 'error');
-    }
-  };
-
-  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
-      clearTimeout(_recSaveTimer);
-      _recSaveTimer = setTimeout(doSave, 250);
     });
   });
 }
@@ -108,6 +143,7 @@ function renderBody() {
   const chunks = [];
 
   chunks.push(renderRecommendedEditor());
+  chunks.push(renderRecommendedDiscEditor());
 
   // 現在の装備
   chunks.push('<h3 class="mb-1">● 現在の装備</h3>');
@@ -134,7 +170,7 @@ function renderBody() {
   }
 
   el.innerHTML = chunks.join('');
-  wireRecommendedEditor();
+  wireRecommendedEditors();
   wireUp();
 }
 
@@ -176,6 +212,7 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
   }
 
   const recommended = state.character?.recommended_substats || [];
+  const recommendedSets = state.character?.recommended_disc_sets || [];
   const usedDiscIds = new Set(
     (build.slots || []).map(s => s?.disc?.id).filter(Boolean)
   );
@@ -241,15 +278,20 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
 
   let sortKey = 'score';
   let subStatFor = recommended.find(r => subStatOptions.includes(r)) || subStatOptions[0] || '';
-  let filterSet = '';
+  // フィルタ: 初期値は推奨セット & 推奨サブステ（存在するもののみ）
+  const filterSets = new Set(recommendedSets.filter(s => setOptions.includes(s)));
+  const filterSubs = new Set(recommended.filter(s => subStatOptions.includes(s)));
   let filterMain = '';
-  let filterSub = '';
 
   function filteredRows() {
     return scored.filter(({ disc: d }) => {
-      if (filterSet && (d.set_name_ja || d.name || '') !== filterSet) return false;
+      const setName = d.set_name_ja || d.name || '';
+      if (filterSets.size && !filterSets.has(setName)) return false;
       if (filterMain && d.main_stat_name !== filterMain) return false;
-      if (filterSub && !(d.sub_stats || []).some(s => s.name === filterSub)) return false;
+      if (filterSubs.size) {
+        const has = (d.sub_stats || []).some(s => filterSubs.has(s.name));
+        if (!has) return false;
+      }
       return true;
     });
   }
@@ -338,21 +380,39 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     <div class="text-muted text-sm mb-1">推奨サブステ: ${
       recommended.length ? recommended.map(escapeHtml).join(', ') : '<em>未設定</em>'
     } / <span id="swap-count">表示 ${scored.length} / 全 ${scored.length} 件</span></div>
-    <div class="swap-sort-bar">
-      <label class="text-sm text-muted">フィルタ:</label>
-      <select id="swap-filter-set" class="select-sm">
-        <option value="">セット (全て)</option>
-        ${setOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')}
-      </select>
-      <select id="swap-filter-main" class="select-sm">
-        <option value="">メインステ (全て)</option>
-        ${mainStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(statLabel(n))}</option>`).join('')}
-      </select>
-      <select id="swap-filter-sub" class="select-sm">
-        <option value="">サブステ含む (全て)</option>
-        ${subStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')}
-      </select>
-      <button class="btn btn-sm" id="swap-filter-clear">クリア</button>
+    <div class="swap-filter-block">
+      <div class="swap-filter-row">
+        <label class="text-sm text-muted">セット:</label>
+        <div class="filter-chips" id="filter-chips-set">
+          ${setOptions.map(n => `
+            <label class="rec-sub-chip ${filterSets.has(n) ? 'on' : ''}">
+              <input type="checkbox" data-val="${escapeHtml(n)}" ${filterSets.has(n) ? 'checked' : ''} />
+              <span>${escapeHtml(n)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="swap-filter-row">
+        <label class="text-sm text-muted">メインステ:</label>
+        <select id="swap-filter-main" class="select-sm">
+          <option value="">(全て)</option>
+          ${mainStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(statLabel(n))}</option>`).join('')}
+        </select>
+      </div>
+      <div class="swap-filter-row">
+        <label class="text-sm text-muted">サブステ含む:</label>
+        <div class="filter-chips" id="filter-chips-sub">
+          ${subStatOptions.map(n => `
+            <label class="rec-sub-chip ${filterSubs.has(n) ? 'on' : ''}">
+              <input type="checkbox" data-val="${escapeHtml(n)}" ${filterSubs.has(n) ? 'checked' : ''} />
+              <span>${escapeHtml(n)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="swap-filter-row">
+        <button class="btn btn-sm" id="swap-filter-clear">フィルタ全解除</button>
+      </div>
     </div>
     <div class="swap-sort-bar">
       <label class="text-sm text-muted">並び替え:</label>
@@ -370,18 +430,35 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     <div class="swap-list"></div>
   `;
 
-  const filterSetSel = bodyEl.querySelector('#swap-filter-set');
   const filterMainSel = bodyEl.querySelector('#swap-filter-main');
-  const filterSubSel = bodyEl.querySelector('#swap-filter-sub');
   const sortSel = bodyEl.querySelector('#swap-sort-key');
   const subSel = bodyEl.querySelector('#swap-sort-substat');
 
-  filterSetSel.addEventListener('change', () => { filterSet = filterSetSel.value; renderRows(); });
+  function wireChipFilter(containerId, set) {
+    const cont = bodyEl.querySelector('#' + containerId);
+    if (!cont) return;
+    cont.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+        if (cb.checked) set.add(cb.dataset.val);
+        else set.delete(cb.dataset.val);
+        renderRows();
+      });
+    });
+  }
+  wireChipFilter('filter-chips-set', filterSets);
+  wireChipFilter('filter-chips-sub', filterSubs);
+
   filterMainSel.addEventListener('change', () => { filterMain = filterMainSel.value; renderRows(); });
-  filterSubSel.addEventListener('change', () => { filterSub = filterSubSel.value; renderRows(); });
   bodyEl.querySelector('#swap-filter-clear').addEventListener('click', () => {
-    filterSet = filterMain = filterSub = '';
-    filterSetSel.value = filterMainSel.value = filterSubSel.value = '';
+    filterSets.clear();
+    filterSubs.clear();
+    filterMain = '';
+    filterMainSel.value = '';
+    bodyEl.querySelectorAll('.filter-chips input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+      cb.closest('.rec-sub-chip').classList.remove('on');
+    });
     renderRows();
   });
   sortSel.addEventListener('change', () => {
@@ -495,5 +572,5 @@ async function syncCharacter(slug) {
 }
 
 export function unmount() {
-  state = { character: null, current: null, presets: [] };
+  state = { character: null, current: null, presets: [], sets: [] };
 }
