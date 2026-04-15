@@ -1,6 +1,6 @@
 /** ビルドカード描画（HoYoLAB 戦績カード風） */
 import { escapeHtml } from '../app.js';
-import { statLabel, formatStatValue, elementLabel } from '../labels.js';
+import { statLabel, formatStatValue, elementLabel, setNameWithPopover } from '../labels.js';
 
 /** STATS の表示順（先頭ほど上に並ぶ） */
 const STATS_ORDER = [
@@ -19,10 +19,11 @@ const STATS_ORDER = [
  * @param {Object} opts.build - 完全な build オブジェクト
  * @param {Array<string>} opts.actions - ['edit', 'clone', 'delete'] など表示したいアクション
  */
-export function renderBuildCard({ character, build, actions = [] }) {
+export function renderBuildCard({ character, build, actions = [], setsByName = null }) {
   if (!build) return '';
   const stats = build.stats || {};
   const recommended = new Set(character?.recommended_substats || []);
+  const setsMap = setsByName || new Map();
   const portraitStyle = character?.icon_url ? `background-image:url(${escapeHtml(character.icon_url)});` : '';
   const rank = build.rank || '';
   const synced = build.synced_at ? formatDate(build.synced_at) : null;
@@ -53,7 +54,7 @@ export function renderBuildCard({ character, build, actions = [] }) {
       </div>
 
       <div class="disc-grid">
-        ${renderDiscs(build.slots || [], recommended)}
+        ${renderDiscs(build.slots || [], recommended, setsMap)}
       </div>
     </div>
   `;
@@ -107,7 +108,7 @@ function renderStats(stats) {
   }).join('');
 }
 
-function renderDiscs(slots, recommended = new Set()) {
+function renderDiscs(slots, recommended = new Set(), setsMap = new Map()) {
   // 1..6 の空セルを埋める
   const map = new Map();
   for (const s of slots) {
@@ -117,15 +118,20 @@ function renderDiscs(slots, recommended = new Set()) {
   for (let slot = 1; slot <= 6; slot++) {
     const entry = map.get(slot);
     if (!entry || !entry.disc) {
-      cells.push(`<div class="disc-tile empty" data-slot="${slot}">部位 ${slot} 未装備</div>`);
+      cells.push(`
+        <div class="disc-tile empty" data-slot="${slot}">
+          <span class="disc-slot-badge">${slot}</span>
+          <span class="disc-tile-empty-text">未装備</span>
+        </div>
+      `);
       continue;
     }
-    cells.push(renderDiscTile(entry, recommended));
+    cells.push(renderDiscTile(entry, recommended, setsMap));
   }
   return cells.join('');
 }
 
-function renderDiscTile(entry, recommended = new Set()) {
+function renderDiscTile(entry, recommended = new Set(), setsMap = new Map()) {
   const d = entry.disc || {};
   const shared = Array.isArray(entry.shared_with) ? entry.shared_with.filter(x => x) : [];
   const sharedCount = shared.length;
@@ -139,13 +145,17 @@ function renderDiscTile(entry, recommended = new Set()) {
   const rawName = (d.name || '').replace(/\s*\[\d+\]\s*$/, '').trim();
   // setName が未解決 (「-」) のときは d.name をフォールバック表示
   const displayName = (setName && setName !== '-') ? setName : (rawName || '-');
+  const setMaster = setsMap.get(displayName) || null;
+  const setNameHtml = setNameWithPopover(displayName, setMaster, {
+    suffix: sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : '',
+  });
   const tooltip = shared.length ? '⚠ ' + shared.map(s => (s.character_name_ja || '') + ': ' + (s.name || '')).join(' / ') : '';
   return `
     <div class="disc-tile ${sharedCount ? 'shared' : ''}" data-disc-id="${d.id}" data-slot="${d.slot}" title="${escapeHtml(tooltip)}">
+      <span class="disc-slot-badge">${d.slot}</span>
       <div class="disc-tile-header">
         ${iconHtml}
-        <span class="disc-tile-set">${escapeHtml(displayName)}${sharedCount ? `<span class="shared-warning">⚠${sharedCount}</span>` : ''}</span>
-        <span class="disc-tile-slot">[${d.slot}]</span>
+        <span class="disc-tile-set">${setNameHtml}</span>
       </div>
       ${level ? `<div class="disc-tile-level">${escapeHtml(level)}</div>` : ''}
       <div class="disc-main">

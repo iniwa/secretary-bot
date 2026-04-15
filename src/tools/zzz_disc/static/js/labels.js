@@ -74,6 +74,57 @@ export const RANK_LABELS = {
   C: 'C',
 };
 
+/** HoYoLAB の <color=#xxx>...</color> タグを span に変換（XSS 安全） */
+export function colorizeHoyoText(s) {
+  if (!s) return '';
+  const escaped = String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+  return escaped
+    .replace(/&lt;color=#([0-9A-Fa-f]{3,8})&gt;/g, (_, hex) => `<span style="color:#${hex}">`)
+    .replace(/&lt;\/color&gt;/g, '</span>');
+}
+
+/** sets[] → Map<name_ja, {two_pc_effect, four_pc_effect}> */
+export function setsByName(sets) {
+  const m = new Map();
+  for (const s of (sets || [])) {
+    if (s?.name_ja) m.set(s.name_ja, s);
+  }
+  return m;
+}
+
+/**
+ * セット名 + ホバーで効果ポップオーバーを表示する HTML を返す。
+ * @param {string} name - セット名（表示テキスト）
+ * @param {object|null} setMaster - {two_pc_effect, four_pc_effect}
+ * @param {object} opts - { extraClass?, suffix? }
+ */
+export function setNameWithPopover(name, setMaster, opts = {}) {
+  const escName = String(name || '-')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const suffix = opts.suffix || '';
+  const extra = opts.extraClass || '';
+  if (!setMaster || (!setMaster.two_pc_effect && !setMaster.four_pc_effect)) {
+    return `<span class="set-name ${extra}">${escName}${suffix}</span>`;
+  }
+  const two = setMaster.two_pc_effect ? colorizeHoyoText(setMaster.two_pc_effect) : '';
+  const four = setMaster.four_pc_effect ? colorizeHoyoText(setMaster.four_pc_effect) : '';
+  return `
+    <span class="set-name has-popover ${extra}">
+      ${escName}${suffix}
+      <span class="set-effect-popover" role="tooltip">
+        <div class="popover-title">${escName}</div>
+        ${two ? `<div class="popover-row"><span class="popover-tag">2pc</span> ${two}</div>` : ''}
+        ${four ? `<div class="popover-row"><span class="popover-tag">4pc</span> ${four}</div>` : ''}
+      </span>
+    </span>
+  `;
+}
+
 export const HOYOLAB_REGIONS = [
   { value: 'prod_gf_jp', label: '日本（TW/HK/MO/JP）' },
   { value: 'prod_gf_us', label: '北米' },

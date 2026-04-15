@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { escapeHtml, toast, confirmDialog, promptDialog, openModal } from '../app.js';
 import { renderBuildCard } from '../components/build_card.js';
-import { statLabel, formatStatValue } from '../labels.js';
+import { statLabel, formatStatValue, setsByName, setNameWithPopover } from '../labels.js';
 
 let state = { character: null, current: null, presets: [], sets: [] };
 
@@ -70,17 +70,18 @@ function renderRecommendedEditor() {
   `;
 }
 
-function renderRecommendedDiscEditor() {
+function renderRecommendedDiscEditor(setsMap) {
   const recommended = new Set(state.character?.recommended_disc_sets || []);
+  const map = setsMap || setsByName(state.sets);
   // セット名は同期で増えるので state.sets の name_ja を一覧化
   const names = (state.sets || [])
     .map(s => s.name_ja)
     .filter(Boolean)
     .sort((a, b) => new Intl.Collator('ja').compare(a, b));
   const boxes = names.map(name => `
-    <label class="rec-sub-chip ${recommended.has(name) ? 'on' : ''}">
+    <label class="rec-sub-chip with-popover ${recommended.has(name) ? 'on' : ''}">
       <input type="checkbox" data-val="${escapeHtml(name)}" ${recommended.has(name) ? 'checked' : ''} />
-      <span>${escapeHtml(name)}</span>
+      ${setNameWithPopover(name, map.get(name))}
     </label>
   `).join('');
   return `
@@ -141,14 +142,15 @@ function wireRecommendedEditors() {
 function renderBody() {
   const el = document.getElementById('detail-body');
   const chunks = [];
+  const setsMap = setsByName(state.sets);
 
   chunks.push(renderRecommendedEditor());
-  chunks.push(renderRecommendedDiscEditor());
+  chunks.push(renderRecommendedDiscEditor(setsMap));
 
   // 現在の装備
   chunks.push('<h3 class="mb-1">● 現在の装備</h3>');
   if (state.current) {
-    chunks.push(`<div class="build-wrap" data-kind="current">${renderBuildCard({ character: state.character, build: state.current, actions: ['clone'] })}</div>`);
+    chunks.push(`<div class="build-wrap" data-kind="current">${renderBuildCard({ character: state.character, build: state.current, actions: ['clone'], setsByName: setsMap })}</div>`);
   } else {
     chunks.push(`
       <div class="placeholder" style="padding:24px;">
@@ -165,7 +167,7 @@ function renderBody() {
     chunks.push('<div class="text-muted text-sm mb-2">プリセットはまだありません。「現在の装備」から「プリセットへ複製」で保存できます。</div>');
   } else {
     for (const b of state.presets) {
-      chunks.push(`<div class="build-wrap" data-kind="preset">${renderBuildCard({ character: state.character, build: b, actions: ['edit', 'delete'] })}</div>`);
+      chunks.push(`<div class="build-wrap" data-kind="preset">${renderBuildCard({ character: state.character, build: b, actions: ['edit', 'delete'], setsByName: setsMap })}</div>`);
     }
   }
 
@@ -213,6 +215,7 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
 
   const recommended = state.character?.recommended_substats || [];
   const recommendedSets = state.character?.recommended_disc_sets || [];
+  const setsMap = setsByName(state.sets);
   const usedDiscIds = new Set(
     (build.slots || []).map(s => s?.disc?.id).filter(Boolean)
   );
@@ -334,7 +337,7 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
           return `
             <div class="swap-row ${isSelected ? 'selected' : ''}" data-disc-id="${d.id}">
               <div class="swap-row-head">
-                <span class="swap-set">${escapeHtml(d.set_name_ja || d.name || '-')}</span>
+                <span class="swap-set">${setNameWithPopover(d.set_name_ja || d.name || '-', setsMap.get(d.set_name_ja || d.name || ''))}</span>
                 <span class="swap-level">${d.level != null ? `Lv.${d.level}` : ''}</span>
                 <span class="swap-score">★ ${score.toFixed(1)}</span>
                 ${isSelected ? '<span class="badge badge-current">現在のスロット</span>' : ''}
@@ -385,9 +388,9 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
         <label class="text-sm text-muted">セット:</label>
         <div class="filter-chips" id="filter-chips-set">
           ${setOptions.map(n => `
-            <label class="rec-sub-chip ${filterSets.has(n) ? 'on' : ''}">
+            <label class="rec-sub-chip with-popover ${filterSets.has(n) ? 'on' : ''}">
               <input type="checkbox" data-val="${escapeHtml(n)}" ${filterSets.has(n) ? 'checked' : ''} />
-              <span>${escapeHtml(n)}</span>
+              ${setNameWithPopover(n, setsMap.get(n))}
             </label>
           `).join('')}
         </div>

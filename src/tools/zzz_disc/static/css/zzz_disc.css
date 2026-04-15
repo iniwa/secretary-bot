@@ -666,17 +666,49 @@ h3 { font-size: 1rem; font-weight: 600; }
 }
 
 .disc-tile {
+  position: relative;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  padding: 10px 12px 10px 38px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   cursor: pointer;
   transition: background var(--ease), border-color var(--ease);
   min-height: 120px;
+}
+/* 部位番号の大型バッジ（左端に縦帯として表示） */
+.disc-slot-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 28px;
+  background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 70%, black) 100%);
+  color: white;
+  font-weight: 700;
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+  letter-spacing: 0;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  pointer-events: none;
+}
+.disc-tile.empty .disc-slot-badge {
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+.disc-tile.shared .disc-slot-badge {
+  background: linear-gradient(180deg, var(--warning) 0%, color-mix(in srgb, var(--warning) 70%, black) 100%);
+}
+.disc-tile-empty-text {
+  color: var(--text-muted);
+  font-size: 0.85rem;
 }
 .disc-tile:hover { background: var(--bg-hover); border-color: var(--border-hover); border-left-color: var(--accent-hover); }
 .disc-tile.empty {
@@ -840,6 +872,66 @@ h3 { font-size: 1rem; font-weight: 600; }
 .disc-sub-row.recommended .sub-value {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* === Set name with effect popover === */
+.set-name {
+  display: inline-block;
+}
+.set-name.has-popover {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dotted var(--text-muted);
+}
+.set-effect-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 280px;
+  max-width: 420px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  font-weight: normal;
+  white-space: normal;
+  line-height: 1.4;
+  z-index: 9999;
+  display: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  pointer-events: none;
+}
+.set-name.has-popover:hover .set-effect-popover,
+.set-name.has-popover:focus .set-effect-popover {
+  display: block;
+}
+.set-effect-popover .popover-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+}
+.set-effect-popover .popover-row {
+  margin-top: 4px;
+}
+.set-effect-popover .popover-tag {
+  display: inline-block;
+  background: var(--accent);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+.rec-sub-chip.with-popover {
+  position: static;
+}
+.rec-sub-chip.with-popover .set-name {
+  border-bottom: none;
 }
 
 /* === Disc swap modal === */
