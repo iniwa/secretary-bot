@@ -243,7 +243,12 @@ async def comfyui_stop(request: Request):
     if _ctx.comfy is None:
         return _error_response(503, "ResourceUnavailableError", "image_gen not initialized", True, trace_id=trace_id)
     result = _ctx.comfy.stop()
-    return JSONResponse({"ok": bool(result.get("ok", True))}, headers={"X-Trace-Id": trace_id})
+    # stop() は ok / stopped / adopted_kill / pid / error / error_class / note を返し得る。
+    # 失敗時（ok=False）は 4xx/5xx で詳細を返し WebGUI 側で理由表示できるようにする。
+    if not result.get("ok", True):
+        status = 403 if result.get("error_class") == "PermissionError" else 500
+        return JSONResponse(result, status_code=status, headers={"X-Trace-Id": trace_id})
+    return JSONResponse(result, headers={"X-Trace-Id": trace_id})
 
 
 # --- /comfyui/history: ComfyUI の /history を整形して返す（プリセット取り込み元） ---

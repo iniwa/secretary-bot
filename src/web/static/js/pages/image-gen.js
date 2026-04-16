@@ -199,10 +199,28 @@ async function handleComfyAction(agentId, action) {
   comfyBusy.add(agentId);
   refreshComfyStatus();
   try {
-    await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/${action}`, { method: 'POST' });
-    toast(`${action === 'start' ? '起動' : '停止'}リクエスト送信`, 'info');
+    const res = await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/${action}`, { method: 'POST' });
+    if (action === 'stop') {
+      if (res?.adopted_kill) {
+        toast(`ComfyUI 停止 (外部起動を port 経由で kill, PID ${res.pid})`, 'success');
+      } else if (res?.stopped) {
+        toast(`ComfyUI 停止完了`, 'success');
+      } else {
+        toast(res?.note || '既に停止しています', 'info');
+      }
+    } else {
+      toast(`ComfyUI 起動リクエスト送信`, 'info');
+    }
   } catch (err) {
-    toast(`ComfyUI ${action} 失敗: ${err?.message || err}`, 'error');
+    // api() が throw する err に status/body が載っている想定
+    const body = err?.body || err?.data || {};
+    const klass = body.error_class || err?.error_class;
+    if (action === 'stop' && klass === 'PermissionError') {
+      const pid = body.pid ? ` (PID ${body.pid})` : '';
+      toast(`権限不足で停止できません${pid}。Sub PC の管理者 PowerShell で Stop-Process を実行してください`, 'error');
+    } else {
+      toast(`ComfyUI ${action} 失敗: ${body.error || err?.message || err}`, 'error');
+    }
   } finally {
     comfyBusy.delete(agentId);
     refreshComfyStatus();

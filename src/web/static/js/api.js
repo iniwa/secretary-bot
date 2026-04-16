@@ -16,7 +16,13 @@ export async function api(path, opts = {}) {
   const res = await fetch(fullUrl, init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`${res.status}: ${text.slice(0, 200)}`);
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { /* keep null */ }
+    const err = new Error(`${res.status}: ${text.slice(0, 200)}`);
+    err.status = res.status;
+    err.body = body;
+    err.error_class = body?.error_class || body?.detail?.error_class;
+    throw err;
   }
   return res.json();
 }

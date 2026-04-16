@@ -277,22 +277,84 @@ class ComfyUIManager:
         with self._lock:
             self._monitor_stop.set()
             self._log_tail_stop.set()
-            if not self.is_running():
-                self._close_log_fh()
-                return {"ok": True, "stopped": False}
-            try:
-                self._proc.terminate()
+            # 自前 Popen が生きているなら素直に terminate
+            if self.is_running():
                 try:
-                    self._proc.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    self._proc.kill()
-                    self._proc.wait(timeout=5.0)
-                self._close_log_fh()
-                self._log("info", "stopped")
-                return {"ok": True, "stopped": True}
-            except Exception as e:
-                self._log("error", f"stop failed: {e}")
-                return {"ok": False, "error": str(e)}
+                    self._proc.terminate()
+                    try:
+                        self._proc.wait(timeout=timeout)
+                    except subprocess.TimeoutExpired:
+                        self._proc.kill()
+                        self._proc.wait(timeout=5.0)
+                    self._close_log_fh()
+                    self._mark_stopped()
+                    self._log("info", "stopped")
+                    return {"ok": True, "stopped": True}
+                except Exception as e:
+                    self._log("error", f"stop failed: {e}")
+                    return {"ok": False, "error": str(e)}
+
+            # 外部起動（adopted）で port だけ応答しているケース。
+            # psutil でポート保有 PID を特定し kill を試みる。
+            self._close_log_fh()
+            if self._probe_existing():
+                result = self._kill_by_port(self.port, timeout=timeout)
+                self._mark_stopped()
+                return result
+            self._mark_stopped()
+            return {"ok": True, "stopped": False}
+
+    def _mark_stopped(self) -> None:
+        self.state.available = False
+        self.state.pid = None
+        self._proc = None
+
+    def _kill_by_port(self, port: int, timeout: float = 10.0) -> dict:
+        """adopted ComfyUI を port から PID 逆引きして kill する。
+        権限不足の場合は error_class=PermissionError を返し、UI 側で手動停止を促す。"""
+        try:
+            import psutil  # type: ignore
+        except ImportError:
+            return {"ok": False, "error": "psutil not installed", "error_class": "RuntimeError"}
+
+        pid = None
+        try:
+            for conn in psutil.net_connections(kind="inet"):
+                if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port:
+                    pid = conn.pid
+                    break
+        except (psutil.AccessDenied, PermissionError) as e:
+            self._log("error", f"kill_by_port: cannot enumerate sockets: {e}")
+            return {"ok": False, "error": f"cannot enumerate listening sockets: {e}", "error_class": "PermissionError"}
+
+        if not pid:
+            self._log("warn", f"kill_by_port: no listener on :{port}")
+            return {"ok": True, "stopped": False, "note": f"no process listening on :{port}"}
+
+        try:
+            proc = psutil.Process(pid)
+            name = proc.name()
+            self._log("info", f"kill_by_port pid={pid} name={name} (adopted)")
+            proc.terminate()
+            try:
+                proc.wait(timeout=timeout)
+            except psutil.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5.0)
+            return {"ok": True, "stopped": True, "pid": pid, "adopted_kill": True}
+        except psutil.NoSuchProcess:
+            return {"ok": True, "stopped": False, "note": "process already gone"}
+        except (psutil.AccessDenied, PermissionError) as e:
+            self._log("error", f"kill_by_port pid={pid} permission denied: {e}")
+            return {
+                "ok": False,
+                "error": f"PID {pid} cannot be terminated by agent (elevated?)",
+                "error_class": "PermissionError",
+                "pid": pid,
+            }
+        except Exception as e:
+            self._log("error", f"kill_by_port pid={pid} failed: {e}")
+            return {"ok": False, "error": str(e), "error_class": "RuntimeError", "pid": pid}
 
     def _close_log_fh(self) -> None:
         fh = self._log_fh
