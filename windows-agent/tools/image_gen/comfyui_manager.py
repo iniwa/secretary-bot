@@ -124,11 +124,15 @@ class ComfyUIManager:
             return False
 
     async def wait_until_ready(self, timeout: Optional[int] = None) -> bool:
+        # 採用済み（外部プロセスを adopt）時は自前の Popen が無いので
+        # is_running() が False になる。既に available なら即 True を返す。
+        if self.state.available and self._proc is None:
+            return True
         deadline = time.time() + (timeout or self.startup_timeout_seconds)
         async with httpx.AsyncClient(timeout=2.0) as client:
             while time.time() < deadline:
-                if not self.is_running():
-                    # プロセスが死んでいる
+                if self._proc is not None and not self.is_running():
+                    # 自前 Popen が死んでいる
                     await asyncio.sleep(0.5)
                     continue
                 try:
