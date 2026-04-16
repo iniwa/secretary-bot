@@ -170,6 +170,12 @@ class ComfyUIManager:
                 creationflags = 0
                 if os.name == "nt":
                     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                # Windows + CREATE_NO_WINDOW + パイプ stdout だと tqdm が stderr.flush で
+                # EINVAL を踏むことがある。バッファ無効化 + tqdm 更新間隔を広げて回避。
+                env = os.environ.copy()
+                env.setdefault("PYTHONUNBUFFERED", "1")
+                env.setdefault("PYTHONIOENCODING", "utf-8")
+                env.setdefault("TQDM_MININTERVAL", "1.0")
                 self._proc = subprocess.Popen(
                     cmd,
                     cwd=os.path.join(self.root, "comfyui"),
@@ -178,6 +184,8 @@ class ComfyUIManager:
                     creationflags=creationflags,
                     text=True,
                     errors="replace",
+                    env=env,
+                    bufsize=1,
                 )
                 self.state.pid = self._proc.pid
                 self.state.started_at = time.time()
