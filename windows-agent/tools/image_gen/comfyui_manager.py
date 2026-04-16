@@ -58,12 +58,20 @@ class ComfyUIManager:
         self._logger = logger
 
     @property
+    def _probe_host(self) -> str:
+        # 0.0.0.0 は bind 用ワイルドカードで、Windows では接続先として使うと
+        # WinError 10049 になる。ヘルスチェックはローカルから叩くので 127.0.0.1 に寄せる。
+        if self.host in ("0.0.0.0", "::", ""):
+            return "127.0.0.1"
+        return self.host
+
+    @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return f"http://{self._probe_host}:{self.port}"
 
     @property
     def ws_url(self) -> str:
-        return f"ws://{self.host}:{self.port}/ws"
+        return f"ws://{self._probe_host}:{self.port}/ws"
 
     def _log(self, level: str, msg: str) -> None:
         line = f"[comfyui] {msg}"
