@@ -12,6 +12,13 @@ let sse = null;
 let pollTimer = null;
 let galleryTimer = null;
 
+// Presets modal state
+let presetModalState = {
+  source: '',           // 'history:<agent_id>' | 'file'
+  workflowJson: null,   // 現在編集中の workflow API format (dict)
+  sourceLabel: '',
+};
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -244,6 +251,122 @@ export function render() {
     color: var(--text-muted);
     font-size: 0.8125rem;
   }
+
+  /* Presets */
+  .imggen-presets-list {
+    display: flex; flex-direction: column; gap: 0.3rem;
+  }
+  .imggen-preset-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    background: var(--bg-base);
+  }
+  .imggen-preset-row .meta { color: var(--text-secondary); font-size: 0.7rem; }
+  .imggen-preset-row .tag {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 2px;
+    background: var(--bg-elev, #2a2a2a);
+    font-size: 0.65rem;
+    margin-right: 0.3rem;
+    color: var(--text-secondary);
+  }
+
+  /* Modal */
+  .imggen-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .imggen-modal {
+    background: var(--bg-surface, #1d1d1d);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: min(900px, 94vw);
+    max-height: 90vh;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .imggen-modal-header {
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.95rem; color: var(--text-primary);
+  }
+  .imggen-modal-body {
+    padding: 0.8rem 0.9rem;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 0.7rem;
+  }
+  .imggen-modal-footer {
+    padding: 0.6rem 0.9rem;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 0.5rem; justify-content: flex-end;
+  }
+  .imggen-source-tabs {
+    display: flex; gap: 0.4rem; flex-wrap: wrap;
+  }
+  .imggen-source-tabs button {
+    font-size: 0.75rem; padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--bg-base);
+    color: var(--text-secondary);
+    border-radius: 4px; cursor: pointer;
+  }
+  .imggen-source-tabs button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .imggen-history-list {
+    max-height: 220px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg-base);
+  }
+  .imggen-history-item {
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    cursor: pointer;
+    display: flex; gap: 0.5rem; align-items: center;
+  }
+  .imggen-history-item:hover { background: var(--bg-elev, #2a2a2a); }
+  .imggen-history-item.selected { border-left: 3px solid var(--accent); }
+  .imggen-history-item .pid { color: var(--text-muted); font-family: var(--mono, monospace); font-size: 0.65rem; }
+
+  .imggen-ph-table {
+    width: 100%; border-collapse: collapse; font-size: 0.72rem;
+  }
+  .imggen-ph-table th, .imggen-ph-table td {
+    border-bottom: 1px solid var(--border);
+    padding: 0.25rem 0.4rem; text-align: left;
+    vertical-align: top;
+  }
+  .imggen-ph-table th { color: var(--text-muted); font-weight: normal; font-size: 0.65rem; }
+  .imggen-ph-table td.val { font-family: var(--mono, monospace); word-break: break-all; max-width: 260px; }
+  .imggen-ph-table td.val .is-ph { color: var(--accent); }
+  .imggen-ph-actions select {
+    font-size: 0.7rem; padding: 0.1rem 0.3rem;
+  }
+  .imggen-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.4rem 0.6rem;
+  }
+  .imggen-json-preview {
+    width: 100%; box-sizing: border-box;
+    min-height: 160px; max-height: 280px;
+    font-family: var(--mono, monospace); font-size: 0.7rem;
+    padding: 0.4rem; border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-base); color: var(--text-primary);
+    resize: vertical;
+  }
 </style>
 
 <div class="imggen-grid">
@@ -314,7 +437,21 @@ export function render() {
       <div class="imggen-empty">Loading...</div>
     </div>
   </section>
-</div>`;
+</div>
+
+<!-- Presets (プリセット管理) -->
+<section class="card imggen-section" style="margin-top:1rem;">
+  <div class="imggen-header">
+    <h3>Presets（プリセット管理）</h3>
+    <button id="ig-preset-new" class="btn btn-sm btn-primary">新規登録</button>
+  </div>
+  <div id="ig-presets-body">
+    <div class="imggen-empty">Loading...</div>
+  </div>
+</section>
+
+<div id="ig-preset-modal-root"></div>
+`;
 }
 
 // ============================================================
@@ -627,10 +764,404 @@ async function handleSubmit() {
 }
 
 // ============================================================
+// Presets — list / delete
+// ============================================================
+const _PLACEHOLDER_OPTIONS = [
+  'POSITIVE', 'NEGATIVE', 'SEED', 'STEPS', 'CFG', 'WIDTH', 'HEIGHT',
+  'CKPT', 'VAE', 'SAMPLER', 'SCHEDULER', 'FILENAME_PREFIX', 'DENOISE',
+  'LORA_1', 'LORA_2', 'LORA_3', 'STRENGTH_1', 'STRENGTH_2', 'STRENGTH_3',
+];
+
+async function loadPresets() {
+  const el = $('ig-presets-body');
+  if (!el) return;
+  try {
+    const data = await api('/api/image/workflows');
+    const list = data?.workflows || [];
+    if (list.length === 0) {
+      el.innerHTML = '<div class="imggen-empty">まだプリセットがありません</div>';
+      return;
+    }
+    el.innerHTML = `<div class="imggen-presets-list">${list.map(w => {
+      const cat = w.category ? `<span class="tag">${esc(w.category)}</span>` : '';
+      const mpc = w.main_pc_only ? '<span class="tag">main-pc</span>' : '';
+      const nodes = (w.required_nodes || []).length;
+      const loras = (w.required_loras || []).length;
+      return `
+        <div class="imggen-preset-row">
+          <div>
+            <div><strong>${esc(w.name)}</strong> ${cat}${mpc}</div>
+            <div class="meta">${esc(w.description || '(no description)')}</div>
+            <div class="meta">nodes: ${nodes} / loras: ${loras} / timeout: ${w.default_timeout_sec}s</div>
+          </div>
+          <button class="btn btn-sm" data-preset-view="${w.id}">表示</button>
+          <button class="btn btn-sm btn-danger" data-preset-del="${w.id}" data-preset-name="${esc(w.name)}">削除</button>
+        </div>`;
+    }).join('')}</div>`;
+    el.onclick = async (e) => {
+      const del = e.target.closest('button[data-preset-del]');
+      const view = e.target.closest('button[data-preset-view]');
+      if (del) {
+        const id = Number(del.dataset.presetDel);
+        const name = del.dataset.presetName;
+        if (!confirm(`プリセット "${name}" を削除しますか？`)) return;
+        try {
+          await api(`/api/image/workflows/${id}`, { method: 'DELETE' });
+          toast('削除しました', 'info');
+          await Promise.all([loadPresets(), loadWorkflows()]);
+        } catch (err) {
+          toast(`削除失敗: ${err?.message || err}`, 'error');
+        }
+      }
+      if (view) {
+        const id = Number(view.dataset.presetView);
+        try {
+          const data = await api(`/api/image/workflows/${id}`);
+          openPresetModal({ edit: data });
+        } catch (err) {
+          toast(`読み込み失敗: ${err?.message || err}`, 'error');
+        }
+      }
+    };
+  } catch (err) {
+    console.error('presets load failed', err);
+    el.innerHTML = '<div class="imggen-empty">プリセット取得失敗</div>';
+  }
+}
+
+// ============================================================
+// Presets — modal
+// ============================================================
+function closePresetModal() {
+  const root = $('ig-preset-modal-root');
+  if (root) root.innerHTML = '';
+  presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
+}
+
+function openPresetModal({ edit = null } = {}) {
+  presetModalState.workflowJson = edit ? (edit.workflow_json || null) : null;
+  presetModalState.sourceLabel = edit ? `edit: ${edit.name}` : '';
+  presetModalState.source = edit ? 'edit' : '';
+  renderPresetModal(edit);
+}
+
+function renderPresetModal(edit = null) {
+  const root = $('ig-preset-modal-root');
+  if (!root) return;
+  const tabsHtml = comfyAgents.map(a =>
+    `<button data-ph-source="history:${esc(a.id)}">ComfyUI履歴: ${esc(a.name || a.id)}</button>`
+  ).join('') + `<button data-ph-source="file">ファイルから</button>`;
+
+  const phHtml = renderPlaceholderEditor();
+  const metaHtml = renderMetaForm(edit);
+
+  root.innerHTML = `
+    <div class="imggen-modal-backdrop" id="ig-preset-modal-bg">
+      <div class="imggen-modal" role="dialog">
+        <div class="imggen-modal-header">
+          <span>プリセット${edit ? '編集' : '登録'}</span>
+          <button id="ig-preset-modal-close" class="btn btn-sm">×</button>
+        </div>
+        <div class="imggen-modal-body">
+          ${edit ? '' : `
+            <div>
+              <label class="text-xs" style="color:var(--text-secondary);">ソース選択</label>
+              <div class="imggen-source-tabs">${tabsHtml}</div>
+              <input id="ig-preset-file" type="file" accept=".json,application/json" style="display:none;">
+              <div id="ig-preset-history" style="margin-top:0.4rem;"></div>
+            </div>`}
+          <div>
+            <label class="text-xs" style="color:var(--text-secondary);">Placeholder 編集（文字列値のみ一覧）</label>
+            <div id="ig-preset-ph">${phHtml}</div>
+          </div>
+          <div>
+            <label class="text-xs" style="color:var(--text-secondary);">Workflow JSON (直接編集可)</label>
+            <textarea id="ig-preset-json" class="imggen-json-preview">${esc(
+              presetModalState.workflowJson ? JSON.stringify(presetModalState.workflowJson, null, 2) : ''
+            )}</textarea>
+          </div>
+          <div>
+            <label class="text-xs" style="color:var(--text-secondary);">メタ情報</label>
+            ${metaHtml}
+          </div>
+        </div>
+        <div class="imggen-modal-footer">
+          <button id="ig-preset-cancel" class="btn btn-sm">キャンセル</button>
+          <button id="ig-preset-save" class="btn btn-sm btn-primary">${edit ? '更新' : '登録'}</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Event binding
+  $('ig-preset-modal-close')?.addEventListener('click', closePresetModal);
+  $('ig-preset-cancel')?.addEventListener('click', closePresetModal);
+  $('ig-preset-modal-bg')?.addEventListener('click', (e) => {
+    if (e.target.id === 'ig-preset-modal-bg') closePresetModal();
+  });
+  $('ig-preset-save')?.addEventListener('click', () => handlePresetSave(edit));
+  $('ig-preset-json')?.addEventListener('input', (e) => {
+    // 編集をモデルへ反映（バリデートは保存時）
+    try {
+      const parsed = JSON.parse(e.target.value);
+      if (parsed && typeof parsed === 'object') {
+        presetModalState.workflowJson = parsed;
+        $('ig-preset-ph').innerHTML = renderPlaceholderEditor();
+        bindPlaceholderActions();
+      }
+    } catch { /* 無効なJSON中は無視 */ }
+  });
+
+  // ソースタブ
+  root.querySelectorAll('[data-ph-source]').forEach(btn => {
+    btn.addEventListener('click', () => handleSourceSelect(btn.dataset.phSource));
+  });
+
+  bindPlaceholderActions();
+}
+
+function renderMetaForm(edit) {
+  const m = edit || {};
+  return `
+    <div class="imggen-meta-grid">
+      <div>
+        <label class="text-xs">name</label>
+        <input id="ig-meta-name" class="form-input" type="text"
+          value="${esc(m.name || '')}" ${edit ? 'readonly' : ''}
+          placeholder="英数/_/-、1〜64文字">
+      </div>
+      <div>
+        <label class="text-xs">category</label>
+        <input id="ig-meta-category" class="form-input" type="text" value="${esc(m.category || 't2i')}">
+      </div>
+      <div>
+        <label class="text-xs">default_timeout_sec</label>
+        <input id="ig-meta-timeout" class="form-input" type="number" min="10" value="${Number(m.default_timeout_sec) || 300}">
+      </div>
+      <div>
+        <label class="text-xs">main_pc_only</label>
+        <select id="ig-meta-mpc" class="form-input">
+          <option value="false" ${!m.main_pc_only ? 'selected' : ''}>false</option>
+          <option value="true"  ${ m.main_pc_only ? 'selected' : ''}>true</option>
+        </select>
+      </div>
+    </div>
+    <label class="text-xs" style="margin-top:0.3rem; display:block;">description</label>
+    <input id="ig-meta-desc" class="form-input" type="text" value="${esc(m.description || '')}">
+  `;
+}
+
+function renderPlaceholderEditor() {
+  const wf = presetModalState.workflowJson;
+  if (!wf || typeof wf !== 'object') {
+    return '<div class="imggen-empty" style="padding:0.6rem;">まだワークフローが読み込まれていません</div>';
+  }
+  const literals = extractStringLiterals(wf);
+  if (literals.length === 0) {
+    return '<div class="imggen-empty" style="padding:0.6rem;">編集可能な文字列フィールドが見つかりません</div>';
+  }
+  const optHtml = _PLACEHOLDER_OPTIONS.map(k => `<option value="${k}">{{${k}}}</option>`).join('');
+  return `
+    <table class="imggen-ph-table">
+      <thead>
+        <tr><th>node</th><th>class_type</th><th>key</th><th>value</th><th>アクション</th></tr>
+      </thead>
+      <tbody>
+        ${literals.map(x => {
+          const isPh = /^\{\{[A-Z0-9_]+\}\}$/.test(x.value);
+          const valHtml = isPh
+            ? `<span class="is-ph">${esc(x.value)}</span>`
+            : esc(x.value.length > 80 ? x.value.slice(0, 80) + '…' : x.value);
+          return `
+            <tr data-nid="${esc(x.nodeId)}" data-key="${esc(x.key)}">
+              <td>${esc(x.nodeId)}</td>
+              <td>${esc(x.classType)}</td>
+              <td>${esc(x.key)}</td>
+              <td class="val">${valHtml}</td>
+              <td class="imggen-ph-actions">
+                <select data-ph-key>
+                  <option value="">--</option>
+                  ${optHtml}
+                </select>
+                <button class="btn btn-sm" data-ph-apply>↔</button>
+                ${isPh ? `<button class="btn btn-sm" data-ph-clear title="プレースホルダ解除">解除</button>` : ''}
+              </td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function bindPlaceholderActions() {
+  document.querySelectorAll('#ig-preset-ph button[data-ph-apply]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr');
+      if (!tr) return;
+      const sel = tr.querySelector('select[data-ph-key]');
+      const key = sel?.value;
+      if (!key) { toast('プレースホルダを選択', 'error'); return; }
+      const nid = tr.dataset.nid;
+      const k = tr.dataset.key;
+      if (presetModalState.workflowJson?.[nid]?.inputs) {
+        presetModalState.workflowJson[nid].inputs[k] = `{{${key}}}`;
+        refreshModalAfterEdit();
+      }
+    });
+  });
+  document.querySelectorAll('#ig-preset-ph button[data-ph-clear]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr');
+      if (!tr) return;
+      const nid = tr.dataset.nid;
+      const k = tr.dataset.key;
+      const def = prompt('新しい値を入力（空でキャンセル）:', '');
+      if (def == null) return;
+      if (presetModalState.workflowJson?.[nid]?.inputs) {
+        presetModalState.workflowJson[nid].inputs[k] = def;
+        refreshModalAfterEdit();
+      }
+    });
+  });
+}
+
+function refreshModalAfterEdit() {
+  const jsonEl = $('ig-preset-json');
+  if (jsonEl) jsonEl.value = JSON.stringify(presetModalState.workflowJson, null, 2);
+  const phEl = $('ig-preset-ph');
+  if (phEl) phEl.innerHTML = renderPlaceholderEditor();
+  bindPlaceholderActions();
+}
+
+function extractStringLiterals(wf) {
+  const out = [];
+  for (const [nid, node] of Object.entries(wf)) {
+    if (!node || typeof node !== 'object' || nid === '_meta') continue;
+    const inputs = node.inputs || {};
+    for (const [k, v] of Object.entries(inputs)) {
+      if (typeof v !== 'string') continue;
+      out.push({ nodeId: nid, classType: node.class_type || '', key: k, value: v });
+    }
+  }
+  return out;
+}
+
+async function handleSourceSelect(src) {
+  presetModalState.source = src;
+  // タブのアクティブ表示
+  document.querySelectorAll('[data-ph-source]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.phSource === src);
+  });
+  const histEl = $('ig-preset-history');
+  if (src === 'file') {
+    if (histEl) histEl.innerHTML = '';
+    const f = $('ig-preset-file');
+    f?.click();
+    f.onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object') throw new Error('invalid JSON');
+        presetModalState.workflowJson = parsed;
+        presetModalState.sourceLabel = `file: ${file.name}`;
+        refreshModalAfterEdit();
+        toast(`読み込みました: ${file.name}`, 'info');
+      } catch (err) {
+        toast(`JSON 解析失敗: ${err?.message || err}`, 'error');
+      }
+    };
+    return;
+  }
+  if (src.startsWith('history:')) {
+    const agentId = src.slice('history:'.length);
+    if (histEl) histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">履歴取得中...</div>';
+    try {
+      const data = await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/history?limit=20`);
+      const items = data?.items || [];
+      if (!data?.available) {
+        histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">ComfyUI が停止しています。先に起動してください。</div>';
+        return;
+      }
+      if (items.length === 0) {
+        histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">履歴がありません</div>';
+        return;
+      }
+      histEl.innerHTML = `<div class="imggen-history-list">${items.map((it, i) => {
+        const files = (it.output_files || []).join(', ');
+        return `
+          <div class="imggen-history-item" data-hidx="${i}">
+            <span class="pid">${esc(String(it.prompt_id).slice(0, 8))}</span>
+            <span>${esc(it.completed ? '✓' : (it.status_str || '?'))}</span>
+            <span style="flex:1; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(files)}</span>
+          </div>`;
+      }).join('')}</div>`;
+      histEl.querySelectorAll('.imggen-history-item').forEach(it => {
+        it.addEventListener('click', () => {
+          const idx = Number(it.dataset.hidx);
+          const picked = items[idx]?.workflow;
+          if (!picked) { toast('このエントリに API 形式がありません', 'error'); return; }
+          presetModalState.workflowJson = picked;
+          presetModalState.sourceLabel = `history: ${agentId}`;
+          histEl.querySelectorAll('.imggen-history-item').forEach(x => x.classList.remove('selected'));
+          it.classList.add('selected');
+          refreshModalAfterEdit();
+        });
+      });
+    } catch (err) {
+      histEl.innerHTML = `<div class="imggen-empty" style="padding:0.5rem;">取得失敗: ${esc(err?.message || err)}</div>`;
+    }
+  }
+}
+
+async function handlePresetSave(edit) {
+  const name = edit ? edit.name : ($('ig-meta-name')?.value || '').trim();
+  if (!/^[a-zA-Z0-9_\-]{1,64}$/.test(name)) {
+    toast('name は英数/_/- の 1〜64 文字', 'error');
+    return;
+  }
+  let wfJson = presetModalState.workflowJson;
+  // textarea を正とする
+  const raw = $('ig-preset-json')?.value || '';
+  if (raw.trim()) {
+    try {
+      wfJson = JSON.parse(raw);
+    } catch (err) {
+      toast(`JSON 解析失敗: ${err.message}`, 'error');
+      return;
+    }
+  }
+  if (!wfJson || typeof wfJson !== 'object') {
+    toast('Workflow JSON が空です', 'error');
+    return;
+  }
+  const body = {
+    name,
+    workflow_json: wfJson,
+    description: ($('ig-meta-desc')?.value || '').trim(),
+    category: ($('ig-meta-category')?.value || 't2i').trim(),
+    default_timeout_sec: Number($('ig-meta-timeout')?.value) || 300,
+    main_pc_only: ($('ig-meta-mpc')?.value === 'true'),
+  };
+  const btn = $('ig-preset-save');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/image/workflows', { method: 'POST', body });
+    toast(edit ? '更新しました' : '登録しました', 'success');
+    closePresetModal();
+    await Promise.all([loadPresets(), loadWorkflows()]);
+  } catch (err) {
+    toast(`保存失敗: ${err?.message || err}`, 'error');
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ============================================================
 // Mount / Unmount
 // ============================================================
 export async function mount() {
   $('ig-submit')?.addEventListener('click', handleSubmit);
+  $('ig-preset-new')?.addEventListener('click', () => openPresetModal({}));
 
   // 並列で初期ロード
   await Promise.all([
@@ -638,6 +1169,7 @@ export async function mount() {
     loadJobs(),
     loadGallery(),
     loadComfyPanel(),
+    loadPresets(),
   ]);
 
   // SSE（SSE が動けば jobs はそれで更新されるが、念のためポーリングも 10s で回す）
@@ -652,6 +1184,7 @@ export function unmount() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (galleryTimer) { clearInterval(galleryTimer); galleryTimer = null; }
   if (comfyStatusTimer) { clearInterval(comfyStatusTimer); comfyStatusTimer = null; }
+  closePresetModal();
   workflows = [];
   jobs = [];
   gallery = [];

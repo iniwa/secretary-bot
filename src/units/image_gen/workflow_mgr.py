@@ -16,24 +16,21 @@ log = get_logger(__name__)
 _PRESETS_DIR = os.path.join(os.path.dirname(__file__), "presets")
 _PLACEHOLDER_RE = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
-# プリセット → デフォルト timeout / main_pc_only 等のメタ
-# 実運用では JSON と別ファイルで持つべきだが Phase1 はここに集約。
-_PRESET_META: dict[str, dict[str, Any]] = {
-    "t2i_base":   {"category": "t2i", "default_timeout_sec": 300,  "main_pc_only": False,
-                   "description": "最小構成 t2i（1024x1024, 30 steps）"},
-    "t2i_hires":  {"category": "t2i", "default_timeout_sec": 900,  "main_pc_only": False,
-                   "description": "Hires.fix 付き t2i"},
-    "t2i_lora_1": {"category": "t2i", "default_timeout_sec": 360,  "main_pc_only": False,
-                   "description": "LoRA 1 枚適用 t2i"},
-    "t2i_lora_2": {"category": "t2i", "default_timeout_sec": 420,  "main_pc_only": False,
-                   "description": "LoRA 2 枚適用 t2i"},
-    "t2i_lora_3": {"category": "t2i", "default_timeout_sec": 480,  "main_pc_only": False,
-                   "description": "LoRA 3 枚適用 t2i"},
+_DEFAULT_META: dict[str, Any] = {
+    "description": "",
+    "category": "t2i",
+    "main_pc_only": False,
+    "default_timeout_sec": 300,
 }
 
 
 class WorkflowManager:
-    """プリセット JSON の読み込み・差し込み・DB への登録を担う。"""
+    """プリセット JSON の読み込み・差し込み・DB への登録を担う。
+
+    - presets/*.json は初期シード用（`_meta` キーにメタデータを同梱）。
+    - 既に DB に同名 row があれば上書きしない（WebGUI 編集分を温存）。
+    - `register_workflow()` は WebGUI からの登録/更新にも使う共通 I/F。
+    """
 
     def __init__(self, bot):
         self.bot = bot
@@ -42,7 +39,7 @@ class WorkflowManager:
     # --- 起動時ローダ ---
 
     async def sync_presets_to_db(self) -> None:
-        """presets/*.json を走査して workflows テーブルへ upsert する。"""
+        """presets/*.json をシード登録する（既存行はスキップ）。"""
         if not os.path.isdir(_PRESETS_DIR):
             log.warning("presets dir not found: %s", _PRESETS_DIR)
             return
@@ -50,33 +47,62 @@ class WorkflowManager:
             if not fname.endswith(".json"):
                 continue
             name = fname[:-5]
+            existing = await self.bot.database.workflow_get_by_name(name)
+            if existing:
+                continue
             path = os.path.join(_PRESETS_DIR, fname)
             try:
                 with open(path, encoding="utf-8") as f:
-                    wf = json.load(f)
+                    raw = json.load(f)
             except Exception as e:
                 log.error("Failed to load preset %s: %s", name, e)
                 continue
-            self._cache[name] = wf
-            req = self.extract_requirements(wf)
-            meta = _PRESET_META.get(name, {"category": "t2i", "default_timeout_sec": 300,
-                                           "main_pc_only": False, "description": ""})
+            meta = dict(_DEFAULT_META)
+            if isinstance(raw, dict) and isinstance(raw.get("_meta"), dict):
+                meta.update(raw.pop("_meta"))
             try:
-                await self.bot.database.workflow_upsert(
+                await self.register_workflow(
                     name=name,
-                    description=meta.get("description"),
-                    category=meta.get("category", "t2i"),
-                    workflow_json=json.dumps(wf, ensure_ascii=False),
-                    required_nodes=json.dumps(req.nodes, ensure_ascii=False),
-                    required_models=json.dumps(req.models, ensure_ascii=False),
-                    required_loras=json.dumps(req.loras, ensure_ascii=False),
+                    workflow_json=raw,
+                    description=meta.get("description") or None,
+                    category=str(meta.get("category") or "t2i"),
                     main_pc_only=bool(meta.get("main_pc_only", False)),
                     default_timeout_sec=int(meta.get("default_timeout_sec", 300)),
                 )
-                log.info("Preset synced: %s (nodes=%d, placeholders=%d)",
-                         name, len(req.nodes), len(req.placeholders))
+                log.info("Preset seeded: %s", name)
             except Exception as e:
-                log.error("Preset upsert failed for %s: %s", name, e)
+                log.error("Preset seed failed for %s: %s", name, e)
+
+    async def register_workflow(
+        self, *, name: str, workflow_json: dict,
+        description: str | None = None, category: str = "t2i",
+        main_pc_only: bool = False, default_timeout_sec: int = 300,
+    ) -> int:
+        """WebGUI / シード共通の登録ヘルパ。依存抽出 + upsert + キャッシュ更新。"""
+        if not isinstance(workflow_json, dict) or not workflow_json:
+            raise ValidationError("workflow_json must be a non-empty object")
+        # `_meta` が混入していたら落とす（インポート直後に許容）
+        clean = {k: v for k, v in workflow_json.items() if k != "_meta"}
+        req = self.extract_requirements(clean)
+        wid = await self.bot.database.workflow_upsert(
+            name=name,
+            description=description,
+            category=category or "t2i",
+            workflow_json=json.dumps(clean, ensure_ascii=False),
+            required_nodes=json.dumps(req.nodes, ensure_ascii=False),
+            required_models=json.dumps(req.models, ensure_ascii=False),
+            required_loras=json.dumps(req.loras, ensure_ascii=False),
+            main_pc_only=bool(main_pc_only),
+            default_timeout_sec=int(default_timeout_sec),
+        )
+        self._cache[name] = clean
+        return int(wid)
+
+    def invalidate_cache(self, name: str | None = None) -> None:
+        if name is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(name, None)
 
     # --- 解析 ---
 

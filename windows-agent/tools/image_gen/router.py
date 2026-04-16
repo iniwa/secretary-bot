@@ -236,6 +236,58 @@ async def comfyui_stop(request: Request):
     return JSONResponse({"ok": bool(result.get("ok", True))}, headers={"X-Trace-Id": trace_id})
 
 
+# --- /comfyui/history: ComfyUI の /history を整形して返す（プリセット取り込み元） ---
+@router.get("/comfyui/history")
+async def comfyui_history(request: Request, limit: int = 20):
+    _verify(request)
+    trace_id = _trace_id(request)
+    if _ctx.comfy is None:
+        return _error_response(503, "ResourceUnavailableError", "image_gen not initialized", True, trace_id=trace_id)
+    snap = _ctx.comfy.status_snapshot()
+    if not snap.get("available"):
+        return JSONResponse({"items": [], "available": False}, headers={"X-Trace-Id": trace_id})
+    limit = max(1, min(100, int(limit or 20)))
+    url = f"{_ctx.comfy.base_url}/history"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as cli:
+            resp = await cli.get(url)
+            resp.raise_for_status()
+            data = resp.json() or {}
+    except Exception as e:
+        return _error_response(502, "ComfyUIError", f"history fetch failed: {e}", True, trace_id=trace_id)
+
+    items: list[dict] = []
+    # /history は dict[prompt_id, entry]。実行順に並んでいる想定で新しい順にする。
+    for prompt_id, entry in reversed(list(data.items())):
+        if not isinstance(entry, dict):
+            continue
+        prompt_meta = entry.get("prompt") or []
+        wf_api = None
+        # ComfyUI 形式: [queue_num, prompt_id, workflow_api, extra, outputs_to_execute]
+        if isinstance(prompt_meta, list) and len(prompt_meta) >= 3 and isinstance(prompt_meta[2], dict):
+            wf_api = prompt_meta[2]
+        outputs = entry.get("outputs") or {}
+        files: list[str] = []
+        for _nid, out in outputs.items():
+            if not isinstance(out, dict):
+                continue
+            for img in (out.get("images") or []):
+                fn = img.get("filename") or ""
+                if fn:
+                    files.append(fn)
+        status = entry.get("status") or {}
+        items.append({
+            "prompt_id": prompt_id,
+            "workflow": wf_api,
+            "output_files": files[:5],
+            "status_str": status.get("status_str") or "",
+            "completed": bool(status.get("completed", False)),
+        })
+        if len(items) >= limit:
+            break
+    return JSONResponse({"items": items, "available": True}, headers={"X-Trace-Id": trace_id})
+
+
 # --- /comfyui/setup /comfyui/update /kohya/setup ---
 
 _COMFYUI_DEFAULT_REPO = "https://github.com/comfyanonymous/ComfyUI.git"

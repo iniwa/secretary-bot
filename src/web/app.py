@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 from datetime import datetime
 
@@ -2641,6 +2642,95 @@ def create_web_app(bot) -> FastAPI:
     @app.post("/api/image/agents/{agent_id}/comfyui/stop", dependencies=[Depends(_verify)])
     async def image_comfyui_stop(agent_id: str):
         return await _comfyui_proxy(agent_id, "POST", "/comfyui/stop", timeout=30.0)
+
+    @app.get("/api/image/agents/{agent_id}/comfyui/history", dependencies=[Depends(_verify)])
+    async def image_comfyui_history(agent_id: str, limit: int = 20):
+        limit = max(1, min(100, int(limit)))
+        return await _comfyui_proxy(
+            agent_id, "GET", f"/comfyui/history?limit={limit}", timeout=15.0,
+        )
+
+    # --- Workflows CRUD (プリセット管理) ---
+
+    _WORKFLOW_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+
+    def _workflow_row_to_dict(row: dict, include_json: bool = False) -> dict:
+        out = {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "description": row.get("description") or "",
+            "category": row.get("category") or "",
+            "main_pc_only": bool(row.get("main_pc_only")),
+            "starred": bool(row.get("starred")),
+            "default_timeout_sec": int(row.get("default_timeout_sec") or 300),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+        for k in ("required_nodes", "required_models", "required_loras"):
+            raw = row.get(k) or "[]"
+            try:
+                out[k] = json.loads(raw)
+            except Exception:
+                out[k] = []
+        if include_json:
+            try:
+                out["workflow_json"] = json.loads(row.get("workflow_json") or "{}")
+            except Exception:
+                out["workflow_json"] = {}
+        return out
+
+    @app.get("/api/image/workflows", dependencies=[Depends(_verify)])
+    async def image_workflows_list(category: str | None = None):
+        rows = await bot.database.workflow_list(category=category)
+        return {"workflows": [_workflow_row_to_dict(r) for r in rows]}
+
+    @app.get("/api/image/workflows/{workflow_id}", dependencies=[Depends(_verify)])
+    async def image_workflows_get(workflow_id: int):
+        row = await bot.database.workflow_get(int(workflow_id))
+        if not row:
+            raise HTTPException(404, "workflow not found")
+        return _workflow_row_to_dict(row, include_json=True)
+
+    @app.post("/api/image/workflows", dependencies=[Depends(_verify)])
+    async def image_workflows_upsert(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        name = (body.get("name") or "").strip()
+        if not _WORKFLOW_NAME_RE.match(name):
+            raise HTTPException(400, "name must match [a-zA-Z0-9_-]{1,64}")
+        workflow_json = body.get("workflow_json")
+        if not isinstance(workflow_json, dict) or not workflow_json:
+            raise HTTPException(400, "workflow_json must be a non-empty object")
+        unit = _get_image_gen_unit()
+        try:
+            wid = await unit.workflow_mgr.register_workflow(
+                name=name,
+                workflow_json=workflow_json,
+                description=(body.get("description") or "") or None,
+                category=(body.get("category") or "t2i"),
+                main_pc_only=bool(body.get("main_pc_only", False)),
+                default_timeout_sec=int(body.get("default_timeout_sec") or 300),
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"register failed: {e}")
+        return {"ok": True, "id": wid, "name": name}
+
+    @app.delete("/api/image/workflows/{workflow_id}", dependencies=[Depends(_verify)])
+    async def image_workflows_delete(workflow_id: int):
+        row = await bot.database.workflow_get(int(workflow_id))
+        if not row:
+            raise HTTPException(404, "workflow not found")
+        await bot.database.execute(
+            "DELETE FROM workflows WHERE id = ?", (int(workflow_id),),
+        )
+        try:
+            _get_image_gen_unit().workflow_mgr.invalidate_cache(row.get("name"))
+        except Exception:
+            pass
+        return {"ok": True}
 
     @app.get("/api/image/file", dependencies=[Depends(_verify)])
     async def image_file(path: str):

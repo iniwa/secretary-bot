@@ -1,4 +1,10 @@
 {
+  "_meta": {
+    "description": "最小構成 t2i（1024x1024, 30 steps）",
+    "category": "t2i",
+    "main_pc_only": false,
+    "default_timeout_sec": 300
+  },
   "3": {
     "class_type": "KSampler",
     "inputs": {
