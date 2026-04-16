@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import httpx
+
+_log = logging.getLogger(__name__)
 
 
 _PLACEHOLDER_MAP = {
@@ -155,6 +159,25 @@ class WorkflowRunner:
     async def run(self, job: ImageJob, workflow: dict, output_dir: str, timeout_sec: int) -> None:
         """workflow をキュー投入し、WS 購読しつつ完了まで待ち、結果を NAS へ回収。"""
         try:
+            await self._run_inner(job, workflow, output_dir, timeout_sec)
+        except Exception as e:
+            tb = traceback.format_exc()
+            _log.error("runner.run unexpected failure job=%s: %s\n%s", job.job_id, e, tb)
+            if job.status not in ("done", "failed", "cancelled"):
+                job.status = "failed"
+                job.last_error = {
+                    "error_class": "AgentCommunicationError",
+                    "message": f"runner unexpected: {e!r}",
+                    "retryable": False,
+                }
+                try:
+                    await job.put("error", job.last_error)
+                    await job.put("done", {})
+                except Exception:
+                    pass
+
+    async def _run_inner(self, job: ImageJob, workflow: dict, output_dir: str, timeout_sec: int) -> None:
+        try:
             import websockets  # type: ignore
         except ImportError:  # pragma: no cover
             websockets = None
@@ -166,10 +189,12 @@ class WorkflowRunner:
         try:
             queue_res = await self.queue_prompt(workflow)
         except Exception as e:
+            tb = traceback.format_exc()
+            _log.error("queue_prompt failed job=%s: %s\n%s", job.job_id, e, tb)
             job.status = "failed"
             job.last_error = {
                 "error_class": "ComfyUIError.WorkflowValidationError",
-                "message": str(e),
+                "message": f"queue_prompt: {e!r}",
                 "retryable": False,
             }
             await job.put("error", job.last_error)
@@ -246,10 +271,12 @@ class WorkflowRunner:
                             await job.put("done", {})
                             return
             except Exception as e:
+                tb = traceback.format_exc()
+                _log.error("ws monitor failed job=%s: %s\n%s", job.job_id, e, tb)
                 job.status = "failed"
                 job.last_error = {
                     "error_class": "AgentCommunicationError",
-                    "message": f"ws error: {e}",
+                    "message": f"ws error: {e!r}",
                     "retryable": True,
                 }
                 await job.put("error", job.last_error)
@@ -286,10 +313,12 @@ class WorkflowRunner:
             await job.put("status", {"status": "done"})
             await job.put("done", {})
         except Exception as e:
+            tb = traceback.format_exc()
+            _log.error("output collection failed job=%s: %s\n%s", job.job_id, e, tb)
             job.status = "failed"
             job.last_error = {
                 "error_class": "ComfyUIError",
-                "message": f"output collection failed: {e}",
+                "message": f"output collection failed: {e!r}",
                 "retryable": False,
             }
             await job.put("error", job.last_error)

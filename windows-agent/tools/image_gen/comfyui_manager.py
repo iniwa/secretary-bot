@@ -171,11 +171,13 @@ class ComfyUIManager:
                 if os.name == "nt":
                     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 # Windows + CREATE_NO_WINDOW + パイプ stdout だと tqdm が stderr.flush で
-                # EINVAL を踏むことがある。バッファ無効化 + tqdm 更新間隔を広げて回避。
+                # EINVAL を踏むことがある。tqdm.__init__ の status_printer 初回 flush が
+                # 原因なので MININTERVAL では防げない → TQDM_DISABLE=1 で完全無効化する。
+                # 進捗は ComfyUI の WebSocket progress イベントで独立に届くので UI 影響なし。
                 env = os.environ.copy()
                 env.setdefault("PYTHONUNBUFFERED", "1")
                 env.setdefault("PYTHONIOENCODING", "utf-8")
-                env.setdefault("TQDM_MININTERVAL", "1.0")
+                env.setdefault("TQDM_DISABLE", "1")
                 self._proc = subprocess.Popen(
                     cmd,
                     cwd=os.path.join(self.root, "comfyui"),
