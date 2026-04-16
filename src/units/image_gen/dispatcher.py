@@ -549,6 +549,25 @@ class Dispatcher:
             detail=detail,
         ))
 
+    def _normalize_nas_path(self, p: str) -> str:
+        """Agent が返す Windows ドライブレター形式（例: `N:/ai-image/outputs/...`）
+        を Pi 側マウント形式（例: `/mnt/ai-image/outputs/...`）へ変換。"""
+        if not isinstance(p, str) or not p:
+            return p
+        nas_cfg = self.bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
+        base = (nas_cfg.get("mount_point") or nas_cfg.get("base_path") or "/mnt/ai-image").rstrip("/\\")
+        outputs_sub = (nas_cfg.get("outputs_subdir") or "outputs").strip("/\\")
+        # 既に Pi マウント配下なら変更なし
+        if p.startswith(base + "/") or p.startswith(base + "\\"):
+            return p.replace("\\", "/")
+        # outputs/... 部分を抜き出して base と結合
+        uni = p.replace("\\", "/")
+        marker = f"/{outputs_sub}/"
+        idx = uni.find(marker)
+        if idx >= 0:
+            return f"{base}{uni[idx:]}"
+        return uni
+
     async def _on_job_done(
         self, job_id: str, result_paths: list[str],
         result_kinds: list[str], agent_id: str | None,
@@ -556,6 +575,8 @@ class Dispatcher:
         # kinds が空/不足なら paths 長さに合わせて image fallback
         if not result_kinds or len(result_kinds) != len(result_paths):
             result_kinds = ["image"] * len(result_paths)
+        # Agent 側の Windows ドライブ形式を Pi マウント形式に正規化
+        result_paths = [self._normalize_nas_path(p) for p in result_paths]
         await self.bot.database.generation_job_set_result(
             job_id,
             json.dumps(result_paths, ensure_ascii=False),
