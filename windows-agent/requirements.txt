@@ -1,22 +1,22 @@
-fastapi>=0.104,<1.0
+﻿fastapi>=0.104,<1.0
 uvicorn[standard]>=0.24,<1.0
 pyyaml>=6.0
 psutil>=5.9
 obsws-python>=1.7
 pywin32>=306
 httpx>=0.25
-# STT: Main PC (マイクキャプチャ)
+# STT: Main PC (mic capture)
 sounddevice>=0.4
-webrtcvad-wheels>=2.0.14  # webrtcvad の Windows 向けプリビルド wheel（MSVC 不要）
+webrtcvad-wheels>=2.0.14  # prebuilt wheel of webrtcvad for Windows (no MSVC required)
 numpy>=1.24
-# STT: Sub PC (Whisperエンジン)
+# STT: Sub PC (Whisper engine)
 transformers>=4.36
 torch>=2.1
 accelerate>=0.25
 soundfile>=0.12
-# ZZZ Disc tool: 画面キャプチャ + VLM 抽出
+# ZZZ Disc tool: screen capture + VLM extraction
 mss>=9.0
 obs-websocket-py>=1.0
 Pillow>=10.0
-# image_gen tool: ComfyUI WebSocket 進捗購読用
+# image_gen tool: ComfyUI WebSocket progress subscription
 websockets>=12.0
