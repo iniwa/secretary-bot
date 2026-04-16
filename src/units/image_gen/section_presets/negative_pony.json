@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_pony",
+  "description": "Pony 系の抑制タグ（source_pony/furry 除外など）",
+  "positive": null,
+  "negative": "score_6, score_5, score_4, source_pony, source_furry, source_cartoon, 3d, monochrome",
+  "tags": "negative,pony"
+}

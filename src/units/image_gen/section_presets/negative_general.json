@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_general",
+  "description": "汎用 negative（低品質・破綻防止）",
+  "positive": null,
+  "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
+  "tags": "negative,baseline"
+}

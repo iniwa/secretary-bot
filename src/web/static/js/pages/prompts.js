@@ -1,6 +1,7 @@
 /** Prompts page — prompt_crafter セッションの閲覧・編集。 */
 import { api } from '../api.js';
 import { toast } from '../app.js';
+import { stashSet } from '../lib/image_gen_common.js';
 
 let activeSession = null;
 let sessions = [];
@@ -81,7 +82,24 @@ function renderActive() {
     <div class="pc-prompt">${esc(activeSession.positive || '(empty)')}</div>
     <div class="pc-label">negative</div>
     <div class="pc-prompt">${esc(activeSession.negative || '(empty)')}</div>
+    <div class="pc-btn-row">
+      <button id="pc-to-imggen" class="btn btn-primary">🎨 画像生成へ</button>
+    </div>
   `;
+  $('pc-to-imggen')?.addEventListener('click', () => handleToImageGen(activeSession));
+}
+
+function handleToImageGen(s) {
+  if (!s) return;
+  stashSet({
+    source: 'prompt_crafter',
+    session_id: s.session_id ?? s.id,
+    positive: s.positive || '',
+    negative: s.negative || '',
+    params: {},
+  });
+  location.hash = '#image-gen?prefill=prompt';
+  toast('Image Gen に取り込みました', 'info');
 }
 
 function renderList() {

@@ -24,6 +24,7 @@ from src.units.image_gen.models import (
     JobStatus, TransitionEvent, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED,
     PLATFORM_DISCORD, DEFAULT_PARAMS,
 )
+from src.units.image_gen.section_mgr import SectionManager
 from src.units.image_gen.workflow_mgr import WorkflowManager
 
 log = get_logger(__name__)
@@ -63,6 +64,7 @@ class ImageGenUnit(BaseUnit):
     def __init__(self, bot):
         super().__init__(bot)
         self.workflow_mgr = WorkflowManager(bot)
+        self.section_mgr = SectionManager(bot)
         self.dispatcher = Dispatcher(bot, self)
         self._event_subscribers: set[asyncio.Queue] = set()
         self._started = False
@@ -85,6 +87,10 @@ class ImageGenUnit(BaseUnit):
             await self.workflow_mgr.sync_presets_to_db()
         except Exception as e:
             log.warning("preset sync failed: %s", e)
+        try:
+            await self.section_mgr.sync_presets_to_db()
+        except Exception as e:
+            log.warning("section preset sync failed: %s", e)
         await self.dispatcher.start()
 
     async def on_heartbeat(self) -> None:

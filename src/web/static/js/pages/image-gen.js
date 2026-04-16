@@ -1,390 +1,89 @@
-/** Image Gen page — Generate / Jobs / Gallery の 3 セクション構成。 */
+/** Image Gen page — 生成フォーム + セクション選択 + 合成プレビュー + プリセット管理。
+ *  ジョブ一覧とギャラリーは独立ページ（image-jobs / image-gallery）に分離済。
+ */
 import { api } from '../api.js';
 import { toast } from '../app.js';
+import { GenerationAPI } from '../lib/generation_api.js';
+import { composePromptClient } from '../lib/compose.js';
+import { esc, makeSortable, stashGet, stashClear } from '../lib/image_gen_common.js';
 
 // ============================================================
 // State
 // ============================================================
 let workflows = [];
-let jobs = [];
-let gallery = [];
-let sse = null;
-let pollTimer = null;
-let galleryTimer = null;
+let categories = [];
+let sections = [];
+let chosen = [];          // Array<number> section_id の配列（順序保持）
+let comfyAgents = [];
+let comfyStatusTimer = null;
+const comfyBusy = new Set();
+let previewTimer = null;
 
 // Presets modal state
-let presetModalState = {
-  source: '',           // 'history:<agent_id>' | 'file'
-  workflowJson: null,   // 現在編集中の workflow API format (dict)
-  sourceLabel: '',
-};
+let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
 
 // ============================================================
 // Helpers
 // ============================================================
 function $(id) { return document.getElementById(id); }
 
-function esc(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-function fmtTime(iso) {
-  if (!iso) return '---';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return esc(iso);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function statusBadgeClass(status) {
-  switch (status) {
-    case 'done':          return 'badge-success';
-    case 'running':       return 'badge-info';
-    case 'warming_cache': return 'badge-info';
-    case 'dispatching':   return 'badge-info';
-    case 'queued':        return 'badge-accent';
-    case 'failed':        return 'badge-danger';
-    case 'cancelled':     return 'badge-muted';
-    default:              return 'badge-muted';
-  }
-}
-
-function isTerminal(s) {
-  return s === 'done' || s === 'failed' || s === 'cancelled';
-}
-
 // ============================================================
-// Render
+// Render (root)
 // ============================================================
 export function render() {
   return `
-<style>
-  .imggen-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-  @media (min-width: 1100px) {
-    .imggen-grid {
-      grid-template-columns: 380px 1fr;
-      grid-template-areas:
-        "gen   jobs"
-        "gen   gallery";
-    }
-    .imggen-gen     { grid-area: gen; }
-    .imggen-jobs    { grid-area: jobs; }
-    .imggen-gallery { grid-area: gallery; }
-  }
-  .imggen-section h3 {
-    margin: 0 0 0.6rem;
-    font-size: 0.95rem;
-    color: var(--text-primary);
-  }
-  .imggen-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    margin-bottom: 0.6rem;
-  }
-  .imggen-header h3 { margin: 0; }
-  .imggen-comfy-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    margin-bottom: 0.6rem;
-  }
-  .imggen-comfy-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.75rem;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-base);
-  }
-  .imggen-comfy-row .name {
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .imggen-comfy-row .dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--text-muted, #888);
-    flex-shrink: 0;
-  }
-  .imggen-comfy-row .dot.running { background: #22c55e; }
-  .imggen-comfy-row .dot.starting { background: #eab308; }
-  .imggen-comfy-row .dot.error { background: #ef4444; }
-  .imggen-comfy-row .meta { color: var(--text-secondary); font-size: 0.7rem; }
-  .imggen-comfy-row .spacer { flex: 1; }
-  .imggen-comfy-row button,
-  .imggen-comfy-row a {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--bg-base);
-    color: var(--text-secondary);
-    text-decoration: none;
-    cursor: pointer;
-  }
-  .imggen-comfy-row button:hover:not(:disabled),
-  .imggen-comfy-row a:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .imggen-comfy-row button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .imggen-form label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin: 0.5rem 0 0.2rem;
-  }
-  .imggen-form .form-input,
-  .imggen-form textarea,
-  .imggen-form select {
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .imggen-form textarea {
-    min-height: 80px;
-    resize: vertical;
-    font-family: inherit;
-    font-size: 0.8125rem;
-    padding: 0.4rem 0.55rem;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--bg-base);
-    color: var(--text-primary);
-  }
-  .imggen-params {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.4rem 0.6rem;
-    margin-top: 0.3rem;
-  }
-  .imggen-params .form-input { font-size: 0.8125rem; }
-  .imggen-submit { margin-top: 0.8rem; width: 100%; }
-  .imggen-status-line {
-    margin-top: 0.6rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    word-break: break-all;
-  }
-  .imggen-job-row {
-    display: grid;
-    grid-template-columns: 110px 1fr auto;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.8125rem;
-  }
-  .imggen-job-row:last-child { border-bottom: none; }
-  .imggen-job-id {
-    font-family: var(--mono, ui-monospace, monospace);
-    font-size: 0.7rem;
-    color: var(--text-muted);
-  }
-  .imggen-progress {
-    height: 4px;
-    background: var(--bg-base);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 0.2rem;
-  }
-  .imggen-progress-bar {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.2s ease;
-  }
-  .imggen-err {
-    color: var(--danger, #d33);
-    font-size: 0.7rem;
-    margin-top: 0.2rem;
-    word-break: break-word;
-  }
-  .imggen-gallery-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 0.4rem;
-  }
-  .imggen-gallery-item {
-    aspect-ratio: 1 / 1;
-    background: var(--bg-base);
-    border-radius: 4px;
-    overflow: hidden;
-    cursor: pointer;
-    border: 1px solid var(--border);
-  }
-  .imggen-gallery-item img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .imggen-lightbox {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.85);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    cursor: zoom-out;
-  }
-  .imggen-lightbox img {
-    max-width: 95vw;
-    max-height: 95vh;
-    object-fit: contain;
-  }
-  .imggen-empty {
-    text-align: center;
-    padding: 1.5rem;
-    color: var(--text-muted);
-    font-size: 0.8125rem;
-  }
-
-  /* Presets */
-  .imggen-presets-list {
-    display: flex; flex-direction: column; gap: 0.3rem;
-  }
-  .imggen-preset-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.4rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-size: 0.8rem;
-    background: var(--bg-base);
-  }
-  .imggen-preset-row .meta { color: var(--text-secondary); font-size: 0.7rem; }
-  .imggen-preset-row .tag {
-    display: inline-block;
-    padding: 0.05rem 0.4rem;
-    border-radius: 2px;
-    background: var(--bg-elev, #2a2a2a);
-    font-size: 0.65rem;
-    margin-right: 0.3rem;
-    color: var(--text-secondary);
-  }
-
-  /* Modal */
-  .imggen-modal-backdrop {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 1000;
-  }
-  .imggen-modal {
-    background: var(--bg-surface, #1d1d1d);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    width: min(900px, 94vw);
-    max-height: 90vh;
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
-  .imggen-modal-header {
-    padding: 0.6rem 0.9rem;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 0.95rem; color: var(--text-primary);
-  }
-  .imggen-modal-body {
-    padding: 0.8rem 0.9rem;
-    overflow-y: auto;
-    display: flex; flex-direction: column; gap: 0.7rem;
-  }
-  .imggen-modal-footer {
-    padding: 0.6rem 0.9rem;
-    border-top: 1px solid var(--border);
-    display: flex; gap: 0.5rem; justify-content: flex-end;
-  }
-  .imggen-source-tabs {
-    display: flex; gap: 0.4rem; flex-wrap: wrap;
-  }
-  .imggen-source-tabs button {
-    font-size: 0.75rem; padding: 0.25rem 0.6rem;
-    border: 1px solid var(--border);
-    background: var(--bg-base);
-    color: var(--text-secondary);
-    border-radius: 4px; cursor: pointer;
-  }
-  .imggen-source-tabs button.active {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .imggen-history-list {
-    max-height: 220px; overflow-y: auto;
-    border: 1px solid var(--border); border-radius: 4px;
-    background: var(--bg-base);
-  }
-  .imggen-history-item {
-    padding: 0.35rem 0.5rem;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.75rem;
-    cursor: pointer;
-    display: flex; gap: 0.5rem; align-items: center;
-  }
-  .imggen-history-item:hover { background: var(--bg-elev, #2a2a2a); }
-  .imggen-history-item.selected { border-left: 3px solid var(--accent); }
-  .imggen-history-item .pid { color: var(--text-muted); font-family: var(--mono, monospace); font-size: 0.65rem; }
-
-  .imggen-ph-table {
-    width: 100%; border-collapse: collapse; font-size: 0.72rem;
-  }
-  .imggen-ph-table th, .imggen-ph-table td {
-    border-bottom: 1px solid var(--border);
-    padding: 0.25rem 0.4rem; text-align: left;
-    vertical-align: top;
-  }
-  .imggen-ph-table th { color: var(--text-muted); font-weight: normal; font-size: 0.65rem; }
-  .imggen-ph-table td.val { font-family: var(--mono, monospace); word-break: break-all; max-width: 260px; }
-  .imggen-ph-table td.val .is-ph { color: var(--accent); }
-  .imggen-ph-actions select {
-    font-size: 0.7rem; padding: 0.1rem 0.3rem;
-  }
-  .imggen-meta-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 0.4rem 0.6rem;
-  }
-  .imggen-json-preview {
-    width: 100%; box-sizing: border-box;
-    min-height: 160px; max-height: 280px;
-    font-family: var(--mono, monospace); font-size: 0.7rem;
-    padding: 0.4rem; border-radius: 4px;
-    border: 1px solid var(--border);
-    background: var(--bg-base); color: var(--text-primary);
-    resize: vertical;
-  }
-</style>
-
-<div class="imggen-grid">
+<div class="imggen-grid" style="display:grid;grid-template-columns:1fr;gap:1rem;">
   <!-- Generate -->
-  <section class="card imggen-section imggen-gen">
+  <section class="card imggen-section">
     <div class="imggen-header">
       <h3>Generate</h3>
+      <div style="display:flex;gap:0.4rem;">
+        <a href="#image-jobs" class="btn btn-sm">Jobs →</a>
+        <a href="#image-gallery" class="btn btn-sm">Gallery →</a>
+      </div>
     </div>
     <div id="ig-comfy-panel" class="imggen-comfy-panel"></div>
+
     <div class="imggen-form">
       <label for="ig-workflow">Workflow</label>
       <select id="ig-workflow" class="form-input"><option value="">Loading...</option></select>
 
-      <label for="ig-positive">Positive prompt</label>
-      <textarea id="ig-positive" placeholder="masterpiece, best quality, ..."></textarea>
+      <div class="imggen-sections-block">
+        <h4>
+          <span>セクション（プロンプト断片）</span>
+          <span>
+            <button id="ig-sec-reload" class="imggen-toggle" title="再読込">↻</button>
+            <button id="ig-sec-new" class="imggen-toggle">+ 新規</button>
+          </span>
+        </h4>
+        <div id="ig-sec-cats">
+          <div class="imggen-empty" style="padding:0.4rem;">Loading...</div>
+        </div>
+        <div>
+          <div style="font-size:0.7rem;color:var(--text-muted);margin:0.3rem 0 0.15rem;">選択中（ドラッグで順序変更）</div>
+          <div id="ig-sec-chosen" class="imggen-selected-chips"></div>
+        </div>
+      </div>
 
-      <label for="ig-negative">Negative prompt</label>
-      <textarea id="ig-negative" placeholder="lowres, bad anatomy, ..."></textarea>
+      <label for="ig-positive">Positive prompt（ユーザー追記）</label>
+      <textarea id="ig-positive" placeholder="例: 1girl, beautiful lighting ..."></textarea>
+
+      <label for="ig-negative">Negative prompt（ユーザー追記）</label>
+      <textarea id="ig-negative" placeholder="例: blurry ..."></textarea>
+
+      <div class="imggen-user-pos">
+        <span>挿入位置</span>
+        <select id="ig-userpos" class="form-input" style="width:auto;">
+          <option value="tail">末尾</option>
+          <option value="head">先頭</option>
+        </select>
+        <button id="ig-prompt-crafter" class="btn btn-sm" title="プロンプト履歴から選択">📝 履歴</button>
+      </div>
+
+      <div class="imggen-compose-preview" id="ig-preview">
+        <div class="label">合成プレビュー</div>
+        <div id="ig-preview-body">---</div>
+      </div>
 
       <div class="imggen-params">
         <div>
@@ -422,68 +121,23 @@ export function render() {
     </div>
   </section>
 
-  <!-- Jobs -->
-  <section class="card imggen-section imggen-jobs">
-    <h3>Jobs</h3>
-    <div id="ig-jobs-body">
-      <div class="imggen-empty">Loading...</div>
+  <!-- Presets -->
+  <section class="card imggen-section">
+    <div class="imggen-header">
+      <h3>Workflow Presets（プリセット管理）</h3>
+      <button id="ig-preset-new" class="btn btn-sm btn-primary">新規登録</button>
     </div>
-  </section>
-
-  <!-- Gallery -->
-  <section class="card imggen-section imggen-gallery">
-    <h3>Gallery</h3>
-    <div id="ig-gallery-body">
-      <div class="imggen-empty">Loading...</div>
-    </div>
+    <div id="ig-presets-body"><div class="imggen-empty">Loading...</div></div>
   </section>
 </div>
-
-<!-- Presets (プリセット管理) -->
-<section class="card imggen-section" style="margin-top:1rem;">
-  <div class="imggen-header">
-    <h3>Presets（プリセット管理）</h3>
-    <button id="ig-preset-new" class="btn btn-sm btn-primary">新規登録</button>
-  </div>
-  <div id="ig-presets-body">
-    <div class="imggen-empty">Loading...</div>
-  </div>
-</section>
-
+<div id="ig-sec-modal-root"></div>
 <div id="ig-preset-modal-root"></div>
 `;
 }
 
 // ============================================================
-// Workflows
+// ComfyUI panel
 // ============================================================
-async function loadWorkflows() {
-  const sel = $('ig-workflow');
-  if (!sel) return;
-  try {
-    const data = await api('/api/image/workflows');
-    workflows = data?.workflows || [];
-    if (workflows.length === 0) {
-      sel.innerHTML = '<option value="">(no workflows)</option>';
-      return;
-    }
-    sel.innerHTML = workflows.map(w => {
-      const label = `${w.name}${w.description ? ' — ' + w.description : ''}${w.main_pc_only ? ' [main]' : ''}`;
-      return `<option value="${esc(w.name)}">${esc(label)}</option>`;
-    }).join('');
-  } catch (err) {
-    console.error('workflows load failed', err);
-    sel.innerHTML = '<option value="">(load failed)</option>';
-  }
-}
-
-// ============================================================
-// ComfyUI control panel (status / start / stop / open)
-// ============================================================
-let comfyAgents = [];
-let comfyStatusTimer = null;
-const comfyBusy = new Set();  // agent_id 単位の操作中フラグ
-
 async function loadComfyPanel() {
   try {
     const data = await api('/api/image/agents');
@@ -502,23 +156,12 @@ function renderComfyPanel(statusMap) {
   if (!comfyAgents.length) { el.innerHTML = ''; return; }
   el.innerHTML = comfyAgents.map(a => {
     const st = statusMap[a.id] || { loading: true };
-    let dotClass = '';
-    let statusLabel = '読み込み中...';
-    let pidPart = '';
+    let dotClass = '', statusLabel = '読み込み中...', pidPart = '';
     if (!st.loading) {
-      if (st.unreachable) {
-        dotClass = 'error';
-        statusLabel = 'Agent 応答なし';
-      } else if (st.available) {
-        dotClass = 'running';
-        statusLabel = '稼働中';
-        if (st.pid) pidPart = ` (PID ${st.pid})`;
-      } else if (st.running) {
-        dotClass = 'starting';
-        statusLabel = '起動中 / 応答待ち';
-      } else {
-        statusLabel = '停止';
-      }
+      if (st.unreachable) { dotClass = 'error'; statusLabel = 'Agent 応答なし'; }
+      else if (st.available) { dotClass = 'running'; statusLabel = '稼働中'; if (st.pid) pidPart = ` (PID ${st.pid})`; }
+      else if (st.running) { dotClass = 'starting'; statusLabel = '起動中 / 応答待ち'; }
+      else { statusLabel = '停止'; }
     }
     const busy = comfyBusy.has(a.id);
     const isUp = !st.loading && (st.running || st.available);
@@ -533,10 +176,8 @@ function renderComfyPanel(statusMap) {
         <span class="spacer"></span>
         ${actionBtn}
         <a href="${esc(a.comfyui_url)}" target="_blank" rel="noopener" title="${esc(a.comfyui_url)}">開く</a>
-      </div>
-    `;
+      </div>`;
   }).join('');
-  // バインド
   el.querySelectorAll('button[data-comfy-action]').forEach(btn => {
     btn.addEventListener('click', () => handleComfyAction(btn.dataset.agent, btn.dataset.comfyAction));
   });
@@ -545,12 +186,8 @@ function renderComfyPanel(statusMap) {
 async function refreshComfyStatus() {
   if (!comfyAgents.length) return;
   const results = await Promise.all(comfyAgents.map(async a => {
-    try {
-      const s = await api(`/api/image/agents/${encodeURIComponent(a.id)}/comfyui/status`);
-      return [a.id, s];
-    } catch (err) {
-      return [a.id, { unreachable: true }];
-    }
+    try { return [a.id, await api(`/api/image/agents/${encodeURIComponent(a.id)}/comfyui/status`)]; }
+    catch { return [a.id, { unreachable: true }]; }
   }));
   const map = {};
   results.forEach(([id, s]) => { map[id] = s; });
@@ -558,13 +195,12 @@ async function refreshComfyStatus() {
 }
 
 async function handleComfyAction(agentId, action) {
-  if (!agentId || !action) return;
-  if (comfyBusy.has(agentId)) return;
+  if (!agentId || !action || comfyBusy.has(agentId)) return;
   comfyBusy.add(agentId);
   refreshComfyStatus();
   try {
     await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/${action}`, { method: 'POST' });
-    toast(`${action === 'start' ? '起動' : '停止'}リクエストを送信しました`, 'info');
+    toast(`${action === 'start' ? '起動' : '停止'}リクエスト送信`, 'info');
   } catch (err) {
     toast(`ComfyUI ${action} 失敗: ${err?.message || err}`, 'error');
   } finally {
@@ -574,140 +210,299 @@ async function handleComfyAction(agentId, action) {
 }
 
 // ============================================================
-// Jobs
+// Workflows
 // ============================================================
-function renderJobs() {
-  const el = $('ig-jobs-body');
+async function loadWorkflows() {
+  const sel = $('ig-workflow');
+  if (!sel) return;
+  try {
+    const data = await GenerationAPI.listWorkflows();
+    workflows = data?.workflows || [];
+    if (!workflows.length) { sel.innerHTML = '<option value="">(no workflows)</option>'; return; }
+    sel.innerHTML = workflows.map(w => {
+      const label = `${w.name}${w.description ? ' — ' + w.description : ''}${w.main_pc_only ? ' [main]' : ''}`;
+      return `<option value="${esc(w.name)}">${esc(label)}</option>`;
+    }).join('');
+  } catch (err) {
+    console.error('workflows load failed', err);
+    sel.innerHTML = '<option value="">(load failed)</option>';
+  }
+}
+
+// ============================================================
+// Sections
+// ============================================================
+async function loadSections() {
+  try {
+    const [cats, secs] = await Promise.all([
+      GenerationAPI.listCategories(),
+      GenerationAPI.listSections(),
+    ]);
+    categories = (cats?.categories || []).sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+    sections = secs?.sections || [];
+  } catch (err) {
+    console.error('sections load failed', err);
+    categories = []; sections = [];
+  }
+  renderSections();
+  renderUserPosOptions();
+}
+
+function renderUserPosOptions() {
+  const sel = $('ig-userpos');
+  if (!sel) return;
+  const cur = sel.value || 'tail';
+  const catOpts = categories.map(c =>
+    `<option value="section:${esc(c.key)}">カテゴリ: ${esc(c.label)}</option>`
+  ).join('');
+  sel.innerHTML = `
+    <option value="tail">末尾</option>
+    <option value="head">先頭</option>
+    ${catOpts}
+  `;
+  sel.value = cur;  // 既存選択が消えなければ復元
+}
+
+function renderSections() {
+  const el = $('ig-sec-cats');
   if (!el) return;
-  if (!jobs || jobs.length === 0) {
-    el.innerHTML = '<div class="imggen-empty">No jobs yet</div>';
+  if (!categories.length) {
+    el.innerHTML = '<div class="imggen-empty" style="padding:0.4rem;">カテゴリがありません</div>';
     return;
   }
-  el.innerHTML = jobs.map(j => {
-    const badge = statusBadgeClass(j.status);
-    const prog = Math.max(0, Math.min(100, Number(j.progress) || 0));
-    const canCancel = !isTerminal(j.status);
-    const err = j.last_error ? `<div class="imggen-err">${esc(j.last_error)}</div>` : '';
+  el.innerHTML = categories.map(c => {
+    const list = sections.filter(s => s.category_key === c.key)
+      .sort((a, b) => (b.starred - a.starred) || a.name.localeCompare(b.name));
+    const chips = list.map(s => {
+      const selected = chosen.includes(s.id);
+      const star = s.starred ? '★ ' : '';
+      return `<span class="imggen-section-chip ${selected ? 'selected' : ''}" data-sid="${s.id}" title="${esc(s.positive || s.negative || '')}">${star}${esc(s.name)}</span>`;
+    }).join('') || '<span class="text-muted text-xs">（未登録）</span>';
     return `
-      <div class="imggen-job-row" data-jid="${esc(j.job_id)}">
-        <div>
-          <span class="badge ${badge}">${esc(j.status)}</span>
-          <div class="imggen-job-id">${esc((j.job_id || '').slice(0, 12))}</div>
+      <div class="imggen-section-cat" data-cat="${esc(c.key)}">
+        <div class="cat-label">
+          <strong>${esc(c.label)}</strong>
+          <button class="add-btn" data-add-cat="${esc(c.key)}">+ 追加</button>
         </div>
-        <div>
-          <div class="text-xs">${esc(j.workflow_name || '-')}</div>
-          <div class="imggen-progress"><div class="imggen-progress-bar" style="width:${prog}%"></div></div>
-          ${err}
-        </div>
-        <div>
-          ${canCancel
-            ? `<button class="btn btn-sm btn-danger" data-cancel="${esc(j.job_id)}">Cancel</button>`
-            : `<span class="text-xs text-muted">${fmtTime(j.finished_at || j.created_at)}</span>`}
-        </div>
+        <div class="imggen-section-picker">${chips}</div>
       </div>`;
   }).join('');
-  el.onclick = (e) => {
-    const btn = e.target.closest('button[data-cancel]');
-    if (btn) handleCancel(btn.dataset.cancel);
-  };
+
+  // Chip click → toggle
+  el.querySelectorAll('.imggen-section-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const sid = Number(chip.dataset.sid);
+      const idx = chosen.indexOf(sid);
+      if (idx >= 0) chosen.splice(idx, 1);
+      else chosen.push(sid);
+      renderChosen();
+      chip.classList.toggle('selected');
+      schedulePreview();
+    });
+  });
+  // "+ 追加" → 新規作成モーダル
+  el.querySelectorAll('[data-add-cat]').forEach(btn => {
+    btn.addEventListener('click', () => openSectionModal({ category_key: btn.dataset.addCat }));
+  });
+  renderChosen();
 }
 
-async function loadJobs() {
-  try {
-    const data = await api('/api/image/jobs', { params: { limit: 30 } });
-    jobs = data?.jobs || [];
-    renderJobs();
-  } catch (err) {
-    console.error('jobs load failed', err);
-  }
-}
-
-async function handleCancel(jobId) {
-  if (!confirm('Cancel this job?')) return;
-  try {
-    await api(`/api/image/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
-    toast('Cancel requested', 'info');
-    await loadJobs();
-  } catch (err) {
-    console.error('cancel failed', err);
-    toast('Cancel failed', 'error');
-  }
-}
-
-// ============================================================
-// SSE
-// ============================================================
-function connectSSE() {
-  if (sse) sse.close();
-  sse = new EventSource('/api/image/jobs/stream');
-  sse.onmessage = (ev) => {
-    try {
-      const evt = JSON.parse(ev.data);
-      const jid = evt.job_id;
-      if (!jid) return;
-      const idx = jobs.findIndex(j => j.job_id === jid);
-      if (idx < 0) {
-        // 新規 or 未ロード → 再取得
-        loadJobs();
-        return;
-      }
-      // 差分反映
-      const j = jobs[idx];
-      if (evt.status) j.status = evt.status;
-      if (typeof evt.progress === 'number') j.progress = evt.progress;
-      if (evt.event === 'error' && evt.detail?.error) j.last_error = evt.detail.error;
-      if (evt.event === 'result' || evt.status === 'done') {
-        // done なら gallery も更新
-        setTimeout(loadGallery, 500);
-      }
-      renderJobs();
-    } catch (e) { /* ignore */ }
-  };
-  sse.onerror = () => {
-    try { sse.close(); } catch { /* nop */ }
-    sse = null;
-    setTimeout(connectSSE, 3000);
-  };
-}
-
-// ============================================================
-// Gallery
-// ============================================================
-function renderGallery() {
-  const el = $('ig-gallery-body');
+function renderChosen() {
+  const el = $('ig-sec-chosen');
   if (!el) return;
-  if (!gallery || gallery.length === 0) {
-    el.innerHTML = '<div class="imggen-empty">No images yet</div>';
+  if (!chosen.length) {
+    el.innerHTML = '<span class="text-muted text-xs">（セクション未選択）</span>';
     return;
   }
-  el.innerHTML = `<div class="imggen-gallery-grid">${gallery.map((g, i) => `
-    <div class="imggen-gallery-item" data-idx="${i}">
-      <img loading="lazy" src="${esc(g.thumb_url)}" alt="">
-    </div>`).join('')}</div>`;
-  el.onclick = (e) => {
-    const item = e.target.closest('[data-idx]');
-    if (!item) return;
-    const g = gallery[Number(item.dataset.idx)];
-    if (g) openLightbox(g.url);
+  el.innerHTML = chosen.map(sid => {
+    const s = sections.find(x => x.id === sid);
+    if (!s) return '';
+    return `<span class="imggen-chosen-chip" data-key="${sid}" data-sid="${sid}">
+      ${esc(s.name)}
+      <span class="x" data-remove="${sid}">×</span>
+    </span>`;
+  }).join('');
+  // × で削除
+  el.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sid = Number(btn.dataset.remove);
+      chosen = chosen.filter(x => x !== sid);
+      renderSections();
+      schedulePreview();
+    });
+  });
+  // drag 並び替え
+  makeSortable(el, (order) => {
+    chosen = order.map(k => Number(k)).filter(n => !isNaN(n));
+    schedulePreview();
+  });
+}
+
+// ============================================================
+// Compose preview (client-side; debounced)
+// ============================================================
+function schedulePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 300);
+}
+
+function runPreview() {
+  const el = $('ig-preview-body');
+  if (!el) return;
+  const rows = chosen.map(sid => sections.find(s => s.id === sid)).filter(Boolean);
+  const userPos = $('ig-positive')?.value || '';
+  const userNeg = $('ig-negative')?.value || '';
+  const pos = $('ig-userpos')?.value || 'tail';
+  const res = composePromptClient(rows, {
+    userPositive: userPos, userNegative: userNeg, userPosition: pos,
+  });
+  const warnHtml = res.warnings.length
+    ? `<div class="warn">⚠ ${res.warnings.map(esc).join(' / ')}</div>` : '';
+  el.innerHTML = `
+    <div><strong>POS</strong>: ${esc(res.positive) || '<span class="text-muted">(empty)</span>'}</div>
+    <div style="margin-top:0.2rem;"><strong>NEG</strong>: ${esc(res.negative) || '<span class="text-muted">(empty)</span>'}</div>
+    ${warnHtml}
+  `;
+}
+
+// ============================================================
+// Section create/edit modal
+// ============================================================
+function closeSectionModal() {
+  const root = $('ig-sec-modal-root');
+  if (root) root.innerHTML = '';
+}
+
+function openSectionModal({ category_key = '', section_id = null } = {}) {
+  const root = $('ig-sec-modal-root');
+  if (!root) return;
+  const editing = section_id ? sections.find(s => s.id === section_id) : null;
+  const catOpts = categories.map(c =>
+    `<option value="${esc(c.key)}" ${c.key === (editing?.category_key || category_key) ? 'selected' : ''}>${esc(c.label)}</option>`
+  ).join('');
+  root.innerHTML = `
+    <div class="imggen-modal-backdrop" id="ig-sec-bg">
+      <div class="imggen-modal">
+        <div class="imggen-modal-header">
+          <span>セクション${editing ? '編集' : '新規登録'}</span>
+          <button id="ig-sec-close" class="btn btn-sm">×</button>
+        </div>
+        <div class="imggen-modal-body">
+          <div class="imggen-meta-grid">
+            <div>
+              <label class="text-xs">category</label>
+              <select id="ig-sec-cat" class="form-input">${catOpts}</select>
+            </div>
+            <div>
+              <label class="text-xs">name</label>
+              <input id="ig-sec-name" class="form-input" type="text" value="${esc(editing?.name || '')}">
+            </div>
+          </div>
+          <label class="text-xs">positive（,区切り）</label>
+          <textarea id="ig-sec-pos" style="min-height:60px;">${esc(editing?.positive || '')}</textarea>
+          <label class="text-xs">negative（,区切り）</label>
+          <textarea id="ig-sec-neg" style="min-height:60px;">${esc(editing?.negative || '')}</textarea>
+          <label class="text-xs">description</label>
+          <input id="ig-sec-desc" class="form-input" type="text" value="${esc(editing?.description || '')}">
+          <label class="text-xs">
+            <input id="ig-sec-star" type="checkbox" ${editing?.starred ? 'checked' : ''}> お気に入り
+          </label>
+        </div>
+        <div class="imggen-modal-footer">
+          ${editing && !editing.is_builtin
+            ? `<button id="ig-sec-del" class="btn btn-sm btn-danger" style="margin-right:auto;">削除</button>` : ''}
+          <button id="ig-sec-cancel" class="btn btn-sm">キャンセル</button>
+          <button id="ig-sec-save" class="btn btn-sm btn-primary">${editing ? '更新' : '登録'}</button>
+        </div>
+      </div>
+    </div>`;
+  const close = closeSectionModal;
+  $('ig-sec-close')?.addEventListener('click', close);
+  $('ig-sec-cancel')?.addEventListener('click', close);
+  $('ig-sec-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-sec-bg') close(); });
+  $('ig-sec-save')?.addEventListener('click', () => handleSectionSave(editing));
+  $('ig-sec-del')?.addEventListener('click', () => handleSectionDelete(editing));
+}
+
+async function handleSectionSave(editing) {
+  const body = {
+    category_key: $('ig-sec-cat')?.value,
+    name: ($('ig-sec-name')?.value || '').trim(),
+    positive: $('ig-sec-pos')?.value || '',
+    negative: $('ig-sec-neg')?.value || '',
+    description: ($('ig-sec-desc')?.value || '').trim(),
+    starred: !!$('ig-sec-star')?.checked,
   };
-}
-
-function openLightbox(url) {
-  const el = document.createElement('div');
-  el.className = 'imggen-lightbox';
-  el.innerHTML = `<img src="${esc(url)}" alt="">`;
-  el.addEventListener('click', () => el.remove());
-  document.body.appendChild(el);
-}
-
-async function loadGallery() {
+  if (!body.name) { toast('name は必須', 'error'); return; }
   try {
-    const data = await api('/api/image/gallery', { params: { limit: 40 } });
-    gallery = data?.items || [];
-    renderGallery();
+    if (editing) {
+      await GenerationAPI.updateSection(editing.id, body);
+      toast('更新しました', 'success');
+    } else {
+      await GenerationAPI.createSection(body);
+      toast('登録しました', 'success');
+    }
+    closeSectionModal();
+    await loadSections();
   } catch (err) {
-    console.error('gallery load failed', err);
+    toast(`保存失敗: ${err?.message || err}`, 'error');
   }
+}
+
+async function handleSectionDelete(editing) {
+  if (!editing || !confirm(`セクション "${editing.name}" を削除しますか？`)) return;
+  try {
+    await GenerationAPI.deleteSection(editing.id);
+    chosen = chosen.filter(x => x !== editing.id);
+    toast('削除しました', 'info');
+    closeSectionModal();
+    await loadSections();
+  } catch (err) {
+    toast(`削除失敗: ${err?.message || err}`, 'error');
+  }
+}
+
+// ============================================================
+// Prompt crafter intake (stash から取り込み)
+// ============================================================
+async function checkStashPrefill() {
+  const h = location.hash || '';
+  const qi = h.indexOf('?');
+  if (qi < 0) return;
+  const params = new URLSearchParams(h.slice(qi + 1));
+  const kind = params.get('prefill');
+  if (!kind) return;
+  const stash = stashGet();
+  if (!stash) return;
+  try {
+    const sel = $('ig-workflow');
+    if (sel && stash.workflow_name) {
+      const found = Array.from(sel.options).some(o => o.value === stash.workflow_name);
+      if (found) sel.value = stash.workflow_name;
+    }
+    if (stash.positive != null) $('ig-positive').value = stash.positive || '';
+    if (stash.negative != null) $('ig-negative').value = stash.negative || '';
+    const p = stash.params || {};
+    const map = {
+      WIDTH: 'ig-width', HEIGHT: 'ig-height', STEPS: 'ig-steps', CFG: 'ig-cfg',
+      SEED: 'ig-seed', SAMPLER: 'ig-sampler', SCHEDULER: 'ig-scheduler',
+    };
+    for (const [k, id] of Object.entries(map)) {
+      if (p[k] !== undefined && $(id)) $(id).value = p[k];
+    }
+    toast(`取り込み完了（${kind}）`, 'info');
+    stashClear();
+    schedulePreview();
+  } catch (err) {
+    console.error('prefill failed', err);
+  }
+}
+
+function handlePromptCrafterClick() {
+  // prompt_crafter ページへ誘導（現状は手動、後で stash ベース連携を拡張可能）
+  location.hash = '#prompts';
+  toast('Prompts ページで履歴を選んでください', 'info');
 }
 
 // ============================================================
@@ -728,32 +523,30 @@ async function handleSubmit() {
   const btn = $('ig-submit');
   const statusEl = $('ig-status');
   const workflow_name = $('ig-workflow')?.value;
-  if (!workflow_name) {
-    toast('Workflow is required', 'error');
-    return;
-  }
+  if (!workflow_name) { toast('Workflow is required', 'error'); return; }
   const positive = $('ig-positive')?.value?.trim() || '';
   const negative = $('ig-negative')?.value?.trim() || '';
   const params = {};
-  const width = readNum('ig-width'); if (width !== null) params.WIDTH = width;
-  const height = readNum('ig-height'); if (height !== null) params.HEIGHT = height;
-  const steps = readNum('ig-steps'); if (steps !== null) params.STEPS = steps;
-  const cfg = readNum('ig-cfg'); if (cfg !== null) params.CFG = cfg;
-  const seed = readNum('ig-seed'); if (seed !== null) params.SEED = seed;
-  const sampler = readStr('ig-sampler'); if (sampler) params.SAMPLER = sampler;
-  const scheduler = readStr('ig-scheduler'); if (scheduler) params.SCHEDULER = scheduler;
+  const w = readNum('ig-width');  if (w !== null) params.WIDTH = w;
+  const h = readNum('ig-height'); if (h !== null) params.HEIGHT = h;
+  const st = readNum('ig-steps'); if (st !== null) params.STEPS = st;
+  const c  = readNum('ig-cfg');   if (c !== null) params.CFG = c;
+  const se = readNum('ig-seed');  if (se !== null) params.SEED = se;
+  const sp = readStr('ig-sampler');   if (sp) params.SAMPLER = sp;
+  const sc = readStr('ig-scheduler'); if (sc) params.SCHEDULER = sc;
 
   btn.disabled = true;
-  statusEl.textContent = 'Submitting...';
+  statusEl.textContent = '投入中...';
   try {
-    const res = await api('/api/image/generate', {
-      method: 'POST',
-      body: { workflow_name, positive, negative, params },
-    });
+    const body = {
+      workflow_name, positive, negative, params,
+      section_ids: chosen,
+      user_position: $('ig-userpos')?.value || 'tail',
+    };
+    const res = await GenerationAPI.submit(body);
     const jid = res?.job_id || '';
-    statusEl.textContent = `Enqueued: ${jid}`;
+    statusEl.innerHTML = `Enqueued: <code>${esc(jid)}</code> — <a href="#image-jobs">Jobs を見る →</a>`;
     toast('Job enqueued', 'success');
-    await loadJobs();
   } catch (err) {
     console.error('generate failed', err);
     statusEl.textContent = `Error: ${err.message || err}`;
@@ -764,7 +557,7 @@ async function handleSubmit() {
 }
 
 // ============================================================
-// Presets — list / delete
+// Presets（Workflow JSON 管理）
 // ============================================================
 const _PLACEHOLDER_OPTIONS = [
   'POSITIVE', 'NEGATIVE', 'SEED', 'STEPS', 'CFG', 'WIDTH', 'HEIGHT',
@@ -776,9 +569,9 @@ async function loadPresets() {
   const el = $('ig-presets-body');
   if (!el) return;
   try {
-    const data = await api('/api/image/workflows');
+    const data = await GenerationAPI.listWorkflows();
     const list = data?.workflows || [];
-    if (list.length === 0) {
+    if (!list.length) {
       el.innerHTML = '<div class="imggen-empty">まだプリセットがありません</div>';
       return;
     }
@@ -809,18 +602,14 @@ async function loadPresets() {
           await api(`/api/image/workflows/${id}`, { method: 'DELETE' });
           toast('削除しました', 'info');
           await Promise.all([loadPresets(), loadWorkflows()]);
-        } catch (err) {
-          toast(`削除失敗: ${err?.message || err}`, 'error');
-        }
+        } catch (err) { toast(`削除失敗: ${err?.message || err}`, 'error'); }
       }
       if (view) {
         const id = Number(view.dataset.presetView);
         try {
           const data = await api(`/api/image/workflows/${id}`);
           openPresetModal({ edit: data });
-        } catch (err) {
-          toast(`読み込み失敗: ${err?.message || err}`, 'error');
-        }
+        } catch (err) { toast(`読み込み失敗: ${err?.message || err}`, 'error'); }
       }
     };
   } catch (err) {
@@ -829,9 +618,6 @@ async function loadPresets() {
   }
 }
 
-// ============================================================
-// Presets — modal
-// ============================================================
 function closePresetModal() {
   const root = $('ig-preset-modal-root');
   if (root) root.innerHTML = '';
@@ -849,12 +635,8 @@ function renderPresetModal(edit = null) {
   const root = $('ig-preset-modal-root');
   if (!root) return;
   const tabsHtml = comfyAgents.map(a =>
-    `<button data-ph-source="history:${esc(a.id)}">ComfyUI履歴: ${esc(a.name || a.id)}</button>`
-  ).join('') + `<button data-ph-source="file">ファイルから</button>`;
-
-  const phHtml = renderPlaceholderEditor();
-  const metaHtml = renderMetaForm(edit);
-
+    `<button data-ph-source="history:${esc(a.id)}">履歴: ${esc(a.name || a.id)}</button>`
+  ).join('') + `<button data-ph-source="file">ファイル</button>`;
   root.innerHTML = `
     <div class="imggen-modal-backdrop" id="ig-preset-modal-bg">
       <div class="imggen-modal" role="dialog">
@@ -865,24 +647,24 @@ function renderPresetModal(edit = null) {
         <div class="imggen-modal-body">
           ${edit ? '' : `
             <div>
-              <label class="text-xs" style="color:var(--text-secondary);">ソース選択</label>
+              <label class="text-xs">ソース選択</label>
               <div class="imggen-source-tabs">${tabsHtml}</div>
               <input id="ig-preset-file" type="file" accept=".json,application/json" style="display:none;">
               <div id="ig-preset-history" style="margin-top:0.4rem;"></div>
             </div>`}
           <div>
-            <label class="text-xs" style="color:var(--text-secondary);">Placeholder 編集（文字列値のみ一覧）</label>
-            <div id="ig-preset-ph">${phHtml}</div>
+            <label class="text-xs">Placeholder 編集</label>
+            <div id="ig-preset-ph">${renderPlaceholderEditor()}</div>
           </div>
           <div>
-            <label class="text-xs" style="color:var(--text-secondary);">Workflow JSON (直接編集可)</label>
+            <label class="text-xs">Workflow JSON</label>
             <textarea id="ig-preset-json" class="imggen-json-preview">${esc(
               presetModalState.workflowJson ? JSON.stringify(presetModalState.workflowJson, null, 2) : ''
             )}</textarea>
           </div>
           <div>
-            <label class="text-xs" style="color:var(--text-secondary);">メタ情報</label>
-            ${metaHtml}
+            <label class="text-xs">メタ情報</label>
+            ${renderMetaForm(edit)}
           </div>
         </div>
         <div class="imggen-modal-footer">
@@ -891,16 +673,11 @@ function renderPresetModal(edit = null) {
         </div>
       </div>
     </div>`;
-
-  // Event binding
   $('ig-preset-modal-close')?.addEventListener('click', closePresetModal);
   $('ig-preset-cancel')?.addEventListener('click', closePresetModal);
-  $('ig-preset-modal-bg')?.addEventListener('click', (e) => {
-    if (e.target.id === 'ig-preset-modal-bg') closePresetModal();
-  });
+  $('ig-preset-modal-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-preset-modal-bg') closePresetModal(); });
   $('ig-preset-save')?.addEventListener('click', () => handlePresetSave(edit));
   $('ig-preset-json')?.addEventListener('input', (e) => {
-    // 編集をモデルへ反映（バリデートは保存時）
     try {
       const parsed = JSON.parse(e.target.value);
       if (parsed && typeof parsed === 'object') {
@@ -908,14 +685,11 @@ function renderPresetModal(edit = null) {
         $('ig-preset-ph').innerHTML = renderPlaceholderEditor();
         bindPlaceholderActions();
       }
-    } catch { /* 無効なJSON中は無視 */ }
+    } catch { /* 無効JSON中は無視 */ }
   });
-
-  // ソースタブ
   root.querySelectorAll('[data-ph-source]').forEach(btn => {
     btn.addEventListener('click', () => handleSourceSelect(btn.dataset.phSource));
   });
-
   bindPlaceholderActions();
 }
 
@@ -953,18 +727,14 @@ function renderMetaForm(edit) {
 function renderPlaceholderEditor() {
   const wf = presetModalState.workflowJson;
   if (!wf || typeof wf !== 'object') {
-    return '<div class="imggen-empty" style="padding:0.6rem;">まだワークフローが読み込まれていません</div>';
+    return '<div class="imggen-empty" style="padding:0.6rem;">ワークフロー未読込</div>';
   }
   const literals = extractStringLiterals(wf);
-  if (literals.length === 0) {
-    return '<div class="imggen-empty" style="padding:0.6rem;">編集可能な文字列フィールドが見つかりません</div>';
-  }
+  if (!literals.length) return '<div class="imggen-empty" style="padding:0.6rem;">編集可能な文字列フィールドなし</div>';
   const optHtml = _PLACEHOLDER_OPTIONS.map(k => `<option value="${k}">{{${k}}}</option>`).join('');
   return `
     <table class="imggen-ph-table">
-      <thead>
-        <tr><th>node</th><th>class_type</th><th>key</th><th>value</th><th>アクション</th></tr>
-      </thead>
+      <thead><tr><th>node</th><th>class_type</th><th>key</th><th>value</th><th>アクション</th></tr></thead>
       <tbody>
         ${literals.map(x => {
           const isPh = /^\{\{[A-Z0-9_]+\}\}$/.test(x.value);
@@ -978,18 +748,14 @@ function renderPlaceholderEditor() {
               <td>${esc(x.key)}</td>
               <td class="val">${valHtml}</td>
               <td class="imggen-ph-actions">
-                <select data-ph-key>
-                  <option value="">--</option>
-                  ${optHtml}
-                </select>
+                <select data-ph-key><option value="">--</option>${optHtml}</select>
                 <button class="btn btn-sm" data-ph-apply>↔</button>
-                ${isPh ? `<button class="btn btn-sm" data-ph-clear title="プレースホルダ解除">解除</button>` : ''}
+                ${isPh ? `<button class="btn btn-sm" data-ph-clear>解除</button>` : ''}
               </td>
             </tr>`;
         }).join('')}
       </tbody>
-    </table>
-  `;
+    </table>`;
 }
 
 function bindPlaceholderActions() {
@@ -1014,7 +780,7 @@ function bindPlaceholderActions() {
       if (!tr) return;
       const nid = tr.dataset.nid;
       const k = tr.dataset.key;
-      const def = prompt('新しい値を入力（空でキャンセル）:', '');
+      const def = prompt('新しい値（空でキャンセル）:', '');
       if (def == null) return;
       if (presetModalState.workflowJson?.[nid]?.inputs) {
         presetModalState.workflowJson[nid].inputs[k] = def;
@@ -1047,7 +813,6 @@ function extractStringLiterals(wf) {
 
 async function handleSourceSelect(src) {
   presetModalState.source = src;
-  // タブのアクティブ表示
   document.querySelectorAll('[data-ph-source]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.phSource === src);
   });
@@ -1060,16 +825,13 @@ async function handleSourceSelect(src) {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
+        const parsed = JSON.parse(await file.text());
         if (!parsed || typeof parsed !== 'object') throw new Error('invalid JSON');
         presetModalState.workflowJson = parsed;
         presetModalState.sourceLabel = `file: ${file.name}`;
         refreshModalAfterEdit();
-        toast(`読み込みました: ${file.name}`, 'info');
-      } catch (err) {
-        toast(`JSON 解析失敗: ${err?.message || err}`, 'error');
-      }
+        toast(`読み込み: ${file.name}`, 'info');
+      } catch (err) { toast(`JSON 解析失敗: ${err?.message || err}`, 'error'); }
     };
     return;
   }
@@ -1080,27 +842,23 @@ async function handleSourceSelect(src) {
       const data = await api(`/api/image/agents/${encodeURIComponent(agentId)}/comfyui/history?limit=20`);
       const items = data?.items || [];
       if (!data?.available) {
-        histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">ComfyUI が停止しています。先に起動してください。</div>';
+        histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">ComfyUI 停止中</div>';
         return;
       }
-      if (items.length === 0) {
-        histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">履歴がありません</div>';
-        return;
-      }
+      if (!items.length) { histEl.innerHTML = '<div class="imggen-empty" style="padding:0.5rem;">履歴なし</div>'; return; }
       histEl.innerHTML = `<div class="imggen-history-list">${items.map((it, i) => {
         const files = (it.output_files || []).join(', ');
-        return `
-          <div class="imggen-history-item" data-hidx="${i}">
-            <span class="pid">${esc(String(it.prompt_id).slice(0, 8))}</span>
-            <span>${esc(it.completed ? '✓' : (it.status_str || '?'))}</span>
-            <span style="flex:1; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(files)}</span>
-          </div>`;
+        return `<div class="imggen-history-item" data-hidx="${i}">
+          <span class="pid">${esc(String(it.prompt_id).slice(0, 8))}</span>
+          <span>${esc(it.completed ? '✓' : (it.status_str || '?'))}</span>
+          <span style="flex:1;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(files)}</span>
+        </div>`;
       }).join('')}</div>`;
       histEl.querySelectorAll('.imggen-history-item').forEach(it => {
         it.addEventListener('click', () => {
           const idx = Number(it.dataset.hidx);
           const picked = items[idx]?.workflow;
-          if (!picked) { toast('このエントリに API 形式がありません', 'error'); return; }
+          if (!picked) { toast('API 形式なし', 'error'); return; }
           presetModalState.workflowJson = picked;
           presetModalState.sourceLabel = `history: ${agentId}`;
           histEl.querySelectorAll('.imggen-history-item').forEach(x => x.classList.remove('selected'));
@@ -1116,28 +874,16 @@ async function handleSourceSelect(src) {
 
 async function handlePresetSave(edit) {
   const name = edit ? edit.name : ($('ig-meta-name')?.value || '').trim();
-  if (!/^[a-zA-Z0-9_\-]{1,64}$/.test(name)) {
-    toast('name は英数/_/- の 1〜64 文字', 'error');
-    return;
-  }
+  if (!/^[a-zA-Z0-9_\-]{1,64}$/.test(name)) { toast('name は英数/_/- の 1〜64 文字', 'error'); return; }
   let wfJson = presetModalState.workflowJson;
-  // textarea を正とする
   const raw = $('ig-preset-json')?.value || '';
   if (raw.trim()) {
-    try {
-      wfJson = JSON.parse(raw);
-    } catch (err) {
-      toast(`JSON 解析失敗: ${err.message}`, 'error');
-      return;
-    }
+    try { wfJson = JSON.parse(raw); }
+    catch (err) { toast(`JSON 解析失敗: ${err.message}`, 'error'); return; }
   }
-  if (!wfJson || typeof wfJson !== 'object') {
-    toast('Workflow JSON が空です', 'error');
-    return;
-  }
+  if (!wfJson || typeof wfJson !== 'object') { toast('Workflow JSON が空', 'error'); return; }
   const body = {
-    name,
-    workflow_json: wfJson,
+    name, workflow_json: wfJson,
     description: ($('ig-meta-desc')?.value || '').trim(),
     category: ($('ig-meta-category')?.value || 't2i').trim(),
     default_timeout_sec: Number($('ig-meta-timeout')?.value) || 300,
@@ -1162,31 +908,33 @@ async function handlePresetSave(edit) {
 export async function mount() {
   $('ig-submit')?.addEventListener('click', handleSubmit);
   $('ig-preset-new')?.addEventListener('click', () => openPresetModal({}));
+  $('ig-sec-new')?.addEventListener('click', () => openSectionModal({}));
+  $('ig-sec-reload')?.addEventListener('click', loadSections);
+  $('ig-prompt-crafter')?.addEventListener('click', handlePromptCrafterClick);
+  $('ig-positive')?.addEventListener('input', schedulePreview);
+  $('ig-negative')?.addEventListener('input', schedulePreview);
+  $('ig-userpos')?.addEventListener('change', schedulePreview);
 
-  // 並列で初期ロード
   await Promise.all([
     loadWorkflows(),
-    loadJobs(),
-    loadGallery(),
+    loadSections(),
     loadComfyPanel(),
     loadPresets(),
   ]);
 
-  // SSE（SSE が動けば jobs はそれで更新されるが、念のためポーリングも 10s で回す）
-  connectSSE();
-  pollTimer = setInterval(loadJobs, 10000);
-  galleryTimer = setInterval(loadGallery, 30000);
+  await checkStashPrefill();
+  schedulePreview();
   comfyStatusTimer = setInterval(refreshComfyStatus, 15000);
 }
 
 export function unmount() {
-  if (sse) { try { sse.close(); } catch { /* nop */ } sse = null; }
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  if (galleryTimer) { clearInterval(galleryTimer); galleryTimer = null; }
   if (comfyStatusTimer) { clearInterval(comfyStatusTimer); comfyStatusTimer = null; }
+  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
   closePresetModal();
+  closeSectionModal();
   workflows = [];
-  jobs = [];
-  gallery = [];
+  categories = [];
+  sections = [];
+  chosen = [];
   comfyAgents = [];
 }

@@ -21,6 +21,8 @@ import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
 import * as pending from './pages/pending.js';
 import * as imageGen from './pages/image-gen.js';
+import * as imageJobs from './pages/image-jobs.js';
+import * as imageGallery from './pages/image-gallery.js';
 import * as prompts from './pages/prompts.js';
 
 // ============================================================
@@ -42,7 +44,9 @@ const pages = {
   'input-relay':{ title: 'Input Relay',      module: inputRelay },
   stt:          { title: 'STT',              module: stt },
   activity:     { title: 'Activity',         module: activity },
-  'image-gen':  { title: 'Image Gen',        module: imageGen },
+  'image-gen':     { title: 'Image Gen',     module: imageGen },
+  'image-jobs':    { title: 'Image Jobs',    module: imageJobs },
+  'image-gallery': { title: 'Image Gallery', module: imageGallery },
   prompts:      { title: 'Prompts',          module: prompts },
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
@@ -59,7 +63,8 @@ let _navGen = 0;  // ナビゲーション世代カウンター（高速切り�
 // Router
 // ============================================================
 function getPageFromHash() {
-  const hash = location.hash.replace('#', '') || 'dashboard';
+  const raw = location.hash.replace('#', '') || 'dashboard';
+  const hash = raw.split('?')[0];  // クエリ部は除去
   return pages[hash] ? hash : 'dashboard';
 }
 

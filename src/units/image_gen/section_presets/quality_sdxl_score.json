@@ -1,0 +1,8 @@
+{
+  "category_key": "quality",
+  "name": "quality_sdxl_score",
+  "description": "Pony 系（score_*）向け高品質タグ",
+  "positive": "score_9, score_8_up, score_7_up, source_anime, rating_safe",
+  "negative": null,
+  "tags": "sdxl,pony,score"
+}

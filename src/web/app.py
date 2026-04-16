@@ -2515,6 +2515,309 @@ def create_web_app(bot) -> FastAPI:
         ]
         return {"workflows": out}
 
+    # --- /api/generation/* ( Phase 3.5c 並立 + セクション合成 ) ---
+
+    @app.post("/api/generation/submit", dependencies=[Depends(_verify)])
+    async def generation_submit(request: Request):
+        unit = _get_image_gen_unit()
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        workflow_name = (body.get("workflow_name") or "").strip()
+        if not workflow_name:
+            raise HTTPException(400, "workflow_name is required")
+        positive = body.get("positive")
+        negative = body.get("negative")
+        params = body.get("params") or {}
+        if not isinstance(params, dict):
+            raise HTTPException(400, "params must be an object")
+        section_ids = body.get("section_ids") or []
+        if not isinstance(section_ids, list):
+            raise HTTPException(400, "section_ids must be an array")
+        try:
+            section_ids = [int(v) for v in section_ids]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "section_ids must be integers")
+        user_position = str(body.get("user_position") or "tail")
+        modality = body.get("modality")
+        try:
+            job_id = await unit.enqueue(
+                user_id=_webgui_user_id or "webgui",
+                platform="web",
+                workflow_name=workflow_name,
+                positive=positive,
+                negative=negative,
+                params=params,
+                section_ids=section_ids or None,
+                user_position=user_position,
+                modality=modality,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, str(e))
+        return {"job_id": job_id}
+
+    @app.get("/api/generation/jobs", dependencies=[Depends(_verify)])
+    async def generation_jobs_list(
+        status: str | None = None, limit: int = 50, offset: int = 0,
+        modality: str = "image",
+    ):
+        unit = _get_image_gen_unit()
+        limit = max(1, min(200, int(limit)))
+        offset = max(0, int(offset))
+        # unit.list_jobs は image 固定。他モダリティは将来 DB 直参照で対応。
+        if modality != "image":
+            rows = await bot.database.generation_job_list(
+                status=status, modality=modality, limit=limit, offset=offset,
+            )
+            jobs = [await unit._row_to_dict(r) for r in rows]
+        else:
+            jobs = await unit.list_jobs(
+                user_id=None, status=status, limit=limit, offset=offset,
+            )
+        return {"jobs": jobs}
+
+    @app.get("/api/generation/jobs/{job_id}", dependencies=[Depends(_verify)])
+    async def generation_job_detail(job_id: str):
+        unit = _get_image_gen_unit()
+        job = await unit.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        return job
+
+    @app.post("/api/generation/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
+    async def generation_job_cancel(job_id: str):
+        unit = _get_image_gen_unit()
+        ok = await unit.cancel_job(job_id)
+        return {"ok": bool(ok)}
+
+    @app.get("/api/generation/jobs/stream")
+    async def generation_jobs_stream():
+        """ImageGenUnit イベントの SSE（/api/image/jobs/stream と同一ソース）。"""
+        unit = _get_image_gen_unit()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        unit.subscribe_events(queue)
+
+        async def event_generator():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30)
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                unit.unsubscribe_events(queue)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/generation/gallery", dependencies=[Depends(_verify)])
+    async def generation_gallery(limit: int = 50, offset: int = 0):
+        unit = _get_image_gen_unit()
+        limit = max(1, min(200, int(limit)))
+        offset = max(0, int(offset))
+        rows = await unit.list_gallery(limit=limit, offset=offset)
+        items: list[dict] = []
+        for r in rows:
+            paths = r.get("result_paths") or []
+            kinds = r.get("result_kinds") or []
+            if len(kinds) != len(paths):
+                kinds = ["image"] * len(paths)
+            for p, kind in zip(paths, kinds):
+                items.append({
+                    "job_id": r.get("job_id"),
+                    "path": p,
+                    "kind": kind,
+                    "thumb_url": f"/api/image/file?path={p}",
+                    "url": f"/api/image/file?path={p}",
+                    "created_at": r.get("finished_at"),
+                    "positive": r.get("positive"),
+                    "negative": r.get("negative"),
+                })
+        return {"items": items}
+
+    # --- section categories ---
+
+    @app.get("/api/generation/section-categories", dependencies=[Depends(_verify)])
+    async def section_categories_list():
+        rows = await bot.database.section_category_list()
+        return {"categories": [
+            {
+                "key": r["key"],
+                "label": r["label"],
+                "description": r.get("description"),
+                "display_order": int(r.get("display_order") or 500),
+                "is_builtin": bool(r.get("is_builtin")),
+            }
+            for r in rows
+        ]}
+
+    @app.post("/api/generation/section-categories", dependencies=[Depends(_verify)])
+    async def section_category_create(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        key = (body.get("key") or "").strip()
+        label = (body.get("label") or "").strip()
+        if not key or not label:
+            raise HTTPException(400, "key and label are required")
+        if await bot.database.section_category_get(key):
+            raise HTTPException(409, "category key already exists")
+        cid = await bot.database.section_category_insert(
+            key=key, label=label,
+            description=body.get("description"),
+            display_order=int(body.get("display_order") or 500),
+        )
+        return {"id": cid, "key": key}
+
+    @app.patch(
+        "/api/generation/section-categories/{key}",
+        dependencies=[Depends(_verify)],
+    )
+    async def section_category_update(key: str, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ok = await bot.database.section_category_update(
+            key,
+            label=body.get("label"),
+            description=body.get("description"),
+            display_order=body.get("display_order"),
+        )
+        if not ok:
+            raise HTTPException(404, "category not found or no changes")
+        return {"ok": True}
+
+    @app.delete(
+        "/api/generation/section-categories/{key}",
+        dependencies=[Depends(_verify)],
+    )
+    async def section_category_delete(key: str):
+        row = await bot.database.section_category_get(key)
+        if not row:
+            raise HTTPException(404, "category not found")
+        if row.get("is_builtin"):
+            raise HTTPException(400, "builtin category cannot be deleted")
+        ok = await bot.database.section_category_delete(key)
+        return {"ok": bool(ok)}
+
+    # --- sections (prompt fragments) ---
+
+    def _section_to_dict(r: dict) -> dict:
+        return {
+            "id": int(r["id"]),
+            "category_key": r.get("category_key"),
+            "name": r.get("name"),
+            "description": r.get("description"),
+            "positive": r.get("positive"),
+            "negative": r.get("negative"),
+            "tags": r.get("tags"),
+            "is_builtin": bool(r.get("is_builtin")),
+            "starred": bool(r.get("starred")),
+            "updated_at": r.get("updated_at"),
+        }
+
+    @app.get("/api/generation/sections", dependencies=[Depends(_verify)])
+    async def sections_list(
+        category_key: str | None = None, starred_only: bool = False,
+    ):
+        rows = await bot.database.section_list(
+            category_key=category_key, starred_only=bool(starred_only),
+        )
+        return {"sections": [_section_to_dict(r) for r in rows]}
+
+    @app.get("/api/generation/sections/{section_id}", dependencies=[Depends(_verify)])
+    async def section_detail(section_id: int):
+        r = await bot.database.section_get(int(section_id))
+        if not r:
+            raise HTTPException(404, "section not found")
+        return _section_to_dict(r)
+
+    @app.post("/api/generation/sections", dependencies=[Depends(_verify)])
+    async def section_create(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        category_key = (body.get("category_key") or "").strip()
+        name = (body.get("name") or "").strip()
+        if not category_key or not name:
+            raise HTTPException(400, "category_key and name are required")
+        if not await bot.database.section_category_get(category_key):
+            raise HTTPException(400, "unknown category_key")
+        sid = await bot.database.section_insert(
+            category_key=category_key, name=name,
+            positive=body.get("positive"), negative=body.get("negative"),
+            description=body.get("description"), tags=body.get("tags"),
+            starred=int(bool(body.get("starred"))),
+        )
+        return {"id": sid}
+
+    @app.patch("/api/generation/sections/{section_id}", dependencies=[Depends(_verify)])
+    async def section_update(section_id: int, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        fields: dict = {}
+        for k in ("name", "description", "positive", "negative", "tags", "category_key"):
+            if k in body:
+                fields[k] = body[k]
+        if "starred" in body:
+            fields["starred"] = int(bool(body["starred"]))
+        if not fields:
+            raise HTTPException(400, "no fields to update")
+        ok = await bot.database.section_update(int(section_id), **fields)
+        if not ok:
+            raise HTTPException(404, "section not found")
+        return {"ok": True}
+
+    @app.delete("/api/generation/sections/{section_id}", dependencies=[Depends(_verify)])
+    async def section_delete(section_id: int):
+        row = await bot.database.section_get(int(section_id))
+        if not row:
+            raise HTTPException(404, "section not found")
+        if row.get("is_builtin"):
+            raise HTTPException(400, "builtin section cannot be deleted")
+        ok = await bot.database.section_delete(int(section_id))
+        return {"ok": bool(ok)}
+
+    @app.post("/api/generation/compose-preview", dependencies=[Depends(_verify)])
+    async def section_compose_preview(request: Request):
+        """クライアントのプレビューと同じロジックをサーバで走らせる検証用。"""
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        section_ids = body.get("section_ids") or []
+        if not isinstance(section_ids, list):
+            raise HTTPException(400, "section_ids must be an array")
+        try:
+            section_ids = [int(v) for v in section_ids]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "section_ids must be integers")
+        user_positive = body.get("positive")
+        user_negative = body.get("negative")
+        user_position = str(body.get("user_position") or "tail")
+        rows = await bot.database.section_get_many(section_ids)
+        from src.units.image_gen.section_composer import compose_prompt
+        result = compose_prompt(
+            rows,
+            user_positive=user_positive,
+            user_negative=user_negative,
+            user_position=user_position,
+        )
+        return {
+            "positive": result.positive,
+            "negative": result.negative,
+            "warnings": list(result.warnings),
+            "dropped": list(result.dropped),
+        }
+
     # --- prompt_crafter セッション API ---
 
     def _get_prompt_crafter_unit():
