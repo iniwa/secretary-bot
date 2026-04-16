@@ -56,6 +56,11 @@ class ComfyUIManager:
         self._monitor_thread: Optional[threading.Thread] = None
         self._monitor_stop = threading.Event()
         self._logger = logger
+        # Windows で stdout を PIPE にすると tqdm の stderr.flush で EINVAL を踏むため
+        # real file にリダイレクトする。state.log_tail 用に別スレッドで tail する。
+        self._log_fh = None
+        self._log_path: Optional[str] = None
+        self._log_tail_stop = threading.Event()
 
     @property
     def _probe_host(self) -> str:
@@ -170,31 +175,31 @@ class ComfyUIManager:
                 creationflags = 0
                 if os.name == "nt":
                     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                # Windows + CREATE_NO_WINDOW + パイプ stdout だと tqdm が stderr.flush で
-                # EINVAL を踏むことがある。tqdm.__init__ の status_printer 初回 flush が
-                # 原因なので MININTERVAL では防げない → TQDM_DISABLE=1 で完全無効化する。
-                # 進捗は ComfyUI の WebSocket progress イベントで独立に届くので UI 影響なし。
+                # Windows + CREATE_NO_WINDOW で stdout を PIPE にすると、tqdm の
+                # status_printer が呼ぶ sys.stderr.flush() が anonymous pipe に対して
+                # OSError [Errno 22] を投げ、KSampler 以降の全ジョブが失敗する。
+                # stdout/stderr を real file にリダイレクトすれば flush は成功する。
                 env = os.environ.copy()
                 env.setdefault("PYTHONUNBUFFERED", "1")
                 env.setdefault("PYTHONIOENCODING", "utf-8")
-                env.setdefault("TQDM_DISABLE", "1")
+                self._log_path = os.path.join(self.root, "comfyui.agent.log")
+                # 起動の度に切り詰め（恒久保存したければ別途 rotate）
+                self._log_fh = open(self._log_path, "w", buffering=1, encoding="utf-8", errors="replace")
                 self._proc = subprocess.Popen(
                     cmd,
                     cwd=os.path.join(self.root, "comfyui"),
-                    stdout=subprocess.PIPE,
+                    stdout=self._log_fh,
                     stderr=subprocess.STDOUT,
                     creationflags=creationflags,
-                    text=True,
-                    errors="replace",
                     env=env,
-                    bufsize=1,
                 )
                 self.state.pid = self._proc.pid
                 self.state.started_at = time.time()
                 self.state.last_error = None
                 self._log("info", f"started pid={self._proc.pid} cmd={shlex.join(cmd)}")
-                # stdout を別スレッドで吸い上げ
-                t = threading.Thread(target=self._drain_stdout, daemon=True)
+                # log ファイルを別スレッドで tail し state.log_tail を更新
+                self._log_tail_stop.clear()
+                t = threading.Thread(target=self._tail_log_file, daemon=True)
                 t.start()
                 self._ensure_monitor()
                 return {"ok": True, "pid": self._proc.pid, "already_running": False}
@@ -203,15 +208,32 @@ class ComfyUIManager:
                 self._log("error", self.state.last_error)
                 return {"ok": False, "error": str(e), "transient": True}
 
-    def _drain_stdout(self) -> None:
-        if self._proc is None or self._proc.stdout is None:
+    def _tail_log_file(self) -> None:
+        """ComfyUI ログファイルを tail して state.log_tail を更新。"""
+        if not self._log_path:
             return
-        for line in self._proc.stdout:
-            line = (line or "").rstrip()
-            if not line:
-                continue
-            level = "error" if any(k in line.lower() for k in ("error", "traceback", "cuda out of memory")) else "info"
-            self.state.log_tail.append({"ts": time.time(), "level": level, "message": line})
+        try:
+            f = open(self._log_path, "r", encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        try:
+            while not self._log_tail_stop.is_set():
+                line = f.readline()
+                if not line:
+                    if self._proc is None or self._proc.poll() is not None:
+                        break
+                    time.sleep(0.5)
+                    continue
+                line = line.rstrip()
+                if not line:
+                    continue
+                level = "error" if any(k in line.lower() for k in ("error", "traceback", "cuda out of memory")) else "info"
+                self.state.log_tail.append({"ts": time.time(), "level": level, "message": line})
+        finally:
+            try:
+                f.close()
+            except Exception:
+                pass
 
     def _ensure_monitor(self) -> None:
         if self._monitor_thread and self._monitor_thread.is_alive():
@@ -254,7 +276,9 @@ class ComfyUIManager:
     def stop(self, timeout: float = 10.0) -> dict:
         with self._lock:
             self._monitor_stop.set()
+            self._log_tail_stop.set()
             if not self.is_running():
+                self._close_log_fh()
                 return {"ok": True, "stopped": False}
             try:
                 self._proc.terminate()
@@ -263,11 +287,21 @@ class ComfyUIManager:
                 except subprocess.TimeoutExpired:
                     self._proc.kill()
                     self._proc.wait(timeout=5.0)
+                self._close_log_fh()
                 self._log("info", "stopped")
                 return {"ok": True, "stopped": True}
             except Exception as e:
                 self._log("error", f"stop failed: {e}")
                 return {"ok": False, "error": str(e)}
+
+    def _close_log_fh(self) -> None:
+        fh = self._log_fh
+        self._log_fh = None
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
 
     def status_snapshot(self) -> dict:
         owned = self.is_running()
