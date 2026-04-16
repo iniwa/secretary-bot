@@ -1,0 +1,126 @@
+{
+  "3": {
+    "inputs": {
+      "seed": 27947046486085,
+      "steps": 30,
+      "cfg": 5.5,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "10",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "Kサンプラー"
+    }
+  },
+  "4": {
+    "inputs": {
+      "ckpt_name": "chenkinNoobXLCKXL_v05.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "チェックポイントを読み込む"
+    }
+  },
+  "5": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空の潜在画像"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "masterpiece, best quality, amazing quality, very aesthetic, absurdres, newest,\nIniwa_VRC, 1girl, solo, looking at viewer,\ncat ears, cat tail, animal ear fluff, ahoge,\nskyblue hair, short hair, messy hair, blue eyes,\nglasses, black-framed eyewear, open mouth, :d, fang,\nblue hoodie, open hoodie, off shoulder, white camisole, black choker,\npeace sign, v, hand up,\nsimple background, white background",
+      "clip": [
+        "10",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIPテキストエンコード（プロンプト）"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "lowres, worst quality, bad quality, normal quality, jpeg artifacts, blurry,\nbad anatomy, bad hands, missing fingers, extra digits, extra fingers, fused fingers,\nwatermark, signature, artist name, username, logo, text, error, cropped,\n3DCG, VRChat,\n2boys, multiple views, monochrome, greyscale",
+      "clip": [
+        "10",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIPテキストエンコード（プロンプト）"
+    }
+  },
+  "8": {
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEデコード"
+    }
+  },
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "画像を保存"
+    }
+  },
+  "10": {
+    "inputs": {
+      "lora_name": "INIWA_NOOBXL.safetensors",
+      "strength_model": 0.45,
+      "strength_clip": 0.9,
+      "model": [
+        "4",
+        0
+      ],
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "LoRAを読み込む"
+    }
+  }
+}
