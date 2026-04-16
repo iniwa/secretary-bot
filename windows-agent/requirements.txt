@@ -21,3 +21,6 @@ obs-websocket-py>=1.0
 Pillow>=10.0
 # image_gen tool: ComfyUI WebSocket progress subscription
 websockets>=12.0
+# input-relay sender (Main PC): pynput for kbd/mouse hooks, pygame for gamepad
+pynput>=1.7
+pygame>=2.5
