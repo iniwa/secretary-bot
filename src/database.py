@@ -14,7 +14,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 27
+_SCHEMA_VERSION = 28
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -591,6 +591,128 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_foreground_sessions_pc_start ON foreground_sessions(pc, start_at)",
                 "CREATE INDEX IF NOT EXISTS idx_activity_samples_pc_ts ON activity_samples(pc, ts)",
             ],
+            28: [
+                # === 画像生成基盤のモダリティ汎用化 + セクション合成プリセット ===
+                # image_jobs → generation_jobs にリネームし、動画/音声も乗せられるようにする。
+                # 互換 View で `SELECT * FROM image_jobs` は引き続き動く。
+                # セクション断片プリセット（quality/style/...）を DB で管理する。
+                #
+                # 新カラム:
+                #   generation_jobs.modality       -- 'image' / 'video' / 'audio'
+                #   generation_jobs.sections_json  -- 合成時に積んだ section_id リスト（再現用）
+                #   generation_jobs.result_kinds   -- 出力メディア種別の JSON 配列
+                """CREATE TABLE IF NOT EXISTS generation_jobs (
+                    id                 TEXT PRIMARY KEY,
+                    user_id            TEXT NOT NULL,
+                    platform           TEXT NOT NULL,
+                    workflow_id        INTEGER,
+                    modality           TEXT NOT NULL DEFAULT 'image',
+                    sections_json      TEXT,
+                    result_kinds       TEXT,
+                    positive           TEXT,
+                    negative           TEXT,
+                    params_json        TEXT,
+                    status             TEXT NOT NULL DEFAULT 'queued',
+                    assigned_agent     TEXT,
+                    priority           INTEGER NOT NULL DEFAULT 0,
+                    progress           INTEGER NOT NULL DEFAULT 0,
+                    error_message      TEXT,
+                    result_paths       TEXT,
+                    retry_count        INTEGER NOT NULL DEFAULT 0,
+                    max_retries        INTEGER NOT NULL DEFAULT 2,
+                    last_error         TEXT,
+                    cache_sync_id      TEXT,
+                    next_attempt_at    DATETIME,
+                    dispatcher_lock_at DATETIME,
+                    timeout_at         DATETIME,
+                    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    started_at         DATETIME,
+                    finished_at        DATETIME
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_status_next ON generation_jobs(status, next_attempt_at)",
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_user_created ON generation_jobs(user_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_modality ON generation_jobs(modality, status)",
+                """CREATE TABLE IF NOT EXISTS generation_job_events (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id       TEXT NOT NULL,
+                    from_status  TEXT,
+                    to_status    TEXT NOT NULL,
+                    agent_id     TEXT,
+                    detail_json  TEXT,
+                    occurred_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_generation_job_events_job ON generation_job_events(job_id, occurred_at)",
+                # 既存 image_jobs → generation_jobs へ全行コピー（modality='image'）
+                """INSERT INTO generation_jobs
+                      (id, user_id, platform, workflow_id, modality, sections_json, result_kinds,
+                       positive, negative, params_json, status, assigned_agent, priority, progress,
+                       error_message, result_paths, retry_count, max_retries, last_error,
+                       cache_sync_id, next_attempt_at, dispatcher_lock_at, timeout_at,
+                       created_at, started_at, finished_at)
+                   SELECT id, user_id, platform, workflow_id, 'image', NULL, NULL,
+                          positive, negative, params_json, status, assigned_agent, priority, progress,
+                          error_message, result_paths, retry_count, max_retries, last_error,
+                          cache_sync_id, next_attempt_at, dispatcher_lock_at, timeout_at,
+                          created_at, started_at, finished_at
+                     FROM image_jobs""",
+                """INSERT INTO generation_job_events
+                      (id, job_id, from_status, to_status, agent_id, detail_json, occurred_at)
+                   SELECT id, job_id, from_status, to_status, agent_id, detail_json, occurred_at
+                     FROM image_job_events""",
+                # 旧テーブルは DROP し、同名 View で後方互換を残す（sqlite3 CLI 等からの SELECT 用）
+                "DROP INDEX IF EXISTS idx_image_jobs_status_next",
+                "DROP INDEX IF EXISTS idx_image_jobs_user_created",
+                "DROP INDEX IF EXISTS idx_image_job_events_job",
+                "DROP TABLE IF EXISTS image_jobs",
+                "DROP TABLE IF EXISTS image_job_events",
+                """CREATE VIEW IF NOT EXISTS image_jobs AS
+                     SELECT id, user_id, platform, workflow_id, positive, negative, params_json,
+                            status, assigned_agent, priority, progress, error_message, result_paths,
+                            retry_count, max_retries, last_error, cache_sync_id, next_attempt_at,
+                            dispatcher_lock_at, timeout_at, created_at, started_at, finished_at
+                       FROM generation_jobs
+                      WHERE modality = 'image'""",
+                """CREATE VIEW IF NOT EXISTS image_job_events AS
+                     SELECT id, job_id, from_status, to_status, agent_id, detail_json, occurred_at
+                       FROM generation_job_events""",
+                # === セクション合成プリセット ===
+                # カテゴリ: quality / style / character / composition / scene / lora_trigger / negative
+                # is_builtin=1 はユーザー削除不可（API で 400 を返す）
+                """CREATE TABLE IF NOT EXISTS prompt_section_categories (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key           TEXT NOT NULL UNIQUE,
+                    label         TEXT NOT NULL,
+                    description   TEXT,
+                    display_order INTEGER NOT NULL DEFAULT 100,
+                    is_builtin    INTEGER NOT NULL DEFAULT 0,
+                    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # セクション本体（1 カテゴリ内に複数定義）
+                # positive/negative は作品タグ列。weight 記法 `(tag:1.2)` もそのまま入れる。
+                """CREATE TABLE IF NOT EXISTS prompt_sections (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category_key  TEXT NOT NULL,
+                    name          TEXT NOT NULL,
+                    description   TEXT,
+                    positive      TEXT,
+                    negative      TEXT,
+                    tags          TEXT,
+                    is_builtin    INTEGER NOT NULL DEFAULT 0,
+                    starred       INTEGER NOT NULL DEFAULT 0,
+                    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (category_key, name)
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_prompt_sections_category ON prompt_sections(category_key, starred DESC, name)",
+                # ビルトイン 7 カテゴリ（display_order に空き番号を残してユーザー追加カテゴリが差し込めるようにする）
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('quality',      '品質',           '全体クオリティ・美麗系', 10,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('style',        'スタイル',       '作風・画風',             20,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('character',    'キャラクター',   'キャラ指定・外見',       30,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('composition',  '構図',           'ポーズ・アングル',       40,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('scene',        'シーン',         '背景・場面・小物',       50,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('lora_trigger', 'LoRA トリガー',  'LoRA 呼び出しトークン',  80,  1)",
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('negative',     'ネガティブ',     '抑制したい要素',         100, 1)",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -985,36 +1107,41 @@ class Database:
             "SELECT * FROM workflows ORDER BY starred DESC, category ASC, name ASC"
         )
 
-    # === 画像生成: image_jobs ===
+    # === 画像/動画/音声生成ジョブ: generation_jobs ===
+    # 旧称 image_jobs は VIEW として残存（読み取り専用）。
+    # 旧メソッド名 image_job_* はこのセクション末尾で薄いエイリアスを定義している。
 
-    async def image_job_insert(
+    async def generation_job_insert(
         self, *, user_id: str, platform: str,
         workflow_id: int | None, positive: str | None,
         negative: str | None, params_json: str,
+        modality: str = "image",
+        sections_json: str | None = None,
         priority: int = 0, max_retries: int = 2,
     ) -> str:
         """ジョブを queued で登録し、UUID を返す。"""
         import uuid
         job_id = uuid.uuid4().hex
         await self.execute(
-            "INSERT INTO image_jobs "
-            "(id, user_id, platform, workflow_id, positive, negative, "
-            " params_json, status, priority, max_retries, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
-            (job_id, user_id, platform, workflow_id, positive, negative,
-             params_json, priority, max_retries, jst_now()),
+            "INSERT INTO generation_jobs "
+            "(id, user_id, platform, workflow_id, modality, sections_json, "
+            " positive, negative, params_json, status, priority, max_retries, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+            (job_id, user_id, platform, workflow_id, modality, sections_json,
+             positive, negative, params_json, priority, max_retries, jst_now()),
         )
-        await self._image_job_event(
+        await self._generation_job_event(
             job_id=job_id, from_status=None, to_status="queued",
             agent_id=None, detail_json=None,
         )
         return job_id
 
-    async def image_job_get(self, job_id: str) -> dict | None:
-        return await self.fetchone("SELECT * FROM image_jobs WHERE id = ?", (job_id,))
+    async def generation_job_get(self, job_id: str) -> dict | None:
+        return await self.fetchone("SELECT * FROM generation_jobs WHERE id = ?", (job_id,))
 
-    async def image_job_list(
+    async def generation_job_list(
         self, user_id: str | None = None, status: str | None = None,
+        modality: str | None = None,
         limit: int = 50, offset: int = 0,
     ) -> list[dict]:
         conditions: list[str] = []
@@ -1025,24 +1152,26 @@ class Database:
         if status:
             conditions.append("status = ?")
             params.append(status)
+        if modality:
+            conditions.append("modality = ?")
+            params.append(modality)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         params.extend([limit, offset])
         return await self.fetchall(
-            f"SELECT * FROM image_jobs{where} "
+            f"SELECT * FROM generation_jobs{where} "
             f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
             tuple(params),
         )
 
-    async def image_job_claim_queued(self) -> dict | None:
+    async def generation_job_claim_queued(self) -> dict | None:
         """楽観ロックで 1 件 queued → dispatching へ遷移させ、該当行を返す。
 
         設計書の UPDATE 文に準拠:
           WHERE status='queued'
             AND (next_attempt_at IS NULL OR next_attempt_at <= now)
         """
-        # まず候補 ID を 1 件選ぶ（優先度・作成順）
         row = await self.fetchone(
-            "SELECT id FROM image_jobs "
+            "SELECT id FROM generation_jobs "
             "WHERE status = 'queued' "
             "  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now')) "
             "ORDER BY priority DESC, created_at ASC LIMIT 1"
@@ -1051,7 +1180,7 @@ class Database:
             return None
         job_id = row["id"]
         rowcount = await self.execute_returning_rowcount(
-            "UPDATE image_jobs "
+            "UPDATE generation_jobs "
             "SET status = 'dispatching', "
             "    dispatcher_lock_at = ?, "
             "    timeout_at = datetime('now', '+30 seconds') "
@@ -1061,22 +1190,22 @@ class Database:
         )
         if rowcount != 1:
             return None  # 他 worker に取られた
-        await self._image_job_event(
+        await self._generation_job_event(
             job_id=job_id, from_status="queued", to_status="dispatching",
             agent_id=None, detail_json=None,
         )
-        return await self.image_job_get(job_id)
+        return await self.generation_job_get(job_id)
 
-    async def image_job_update_status(
+    async def generation_job_update_status(
         self, job_id: str, to_status: str,
         expected_from: str | None = None,
         **fields,
     ) -> bool:
-        """status を UPDATE し image_job_events に記録する。
+        """status を UPDATE し generation_job_events に記録する。
         expected_from 指定時は from チェック付きで更新される（race 回避）。
         """
         allowed = {
-            "assigned_agent", "progress", "error_message", "result_paths",
+            "assigned_agent", "progress", "error_message", "result_paths", "result_kinds",
             "retry_count", "last_error", "cache_sync_id", "next_attempt_at",
             "dispatcher_lock_at", "timeout_at", "started_at", "finished_at",
         }
@@ -1093,13 +1222,13 @@ class Database:
             where_sql += " AND status = ?"
             params.append(expected_from)
         rowcount = await self.execute_returning_rowcount(
-            f"UPDATE image_jobs SET {', '.join(sets)} WHERE {where_sql}",
+            f"UPDATE generation_jobs SET {', '.join(sets)} WHERE {where_sql}",
             tuple(params),
         )
         if rowcount == 1:
             detail = {k: v for k, v in fields.items() if k in allowed}
             import json as _json
-            await self._image_job_event(
+            await self._generation_job_event(
                 job_id=job_id, from_status=expected_from, to_status=to_status,
                 agent_id=fields.get("assigned_agent"),
                 detail_json=_json.dumps(detail, ensure_ascii=False) if detail else None,
@@ -1107,59 +1236,283 @@ class Database:
             return True
         return False
 
-    async def image_job_update_progress(self, job_id: str, progress: int) -> None:
+    async def generation_job_update_progress(self, job_id: str, progress: int) -> None:
         """progress のみ更新（デバウンスは呼び出し側で制御）。"""
         await self.execute(
-            "UPDATE image_jobs SET progress = ? WHERE id = ?",
+            "UPDATE generation_jobs SET progress = ? WHERE id = ?",
             (int(progress), job_id),
         )
 
-    async def image_job_set_result(self, job_id: str, result_paths_json: str) -> None:
-        await self.execute(
-            "UPDATE image_jobs SET result_paths = ? WHERE id = ?",
-            (result_paths_json, job_id),
-        )
+    async def generation_job_set_result(
+        self, job_id: str, result_paths_json: str,
+        result_kinds_json: str | None = None,
+    ) -> None:
+        if result_kinds_json is None:
+            await self.execute(
+                "UPDATE generation_jobs SET result_paths = ? WHERE id = ?",
+                (result_paths_json, job_id),
+            )
+        else:
+            await self.execute(
+                "UPDATE generation_jobs SET result_paths = ?, result_kinds = ? WHERE id = ?",
+                (result_paths_json, result_kinds_json, job_id),
+            )
 
-    async def image_job_find_timed_out(self) -> list[dict]:
+    async def generation_job_find_timed_out(self) -> list[dict]:
         """timeout_at < now の非終端ジョブを返す。"""
         return await self.fetchall(
-            "SELECT * FROM image_jobs "
+            "SELECT * FROM generation_jobs "
             "WHERE status NOT IN ('done', 'failed', 'cancelled') "
             "  AND timeout_at IS NOT NULL "
             "  AND timeout_at < datetime('now') "
             "ORDER BY created_at ASC"
         )
 
-    async def image_job_cancel(self, job_id: str) -> bool:
+    async def generation_job_cancel(self, job_id: str) -> bool:
         """非終端状態のジョブを cancelled に遷移させる。"""
-        row = await self.image_job_get(job_id)
+        row = await self.generation_job_get(job_id)
         if not row:
             return False
         if row["status"] in ("done", "failed", "cancelled"):
             return False
-        ok = await self.image_job_update_status(
+        ok = await self.generation_job_update_status(
             job_id, "cancelled",
             expected_from=row["status"],
             finished_at=jst_now(),
         )
         return ok
 
-    async def _image_job_event(
+    async def _generation_job_event(
         self, *, job_id: str, from_status: str | None, to_status: str,
         agent_id: str | None, detail_json: str | None,
     ) -> None:
         await self.execute(
-            "INSERT INTO image_job_events "
+            "INSERT INTO generation_job_events "
             "(job_id, from_status, to_status, agent_id, detail_json, occurred_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (job_id, from_status, to_status, agent_id, detail_json, jst_now()),
         )
 
-    async def image_job_events_list(self, job_id: str) -> list[dict]:
+    async def generation_job_events_list(self, job_id: str) -> list[dict]:
         return await self.fetchall(
-            "SELECT * FROM image_job_events "
+            "SELECT * FROM generation_job_events "
             "WHERE job_id = ? ORDER BY occurred_at ASC, id ASC",
             (job_id,),
+        )
+
+    # --- 旧 image_job_* の後方互換エイリアス（Phase 3.5 移行期間中） ---
+    # 既存呼び出し箇所（dispatcher / unit / web / agent_client 由来の文字列ログなど）が
+    # 順次 generation_job_* に切り替わるまでの繋ぎ。modality は常に 'image' 固定。
+
+    async def image_job_insert(self, **kwargs) -> str:
+        kwargs.setdefault("modality", "image")
+        return await self.generation_job_insert(**kwargs)
+
+    async def image_job_get(self, job_id: str) -> dict | None:
+        return await self.generation_job_get(job_id)
+
+    async def image_job_list(
+        self, user_id: str | None = None, status: str | None = None,
+        limit: int = 50, offset: int = 0,
+    ) -> list[dict]:
+        return await self.generation_job_list(
+            user_id=user_id, status=status, modality="image",
+            limit=limit, offset=offset,
+        )
+
+    async def image_job_claim_queued(self) -> dict | None:
+        return await self.generation_job_claim_queued()
+
+    async def image_job_update_status(
+        self, job_id: str, to_status: str,
+        expected_from: str | None = None, **fields,
+    ) -> bool:
+        return await self.generation_job_update_status(
+            job_id, to_status, expected_from=expected_from, **fields,
+        )
+
+    async def image_job_update_progress(self, job_id: str, progress: int) -> None:
+        await self.generation_job_update_progress(job_id, progress)
+
+    async def image_job_set_result(self, job_id: str, result_paths_json: str) -> None:
+        await self.generation_job_set_result(job_id, result_paths_json)
+
+    async def image_job_find_timed_out(self) -> list[dict]:
+        return await self.generation_job_find_timed_out()
+
+    async def image_job_cancel(self, job_id: str) -> bool:
+        return await self.generation_job_cancel(job_id)
+
+    async def image_job_events_list(self, job_id: str) -> list[dict]:
+        return await self.generation_job_events_list(job_id)
+
+    # === セクション合成プリセット: prompt_section_categories / prompt_sections ===
+
+    async def section_category_list(self) -> list[dict]:
+        return await self.fetchall(
+            "SELECT * FROM prompt_section_categories "
+            "ORDER BY display_order ASC, id ASC"
+        )
+
+    async def section_category_get(self, key: str) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM prompt_section_categories WHERE key = ?", (key,),
+        )
+
+    async def section_category_insert(
+        self, *, key: str, label: str,
+        description: str | None = None,
+        display_order: int = 500,
+    ) -> int:
+        """ユーザー追加カテゴリ（is_builtin=0）を作成。"""
+        cursor = await self.execute(
+            "INSERT INTO prompt_section_categories "
+            "(key, label, description, display_order, is_builtin) "
+            "VALUES (?, ?, ?, ?, 0)",
+            (key, label, description, display_order),
+        )
+        return cursor.lastrowid
+
+    async def section_category_update(
+        self, key: str, *, label: str | None = None,
+        description: str | None = None,
+        display_order: int | None = None,
+    ) -> bool:
+        sets: list[str] = []
+        params: list = []
+        if label is not None:
+            sets.append("label = ?"); params.append(label)
+        if description is not None:
+            sets.append("description = ?"); params.append(description)
+        if display_order is not None:
+            sets.append("display_order = ?"); params.append(display_order)
+        if not sets:
+            return False
+        params.append(key)
+        rowcount = await self.execute_returning_rowcount(
+            f"UPDATE prompt_section_categories SET {', '.join(sets)} WHERE key = ?",
+            tuple(params),
+        )
+        return rowcount == 1
+
+    async def section_category_delete(self, key: str) -> bool:
+        """ユーザー追加カテゴリのみ削除可能（is_builtin=1 は False 返却）。
+        紐づくセクションも CASCADE 的に削除する。"""
+        row = await self.section_category_get(key)
+        if not row or row["is_builtin"]:
+            return False
+        await self.execute("DELETE FROM prompt_sections WHERE category_key = ?", (key,))
+        rowcount = await self.execute_returning_rowcount(
+            "DELETE FROM prompt_section_categories WHERE key = ? AND is_builtin = 0",
+            (key,),
+        )
+        return rowcount == 1
+
+    async def section_list(
+        self, category_key: str | None = None,
+        starred_only: bool = False,
+    ) -> list[dict]:
+        conditions: list[str] = []
+        params: list = []
+        if category_key:
+            conditions.append("category_key = ?"); params.append(category_key)
+        if starred_only:
+            conditions.append("starred = 1")
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        return await self.fetchall(
+            f"SELECT * FROM prompt_sections{where} "
+            f"ORDER BY category_key ASC, starred DESC, name ASC",
+            tuple(params),
+        )
+
+    async def section_get(self, section_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM prompt_sections WHERE id = ?", (section_id,),
+        )
+
+    async def section_get_many(self, section_ids: list[int]) -> list[dict]:
+        """section_ids の順序を保ったまま返す（合成順に使う）。"""
+        if not section_ids:
+            return []
+        placeholders = ",".join("?" * len(section_ids))
+        rows = await self.fetchall(
+            f"SELECT * FROM prompt_sections WHERE id IN ({placeholders})",
+            tuple(section_ids),
+        )
+        by_id = {r["id"]: r for r in rows}
+        return [by_id[i] for i in section_ids if i in by_id]
+
+    async def section_insert(
+        self, *, category_key: str, name: str,
+        positive: str | None = None, negative: str | None = None,
+        description: str | None = None, tags: str | None = None,
+        is_builtin: int = 0, starred: int = 0,
+    ) -> int:
+        cursor = await self.execute(
+            "INSERT INTO prompt_sections "
+            "(category_key, name, description, positive, negative, tags, is_builtin, starred, "
+            " created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (category_key, name, description, positive, negative, tags,
+             int(is_builtin), int(starred), jst_now(), jst_now()),
+        )
+        return cursor.lastrowid
+
+    async def section_update(
+        self, section_id: int, **fields,
+    ) -> bool:
+        allowed = {"name", "description", "positive", "negative", "tags", "starred", "category_key"}
+        sets: list[str] = []
+        params: list = []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            sets.append(f"{k} = ?"); params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at = ?"); params.append(jst_now())
+        params.append(section_id)
+        rowcount = await self.execute_returning_rowcount(
+            f"UPDATE prompt_sections SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        return rowcount == 1
+
+    async def section_delete(self, section_id: int) -> bool:
+        row = await self.section_get(section_id)
+        if not row or row["is_builtin"]:
+            return False
+        rowcount = await self.execute_returning_rowcount(
+            "DELETE FROM prompt_sections WHERE id = ? AND is_builtin = 0",
+            (section_id,),
+        )
+        return rowcount == 1
+
+    async def section_upsert_builtin(
+        self, *, category_key: str, name: str,
+        positive: str | None, negative: str | None,
+        description: str | None, tags: str | None,
+    ) -> int:
+        """section_mgr が起動時に JSON プリセットを sync するための冪等 upsert。
+        既存行は positive/negative/description/tags を上書き、is_builtin=1 を維持。"""
+        existing = await self.fetchone(
+            "SELECT id FROM prompt_sections WHERE category_key = ? AND name = ?",
+            (category_key, name),
+        )
+        if existing:
+            await self.execute(
+                "UPDATE prompt_sections "
+                "SET positive = ?, negative = ?, description = ?, tags = ?, "
+                "    is_builtin = 1, updated_at = ? "
+                "WHERE id = ?",
+                (positive, negative, description, tags, jst_now(), existing["id"]),
+            )
+            return existing["id"]
+        return await self.section_insert(
+            category_key=category_key, name=name,
+            positive=positive, negative=negative,
+            description=description, tags=tags,
+            is_builtin=1,
         )
 
     # === 画像生成: prompt_sessions ===

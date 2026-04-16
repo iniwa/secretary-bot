@@ -148,6 +148,56 @@ class WorkflowManager:
 
     # --- 差し込み ---
 
+    async def compose_and_resolve(
+        self, name: str, params: dict[str, Any],
+        *,
+        section_ids: list[int] | None = None,
+        user_positive: str | None = None,
+        user_negative: str | None = None,
+        user_position: str = "tail",
+    ) -> tuple[dict, dict]:
+        """セクション合成 → placeholder 差し込み。
+
+        section_ids が空 or None の場合は、従来通り params["POSITIVE"] / ["NEGATIVE"] を
+        そのまま使う。セクションを指定する場合は合成結果で POSITIVE/NEGATIVE を上書きする。
+
+        戻り値: (resolved_workflow_json, compose_info)
+            compose_info には warnings / positive / negative / sections / user_position
+            を含み、ジョブ行の sections_json として保存する用途にも使える。
+        """
+        from src.units.image_gen.section_composer import compose_prompt
+
+        compose_info: dict[str, Any] = {
+            "section_ids": list(section_ids or []),
+            "user_position": user_position,
+            "warnings": [],
+            "positive": None,
+            "negative": None,
+        }
+
+        merged = dict(params or {})
+        if section_ids:
+            sections = await self.bot.database.section_get_many(section_ids)
+            # user_positive/negative は params["POSITIVE"] をデフォルトに
+            up = user_positive if user_positive is not None else merged.get("POSITIVE")
+            un = user_negative if user_negative is not None else merged.get("NEGATIVE")
+            result = compose_prompt(
+                sections, user_positive=up, user_negative=un,
+                user_position=user_position,
+            )
+            merged["POSITIVE"] = result.positive
+            merged["NEGATIVE"] = result.negative
+            compose_info["warnings"] = list(result.warnings)
+            compose_info["positive"] = result.positive
+            compose_info["negative"] = result.negative
+            compose_info["dropped"] = list(result.dropped)
+        else:
+            compose_info["positive"] = merged.get("POSITIVE")
+            compose_info["negative"] = merged.get("NEGATIVE")
+
+        resolved = await self.resolve(name, merged)
+        return resolved, compose_info
+
     async def resolve(self, name: str, params: dict[str, Any]) -> dict:
         """プリセット名とパラメータから、実行用 workflow JSON を返す。
 

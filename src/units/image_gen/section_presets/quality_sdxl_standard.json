@@ -1,0 +1,8 @@
+{
+  "category_key": "quality",
+  "name": "quality_sdxl_standard",
+  "description": "SDXL 汎用の高品質タグ（Animagine/Pony 共通のベース）",
+  "positive": "masterpiece, best quality, amazing quality, very aesthetic, absurdres",
+  "negative": null,
+  "tags": "sdxl,quality,baseline"
+}

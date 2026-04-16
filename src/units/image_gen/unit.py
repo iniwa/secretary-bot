@@ -315,12 +315,19 @@ class ImageGenUnit(BaseUnit):
         self, user_id: str, platform: str, workflow_name: str,
         positive: str | None, negative: str | None,
         params: dict[str, Any] | None = None,
+        *,
+        section_ids: list[int] | None = None,
+        user_position: str = "tail",
+        modality: str | None = None,
     ) -> str:
         """ジョブを登録し、job_id (UUID hex) を返す。
 
         - workflow_name: workflows.name
-        - positive / negative: ユーザー入力プロンプト
+        - positive / negative: ユーザー入力プロンプト（セクション指定時は追加分）
         - params: ワークフローのパラメータ（WIDTH/HEIGHT/STEPS/CFG/SEED/...）
+        - section_ids: 合成するセクション（prompt_sections.id）の列。None なら従来通り
+        - user_position: 'head' | 'tail' | 'section:<category_key>'
+        - modality: 'image' | 'video' | 'audio'。省略時は Workflow.category から推定
         """
         if not workflow_name:
             raise ValidationError("workflow_name is required")
@@ -344,15 +351,47 @@ class ImageGenUnit(BaseUnit):
             if default_ckpt:
                 merged["CKPT"] = default_ckpt
 
-        job_id = await self.bot.database.image_job_insert(
+        # --- セクション合成（指定があれば positive/negative を確定） ---
+        sections_json: str | None = None
+        if section_ids:
+            from src.units.image_gen.section_composer import compose_prompt
+            section_rows = await self.bot.database.section_get_many(section_ids)
+            composed = compose_prompt(
+                section_rows,
+                user_positive=positive,
+                user_negative=negative,
+                user_position=user_position,
+            )
+            positive = composed.positive
+            negative = composed.negative
+            sections_json = json.dumps({
+                "section_ids": list(section_ids),
+                "user_position": user_position,
+                "warnings": composed.warnings,
+                "dropped": composed.dropped,
+            }, ensure_ascii=False)
+            if composed.warnings:
+                log.warning("section compose warnings: %s", composed.warnings)
+
+        # modality は Workflow.category から推定（明示指定があれば優先）
+        from src.units.image_gen.modality import category_to_modality, normalize_modality
+        resolved_modality = (
+            normalize_modality(modality) if modality
+            else category_to_modality(wf.get("category"))
+        )
+
+        job_id = await self.bot.database.generation_job_insert(
             user_id=user_id, platform=platform,
             workflow_id=int(wf["id"]),
             positive=positive, negative=negative,
             params_json=json.dumps(merged, ensure_ascii=False),
+            modality=resolved_modality,
+            sections_json=sections_json,
             priority=int(merged.get("PRIORITY", 0)) if "PRIORITY" in merged else 0,
         )
-        log.info("image_job enqueued: id=%s user=%s workflow=%s",
-                 job_id, user_id, workflow_name)
+        log.info("generation_job enqueued: id=%s user=%s workflow=%s modality=%s sections=%s",
+                 job_id, user_id, workflow_name, resolved_modality,
+                 section_ids or None)
         # 即 Dispatcher を起こす
         self.dispatcher.wake()
         # 購読者にも投入通知
