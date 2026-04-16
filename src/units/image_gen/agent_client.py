@@ -157,6 +157,66 @@ class AgentClient:
         async for ev in _sse_stream(url, self._headers()):
             yield ev
 
+    # --- generation_* (image/video/audio 汎用。Phase 3.5 以降の推奨 API) ---
+
+    async def generation_submit(
+        self, *, job_id: str, workflow_json: dict,
+        inputs: dict[str, Any] | None = None,
+        timeout_sec: int | None = None,
+        required_models: list[dict] | None = None,
+        modality: str = "image",
+    ) -> dict:
+        """POST /generation/submit。image_generate と同じく 202 を返す。
+        サーバ側は image_generate と共通ハンドラで処理される。"""
+        payload: dict[str, Any] = {
+            "job_id": job_id,
+            "workflow_json": workflow_json,
+            "inputs": inputs or {},
+            "modality": modality,
+        }
+        if timeout_sec is not None:
+            payload["timeout_sec"] = timeout_sec
+        if required_models:
+            payload["required_models"] = required_models
+        try:
+            resp = await self._get_client().post(
+                "/generation/submit", json=payload, headers=self._headers(),
+            )
+        except httpx.HTTPError as e:
+            raise AgentCommunicationError(
+                f"generation_submit request failed: {e}"
+            ) from e
+        if resp.status_code not in (200, 202):
+            raise _map_error_response(resp.status_code, _safe_json(resp))
+        return resp.json()
+
+    async def generation_job_status(self, job_id: str) -> dict:
+        try:
+            resp = await self._get_client().get(
+                f"/generation/jobs/{job_id}", headers=self._headers(),
+            )
+        except httpx.HTTPError as e:
+            raise AgentCommunicationError(f"generation_job_status failed: {e}") from e
+        if resp.status_code != 200:
+            raise _map_error_response(resp.status_code, _safe_json(resp))
+        return resp.json()
+
+    async def generation_job_cancel(self, job_id: str) -> dict:
+        try:
+            resp = await self._get_client().post(
+                f"/generation/jobs/{job_id}/cancel", headers=self._headers(),
+            )
+        except httpx.HTTPError as e:
+            raise AgentCommunicationError(f"generation_job_cancel failed: {e}") from e
+        if resp.status_code not in (200, 202):
+            raise _map_error_response(resp.status_code, _safe_json(resp))
+        return resp.json()
+
+    async def generation_job_stream(self, job_id: str) -> AsyncIterator[dict]:
+        url = f"{self.base_url}/generation/jobs/{job_id}/stream"
+        async for ev in _sse_stream(url, self._headers()):
+            yield ev
+
     # --- cache sync ---
 
     async def cache_manifest(self) -> dict:

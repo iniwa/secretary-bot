@@ -121,7 +121,7 @@ class Dispatcher:
     async def _job_dispatcher_worker(self) -> None:
         while self._running:
             try:
-                claimed = await self.bot.database.image_job_claim_queued()
+                claimed = await self.bot.database.generation_job_claim_queued()
                 if claimed:
                     asyncio.create_task(self._handle_dispatching(claimed))
                     continue  # すぐ次を拾いに行く
@@ -156,7 +156,7 @@ class Dispatcher:
             missing = await self._check_cache_missing(agent, job)
             if missing:
                 sync_id = await self._start_cache_sync(agent, missing, job_id)
-                ok = await self.bot.database.image_job_update_status(
+                ok = await self.bot.database.generation_job_update_status(
                     job_id, STATUS_WARMING_CACHE,
                     expected_from=STATUS_DISPATCHING,
                     assigned_agent=agent_id,
@@ -262,16 +262,18 @@ class Dispatcher:
         return resp.get("sync_id", "")
 
     async def _start_generate(self, job: dict, agent: dict) -> None:
-        """POST /image/generate を呼び、running へ遷移する。"""
+        """POST /generation/submit を呼び、running へ遷移する。"""
         job_id = job["id"]
         agent_id = agent.get("id", "")
         workflow_json, params, timeout_sec = await self._build_workflow_payload(job)
+        modality = job.get("modality") or "image"
 
         ac = self._get_agent_client(agent)
         try:
-            resp = await ac.image_generate(
+            resp = await ac.generation_submit(
                 job_id=job_id, workflow_json=workflow_json,
                 inputs=params, timeout_sec=timeout_sec,
+                modality=modality,
             )
         except OOMError as e:
             # OOM は別 Agent へ retry
@@ -304,7 +306,7 @@ class Dispatcher:
             return
 
         # running へ遷移
-        ok = await self.bot.database.image_job_update_status(
+        ok = await self.bot.database.generation_job_update_status(
             job_id, STATUS_RUNNING,
             expected_from=STATUS_DISPATCHING,
             assigned_agent=agent_id,
@@ -379,7 +381,7 @@ class Dispatcher:
                         await self._after_cache_sync_done(job_id, agent)
                         break
                     elif st in ("failed", "cancelled"):
-                        job = await self.bot.database.image_job_get(job_id)
+                        job = await self.bot.database.generation_job_get(job_id)
                         if job:
                             await self._transition_retry(
                                 job, reason="cache_sync_fail",
@@ -388,7 +390,7 @@ class Dispatcher:
                             )
                         break
                 elif name == "error":
-                    job = await self.bot.database.image_job_get(job_id)
+                    job = await self.bot.database.generation_job_get(job_id)
                     if job:
                         if data.get("retryable"):
                             await self._transition_retry(
@@ -406,7 +408,7 @@ class Dispatcher:
                     break
         except AgentCommunicationError as e:
             log.warning("cache_sync SSE lost for %s: %s", job_id, e)
-            job = await self.bot.database.image_job_get(job_id)
+            job = await self.bot.database.generation_job_get(job_id)
             if job and job["status"] == STATUS_WARMING_CACHE:
                 await self._transition_retry(
                     job, reason="cache_sync_sse_lost",
@@ -419,18 +421,20 @@ class Dispatcher:
 
     async def _after_cache_sync_done(self, job_id: str, agent: dict) -> None:
         """cache_sync 完了後に running へ遷移させる。"""
-        job = await self.bot.database.image_job_get(job_id)
+        job = await self.bot.database.generation_job_get(job_id)
         if not job or job["status"] != STATUS_WARMING_CACHE:
             return
         # dispatching へ戻さずその場で generate を投げる（warming_cache → running を直接）
         # _start_generate は expected_from=dispatching を期待するので一旦 dispatching へ戻す
         # (簡易実装: DB 上の from を warming_cache → running へ直遷移)
         workflow_json, params, timeout_sec = await self._build_workflow_payload(job)
+        modality = job.get("modality") or "image"
         ac = self._get_agent_client(agent)
         try:
-            resp = await ac.image_generate(
+            resp = await ac.generation_submit(
                 job_id=job_id, workflow_json=workflow_json,
                 inputs=params, timeout_sec=timeout_sec,
+                modality=modality,
             )
         except ImageGenError as e:
             if is_retryable(e):
@@ -450,7 +454,7 @@ class Dispatcher:
             )
             return
 
-        ok = await self.bot.database.image_job_update_status(
+        ok = await self.bot.database.generation_job_update_status(
             job_id, STATUS_RUNNING,
             expected_from=STATUS_WARMING_CACHE,
             assigned_agent=agent.get("id", ""),
@@ -473,7 +477,7 @@ class Dispatcher:
         self._monitoring.add(job_id)
         ac = self._get_agent_client(agent)
         try:
-            async for ev in ac.image_job_stream(job_id):
+            async for ev in ac.generation_job_stream(job_id):
                 name = ev.get("event", "")
                 data = ev.get("data", {}) or {}
                 if name == "progress":
@@ -488,10 +492,11 @@ class Dispatcher:
                         pass
                 elif name == "result":
                     paths = data.get("result_paths", []) or []
-                    await self._on_job_done(job_id, paths, agent.get("id"))
+                    kinds = data.get("result_kinds", []) or []
+                    await self._on_job_done(job_id, paths, kinds, agent.get("id"))
                     break
                 elif name == "error":
-                    job = await self.bot.database.image_job_get(job_id)
+                    job = await self.bot.database.generation_job_get(job_id)
                     if not job:
                         break
                     if data.get("retryable"):
@@ -518,7 +523,7 @@ class Dispatcher:
                     break
         except AgentCommunicationError as e:
             log.warning("running SSE lost for %s: %s", job_id, e)
-            job = await self.bot.database.image_job_get(job_id)
+            job = await self.bot.database.generation_job_get(job_id)
             if job and job["status"] == STATUS_RUNNING:
                 await self._transition_retry(
                     job, reason="running_sse_lost",
@@ -536,7 +541,7 @@ class Dispatcher:
         now = time.monotonic()
         last = self._progress_last.get(job_id, 0.0)
         if now - last >= _PROGRESS_DEBOUNCE_SEC:
-            await self.bot.database.image_job_update_progress(job_id, percent)
+            await self.bot.database.generation_job_update_progress(job_id, percent)
             self._progress_last[job_id] = now
         await self._broadcast(TransitionEvent(
             job_id=job_id, from_status=STATUS_RUNNING, to_status=STATUS_RUNNING,
@@ -545,12 +550,18 @@ class Dispatcher:
         ))
 
     async def _on_job_done(
-        self, job_id: str, result_paths: list[str], agent_id: str | None,
+        self, job_id: str, result_paths: list[str],
+        result_kinds: list[str], agent_id: str | None,
     ) -> None:
-        await self.bot.database.image_job_set_result(
-            job_id, json.dumps(result_paths, ensure_ascii=False),
+        # kinds が空/不足なら paths 長さに合わせて image fallback
+        if not result_kinds or len(result_kinds) != len(result_paths):
+            result_kinds = ["image"] * len(result_paths)
+        await self.bot.database.generation_job_set_result(
+            job_id,
+            json.dumps(result_paths, ensure_ascii=False),
+            json.dumps(result_kinds, ensure_ascii=False),
         )
-        ok = await self.bot.database.image_job_update_status(
+        ok = await self.bot.database.generation_job_update_status(
             job_id, STATUS_DONE,
             expected_from=STATUS_RUNNING,
             finished_at=jst_now(),
@@ -560,7 +571,11 @@ class Dispatcher:
             await self._broadcast(TransitionEvent(
                 job_id=job_id, from_status=STATUS_RUNNING,
                 to_status=STATUS_DONE, progress=100, event="result",
-                agent_id=agent_id, detail={"result_paths": result_paths},
+                agent_id=agent_id,
+                detail={
+                    "result_paths": result_paths,
+                    "result_kinds": result_kinds,
+                },
             ))
 
     # --- Worker 4: stuck_reaper ---
@@ -568,7 +583,7 @@ class Dispatcher:
     async def _stuck_reaper_worker(self) -> None:
         while self._running:
             try:
-                rows = await self.bot.database.image_job_find_timed_out()
+                rows = await self.bot.database.generation_job_find_timed_out()
                 for row in rows:
                     await self._handle_timeout(row)
             except Exception as e:
@@ -617,7 +632,7 @@ class Dispatcher:
         await asyncio.sleep(0.5)
         try:
             rows = await self.bot.database.fetchall(
-                "SELECT * FROM image_jobs WHERE status IN "
+                "SELECT * FROM generation_jobs WHERE status IN "
                 "('warming_cache', 'running') ORDER BY created_at ASC"
             )
             for row in rows:
@@ -665,7 +680,7 @@ class Dispatcher:
             )
             return
         backoff = _compute_backoff(retry_count)
-        await self.bot.database.image_job_update_status(
+        await self.bot.database.generation_job_update_status(
             job_id, STATUS_QUEUED,
             expected_from=from_status,
             retry_count=retry_count + 1,
@@ -687,7 +702,7 @@ class Dispatcher:
         last_error: str | None = None,
     ) -> None:
         job_id = job["id"]
-        await self.bot.database.image_job_update_status(
+        await self.bot.database.generation_job_update_status(
             job_id, STATUS_FAILED,
             expected_from=from_status,
             error_message=message,

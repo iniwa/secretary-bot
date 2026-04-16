@@ -40,6 +40,8 @@ class JobStatus:
     negative: str | None
     params: dict[str, Any]
     result_paths: list[str]
+    result_kinds: list[str]
+    modality: str
     last_error: str | None
     retry_count: int
     max_retries: int

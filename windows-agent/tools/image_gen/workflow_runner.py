@@ -72,6 +72,27 @@ def substitute_placeholders(workflow: dict, inputs: dict) -> dict:
     return _walk(workflow)
 
 
+_OUTPUT_KIND_MAP = {
+    # ComfyUI history["outputs"] のキー → 媒体種別
+    "images":   "image",
+    "gifs":     "video",   # ComfyUI の GIF は video として扱う
+    "videos":   "video",   # VHS 系が返すキー
+    "audio":    "audio",
+}
+
+_EXT_TO_KIND = {
+    ".png":  "image", ".jpg": "image", ".jpeg": "image",
+    ".webp": "image", ".bmp": "image", ".gif":  "image",
+    ".mp4":  "video", ".webm": "video", ".mov": "video", ".mkv": "video",
+    ".wav":  "audio", ".mp3":  "audio", ".flac": "audio", ".ogg": "audio",
+}
+
+
+def _ext_kind(path: str, default: str = "image") -> str:
+    _, ext = os.path.splitext(path or "")
+    return _EXT_TO_KIND.get(ext.lower(), default)
+
+
 @dataclass
 class ImageJob:
     job_id: str
@@ -81,6 +102,7 @@ class ImageJob:
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
     result_paths: list[str] = field(default_factory=list)
+    result_kinds: list[str] = field(default_factory=list)
     last_error: Optional[dict] = None
     events: asyncio.Queue = field(default_factory=asyncio.Queue)
     cancelled: bool = False
@@ -251,12 +273,16 @@ class WorkflowRunner:
         # 成果物回収
         try:
             history = await self.fetch_history(prompt_id)
-            result_paths = await self._collect_outputs(history, output_dir)
+            result_paths, result_kinds = await self._collect_outputs(history, output_dir)
             job.result_paths = result_paths
+            job.result_kinds = result_kinds
             job.status = "done"
             job.finished_at = time.time()
             job.progress = 100
-            await job.put("result", {"result_paths": result_paths})
+            await job.put("result", {
+                "result_paths": result_paths,
+                "result_kinds": result_kinds,
+            })
             await job.put("status", {"status": "done"})
             await job.put("done", {})
         except Exception as e:
@@ -269,14 +295,18 @@ class WorkflowRunner:
             await job.put("error", job.last_error)
             await job.put("done", {})
 
-    async def _collect_outputs(self, history: dict, output_dir: str) -> list[str]:
-        """history 中の images を探し、ComfyUI output から NAS output_dir へコピー。"""
+    async def _collect_outputs(
+        self, history: dict, output_dir: str,
+    ) -> tuple[list[str], list[str]]:
+        """history 中の出力を探し ComfyUI output から output_dir へコピー。
+        戻り値: (paths, kinds) kinds は各ファイルの 'image'/'video'/'audio'。"""
         os.makedirs(output_dir, exist_ok=True)
         outputs = history.get("outputs") or {}
         results: list[str] = []
+        kinds: list[str] = []
         comfy_out_root = os.path.join(self.comfyui_root, "output")
         for _node_id, payload in outputs.items():
-            for key in ("images", "gifs"):
+            for key, base_kind in _OUTPUT_KIND_MAP.items():
                 for item in payload.get(key, []) or []:
                     filename = item.get("filename")
                     subfolder = item.get("subfolder", "") or ""
@@ -286,7 +316,6 @@ class WorkflowRunner:
                     if not os.path.exists(src):
                         continue
                     dst = os.path.join(output_dir, filename)
-                    # 原子的に配置
                     tmp = dst + ".tmp"
                     try:
                         shutil.copy2(src, tmp)
@@ -298,5 +327,8 @@ class WorkflowRunner:
                             except OSError:
                                 pass
                         continue
+                    # 出力セクションが曖昧なら拡張子でフォールバック
+                    kind = _ext_kind(filename, default=base_kind)
                     results.append(dst.replace("\\", "/"))
-        return results
+                    kinds.append(kind)
+        return results, kinds

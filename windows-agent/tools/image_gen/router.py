@@ -120,6 +120,16 @@ def _cache_root() -> str:
     return _ctx.image_gen_cfg.get("cache") or "C:/secretary-bot-cache"
 
 
+def _job_stream_url(request: Request, job_id: str) -> str:
+    """submit レスポンスに載せる progress_url を、呼ばれたエンドポイントに合わせて組み立てる。
+    /generation/submit で呼ばれたら /generation/jobs/{id}/stream、
+    /image/generate で呼ばれたら /image/jobs/{id}/stream を返す。"""
+    path = str(request.url.path)
+    if "/generation/" in path:
+        return f"/tools/image-gen/generation/jobs/{job_id}/stream"
+    return f"/tools/image-gen/image/jobs/{job_id}/stream"
+
+
 # --- GPU 情報取得（ベストエフォート） ---
 def _gpu_info() -> dict:
     try:
@@ -648,6 +658,7 @@ async def _ensure_comfyui_started() -> Optional[dict]:
 
 
 @router.post("/image/generate")
+@router.post("/generation/submit")
 async def image_generate(request: Request):
     _verify(request)
     trace_id = _trace_id(request)
@@ -675,7 +686,7 @@ async def image_generate(request: Request):
             {
                 "job_id": job_id,
                 "status": existing.status,
-                "progress_url": f"/tools/image-gen/image/jobs/{job_id}/stream",
+                "progress_url": _job_stream_url(request, job_id),
                 "comfyui_prompt_id": existing.comfyui_prompt_id,
             },
             status_code=202,
@@ -731,7 +742,7 @@ async def image_generate(request: Request):
         {
             "job_id": job_id,
             "status": job.status if job.status != "queued" else "running",
-            "progress_url": f"/tools/image-gen/image/jobs/{job_id}/stream",
+            "progress_url": _job_stream_url(request, job_id),
             "comfyui_prompt_id": job.comfyui_prompt_id,
         },
         status_code=202,
@@ -740,6 +751,7 @@ async def image_generate(request: Request):
 
 
 @router.get("/image/jobs/{job_id}")
+@router.get("/generation/jobs/{job_id}")
 async def image_job_status(job_id: str, request: Request):
     _verify(request)
     trace_id = _trace_id(request)
@@ -755,6 +767,7 @@ async def image_job_status(job_id: str, request: Request):
             "finished_at": job.finished_at,
             "comfyui_prompt_id": job.comfyui_prompt_id,
             "result_paths": job.result_paths,
+            "result_kinds": job.result_kinds,
             "last_error": job.last_error,
         },
         headers={"X-Trace-Id": trace_id},
@@ -762,6 +775,7 @@ async def image_job_status(job_id: str, request: Request):
 
 
 @router.get("/image/jobs/{job_id}/stream")
+@router.get("/generation/jobs/{job_id}/stream")
 async def image_job_stream(job_id: str, request: Request):
     _verify(request)
     trace_id = _trace_id(request)
@@ -774,7 +788,11 @@ async def image_job_stream(job_id: str, request: Request):
         if job.status in ("done", "failed", "cancelled"):
             yield f"event: status\ndata: {json.dumps({'status': job.status})}\n\n"
             if job.result_paths:
-                yield f"event: result\ndata: {json.dumps({'result_paths': job.result_paths}, ensure_ascii=False)}\n\n"
+                payload = {
+                    "result_paths": job.result_paths,
+                    "result_kinds": job.result_kinds,
+                }
+                yield f"event: result\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             if job.last_error:
                 yield f"event: error\ndata: {json.dumps(job.last_error, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
@@ -800,6 +818,7 @@ async def image_job_stream(job_id: str, request: Request):
 
 
 @router.post("/image/jobs/{job_id}/cancel")
+@router.post("/generation/jobs/{job_id}/cancel")
 async def image_job_cancel(job_id: str, request: Request):
     _verify(request)
     trace_id = _trace_id(request)

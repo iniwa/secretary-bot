@@ -208,7 +208,9 @@ class ImageGenUnit(BaseUnit):
     async def _discord_status(self, extracted: dict, user_id: str) -> str:
         job_id = str(extracted.get("job_id") or "").strip()
         if not job_id and user_id:
-            rows = await self.bot.database.image_job_list(user_id=user_id, limit=1)
+            rows = await self.bot.database.generation_job_list(
+                user_id=user_id, modality="image", limit=1,
+            )
             if rows:
                 job_id = rows[0]["id"]
         if not job_id:
@@ -289,18 +291,29 @@ class ImageGenUnit(BaseUnit):
         if status == STATUS_DONE:
             job = await self.get_job(job_id)
             result_paths: list[str] = (job or {}).get("result_paths") or []
+            result_kinds: list[str] = (job or {}).get("result_kinds") or []
+            if len(result_kinds) != len(result_paths):
+                result_kinds = ["image"] * len(result_paths)
+            # image のみ添付、video/audio はリンクテキストのみ
             files: list[discord.File] = []
-            for p in result_paths[:4]:  # Discord 添付上限に配慮
+            linked: list[str] = []
+            for p, kind in list(zip(result_paths, result_kinds))[:4]:
+                if kind != "image":
+                    linked.append(f"[{kind}] {p}")
+                    continue
                 try:
                     if os.path.exists(p):
                         files.append(discord.File(p))
                     else:
-                        # NAS 上のパスが Pi から読めない場合は file 添付を諦める
                         log.info("discord notify: file not readable %s", p)
+                        linked.append(p)
                 except Exception as e:
                     log.warning("discord File open failed %s: %s", p, e)
+                    linked.append(p)
             text = f"{prefix}✅ 生成完了 (job_id={short})"
-            if not files:
+            if linked:
+                text += "\n" + "\n".join(linked)
+            elif not files:
                 text += f"\n結果ファイル: {', '.join(result_paths) or '(なし)'}"
             await channel.send(text, files=files or None)
         elif status == STATUS_FAILED:
@@ -403,7 +416,7 @@ class ImageGenUnit(BaseUnit):
 
     async def get_job(self, job_id: str) -> dict | None:
         """ジョブの現在状態を dict で返す。"""
-        row = await self.bot.database.image_job_get(job_id)
+        row = await self.bot.database.generation_job_get(job_id)
         if not row:
             return None
         return await self._row_to_dict(row)
@@ -412,8 +425,9 @@ class ImageGenUnit(BaseUnit):
         self, user_id: str | None = None, status: str | None = None,
         limit: int = 50, offset: int = 0,
     ) -> list[dict]:
-        rows = await self.bot.database.image_job_list(
-            user_id=user_id, status=status, limit=limit, offset=offset,
+        rows = await self.bot.database.generation_job_list(
+            user_id=user_id, status=status, modality="image",
+            limit=limit, offset=offset,
         )
         return [await self._row_to_dict(r) for r in rows]
 
@@ -422,11 +436,11 @@ class ImageGenUnit(BaseUnit):
     ) -> list[dict]:
         """完了ジョブの result_paths を日付降順で列挙する。
 
-        Phase1 は DB の image_jobs.result_paths を参照する簡易実装。
+        Phase1 は DB の generation_jobs.result_paths を参照する簡易実装。
         Phase2 で NAS outputs/ を直接走査する実装に差し替える。
         """
-        rows = await self.bot.database.image_job_list(
-            status=STATUS_DONE, limit=limit, offset=offset,
+        rows = await self.bot.database.generation_job_list(
+            status=STATUS_DONE, modality="image", limit=limit, offset=offset,
         )
         out: list[dict] = []
         for r in rows:
@@ -437,11 +451,19 @@ class ImageGenUnit(BaseUnit):
                 paths = []
             if not paths:
                 continue
+            kinds: list[str] = []
+            try:
+                kinds = json.loads(r.get("result_kinds") or "[]")
+            except Exception:
+                kinds = []
+            if len(kinds) != len(paths):
+                kinds = ["image"] * len(paths)
             out.append({
                 "job_id": r["id"],
                 "user_id": r["user_id"],
                 "finished_at": r.get("finished_at"),
                 "result_paths": paths,
+                "result_kinds": kinds,
                 "positive": r.get("positive"),
                 "negative": r.get("negative"),
             })
@@ -449,7 +471,7 @@ class ImageGenUnit(BaseUnit):
 
     async def cancel_job(self, job_id: str) -> bool:
         """非終端ジョブを cancelled へ。Agent 側にも interrupt を試みる。"""
-        row = await self.bot.database.image_job_get(job_id)
+        row = await self.bot.database.generation_job_get(job_id)
         if not row:
             return False
         # Agent 側キャンセルは best-effort
@@ -464,12 +486,12 @@ class ImageGenUnit(BaseUnit):
                         if row["status"] == "warming_cache" and row.get("cache_sync_id"):
                             await ac.cache_sync_cancel(row["cache_sync_id"])
                         elif row["status"] == "running":
-                            await ac.image_job_cancel(job_id)
+                            await ac.generation_job_cancel(job_id)
                     finally:
                         await ac.close()
                 except Exception as e:
                     log.warning("agent cancel best-effort failed: %s", e)
-        ok = await self.bot.database.image_job_cancel(job_id)
+        ok = await self.bot.database.generation_job_cancel(job_id)
         if ok:
             await self.broadcast_event(TransitionEvent(
                 job_id=job_id, from_status=row["status"],
@@ -526,6 +548,13 @@ class ImageGenUnit(BaseUnit):
             result_paths = json.loads(row.get("result_paths") or "[]")
         except Exception:
             result_paths = []
+        result_kinds: list[str] = []
+        try:
+            result_kinds = json.loads(row.get("result_kinds") or "[]")
+        except Exception:
+            result_kinds = []
+        if len(result_kinds) != len(result_paths):
+            result_kinds = ["image"] * len(result_paths)
         js = JobStatus(
             job_id=row["id"],
             user_id=row.get("user_id", ""),
@@ -539,6 +568,8 @@ class ImageGenUnit(BaseUnit):
             negative=row.get("negative"),
             params=params,
             result_paths=result_paths,
+            result_kinds=result_kinds,
+            modality=str(row.get("modality") or "image"),
             last_error=row.get("last_error"),
             retry_count=int(row.get("retry_count") or 0),
             max_retries=int(row.get("max_retries") or 0),
