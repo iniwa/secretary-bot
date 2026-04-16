@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_cafe",
+  "description": "カフェ内装（テーブル・窓際・暖色照明）",
+  "positive": "cafe interior, indoors, wooden table, warm lighting, window seat, cozy atmosphere",
+  "negative": null,
+  "tags": "scene,cafe,indoor"
+}

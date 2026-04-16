@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_watercolor",
+  "description": "水彩画（やわらかいエッジ・紙のテクスチャ・にじみ）",
+  "positive": "watercolor, soft edges, paper texture, wet on wet, bleeding colors, traditional media, painterly",
+  "negative": null,
+  "tags": "style,watercolor,traditional"
+}

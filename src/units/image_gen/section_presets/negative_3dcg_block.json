@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_3dcg_block",
+  "description": "3DCG / VRChat 風描画の抑制（2D 絵に寄せたい時）",
+  "positive": null,
+  "negative": "3DCG, 3d, VRChat, Second Life, blender, unreal engine, game cg, render",
+  "tags": "negative,2d_enforce,no_3d"
+}

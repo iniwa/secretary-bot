@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_classroom",
+  "description": "学校の教室（机・黒板・窓）",
+  "positive": "classroom, school, desks, chalkboard, windows, indoors, daytime",
+  "negative": null,
+  "tags": "scene,school,classroom"
+}

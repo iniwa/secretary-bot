@@ -1,0 +1,8 @@
+{
+  "category_key": "composition",
+  "name": "composition_close_up",
+  "description": "クローズアップ（顔・瞳に寄せた浅被写界深度）",
+  "positive": "close-up, face focus, shallow depth of field, detailed eyes",
+  "negative": null,
+  "tags": "composition,close_up,face"
+}

@@ -1,0 +1,8 @@
+{
+  "category_key": "composition",
+  "name": "composition_full_body",
+  "description": "全身像（頭から足先まで、立ちポーズ基本）",
+  "positive": "full body, standing, full figure, head to toe",
+  "negative": null,
+  "tags": "composition,full_body,standing"
+}

@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_cinematic",
+  "description": "シネマティック（劇的ライティング・映画的構図・フィルムグレイン）",
+  "positive": "cinematic lighting, dramatic shadows, film grain, rim light, volumetric lighting, cinematic composition, depth of field",
+  "negative": null,
+  "tags": "style,cinematic,lighting"
+}

@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_monochrome_sketch",
+  "description": "モノクロスケッチ（鉛筆画・線画のみ・グレースケール）",
+  "positive": "monochrome, sketch, line art, pencil drawing, greyscale, hatching, traditional sketch",
+  "negative": null,
+  "tags": "style,monochrome,sketch,lineart"
+}

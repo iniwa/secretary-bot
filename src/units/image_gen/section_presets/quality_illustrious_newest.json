@@ -1,0 +1,8 @@
+{
+  "category_key": "quality",
+  "name": "quality_illustrious_newest",
+  "description": "Illustrious / NoobXL 推奨の高品質タグ（newest 入り）",
+  "positive": "masterpiece, best quality, amazing quality, very aesthetic, absurdres, newest",
+  "negative": null,
+  "tags": "sdxl,illustrious,noobxl,quality"
+}

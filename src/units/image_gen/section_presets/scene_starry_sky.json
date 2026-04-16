@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_starry_sky",
+  "description": "星空（夜空・天の川・流星）",
+  "positive": "starry sky, night sky, milky way, stars, nebula, cosmic, outdoors, night",
+  "negative": null,
+  "tags": "scene,sky,night,stars"
+}

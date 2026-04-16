@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_monochrome_block",
+  "description": "モノクロ化の抑制（フルカラーを強制したい時）",
+  "positive": null,
+  "negative": "monochrome, greyscale, sepia, black and white",
+  "tags": "negative,color_enforce"
+}

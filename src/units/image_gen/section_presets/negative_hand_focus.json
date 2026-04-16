@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_hand_focus",
+  "description": "手指の破綻抑制（指の数・融合・異形）",
+  "positive": null,
+  "negative": "bad hands, bad fingers, missing fingers, extra fingers, extra digits, fewer digits, fused fingers, mutated hands, malformed hands, deformed fingers",
+  "tags": "negative,hands,anatomy"
+}

@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_forest",
+  "description": "森（木漏れ日・緑・苔）",
+  "positive": "forest, trees, sunlight through leaves, dappled light, moss, nature, outdoors",
+  "negative": null,
+  "tags": "scene,forest,nature"
+}

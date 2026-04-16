@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_bedroom",
+  "description": "寝室（ベッド・柔らかい照明）",
+  "positive": "bedroom, bed, soft lighting, indoors, cozy room",
+  "negative": null,
+  "tags": "scene,bedroom,indoor"
+}

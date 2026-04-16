@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_flat_anime",
+  "description": "フラットアニメ塗り（セルシェーディング・ベタ塗り・輪郭線強め）",
+  "positive": "flat color, cel shading, bold lineart, anime style, vibrant colors, clean lines",
+  "negative": null,
+  "tags": "style,anime,flat"
+}

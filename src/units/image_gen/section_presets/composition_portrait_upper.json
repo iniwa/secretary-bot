@@ -1,0 +1,8 @@
+{
+  "category_key": "composition",
+  "name": "composition_portrait_upper",
+  "description": "上半身ポートレート（顔〜胸付近まで、正面寄り）",
+  "positive": "upper body, portrait, looking at viewer, centered composition",
+  "negative": null,
+  "tags": "composition,portrait,upper_body"
+}

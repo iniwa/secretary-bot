@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_night_city",
+  "description": "夜の都市（ネオン・ビル群・雨に濡れた路面）",
+  "positive": "night, city, cityscape, neon lights, skyscrapers, wet street reflection, urban, outdoors",
+  "negative": null,
+  "tags": "scene,city,night,neon"
+}

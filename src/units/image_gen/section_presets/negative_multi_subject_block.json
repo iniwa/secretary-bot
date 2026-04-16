@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_multi_subject_block",
+  "description": "複数人物・複数視点の抑制（1人絵を徹底したい時）",
+  "positive": null,
+  "negative": "2girls, 2boys, multiple girls, multiple boys, multiple views, multiple subjects, duplicate, clone",
+  "tags": "negative,single_subject"
+}

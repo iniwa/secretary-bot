@@ -1,0 +1,8 @@
+{
+  "category_key": "character",
+  "name": "character_iniwa_vrc",
+  "description": "Iniwa_VRC（猫耳・水色ショートヘア・眼鏡・青パーカー）。LoRA INIWA_NOOBXL と併用推奨",
+  "positive": "Iniwa_VRC, 1girl, solo, cat ears, cat tail, animal ear fluff, ahoge, skyblue hair, short hair, messy hair, blue eyes, glasses, black-framed eyewear, blue hoodie, open hoodie, off shoulder, white camisole, black choker",
+  "negative": null,
+  "tags": "character,iniwa_vrc,cat_ears,lora_friendly"
+}

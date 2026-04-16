@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_pixel_art",
+  "description": "ピクセルアート（ドット絵・限定パレット・レトロゲーム風）",
+  "positive": "pixel art, limited palette, retro game style, 16-bit, dithering, sharp pixels",
+  "negative": null,
+  "tags": "style,pixel,retro"
+}

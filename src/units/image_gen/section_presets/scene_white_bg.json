@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_white_bg",
+  "description": "白背景（スタジオ風のクリーンな背景）",
+  "positive": "simple background, white background",
+  "negative": null,
+  "tags": "scene,background,white"
+}
