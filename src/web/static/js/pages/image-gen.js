@@ -585,7 +585,7 @@ async function loadPresets() {
           <div>
             <div><strong>${esc(w.name)}</strong> ${cat}${mpc}</div>
             <div class="meta">${esc(w.description || '(no description)')}</div>
-            <div class="meta">nodes: ${nodes} / loras: ${loras} / timeout: ${w.default_timeout_sec}s</div>
+            <div class="meta">nodes: ${nodes} / loras: ${loras} / timeout: ${w.default_timeout_sec ?? '—'}s</div>
           </div>
           <button class="btn btn-sm" data-preset-view="${w.id}">表示</button>
           <button class="btn btn-sm btn-danger" data-preset-del="${w.id}" data-preset-name="${esc(w.name)}">削除</button>

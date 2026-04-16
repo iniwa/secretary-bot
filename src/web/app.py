@@ -2441,20 +2441,6 @@ def create_web_app(bot) -> FastAPI:
         )
         return {"jobs": jobs}
 
-    @app.get("/api/image/jobs/{job_id}", dependencies=[Depends(_verify)])
-    async def image_job_detail(job_id: str):
-        unit = _get_image_gen_unit()
-        job = await unit.get_job(job_id)
-        if not job:
-            raise HTTPException(404, "job not found")
-        return job
-
-    @app.post("/api/image/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
-    async def image_job_cancel(job_id: str):
-        unit = _get_image_gen_unit()
-        ok = await unit.cancel_job(job_id)
-        return {"ok": bool(ok)}
-
     @app.get("/api/image/jobs/stream")
     async def image_jobs_stream():
         """ImageGenUnit のイベントを SSE で配信（/api/flow/stream と同じ形）。"""
@@ -2481,6 +2467,20 @@ def create_web_app(bot) -> FastAPI:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/image/jobs/{job_id}", dependencies=[Depends(_verify)])
+    async def image_job_detail(job_id: str):
+        unit = _get_image_gen_unit()
+        job = await unit.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        return job
+
+    @app.post("/api/image/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
+    async def image_job_cancel(job_id: str):
+        unit = _get_image_gen_unit()
+        ok = await unit.cancel_job(job_id)
+        return {"ok": bool(ok)}
+
     @app.get("/api/image/gallery", dependencies=[Depends(_verify)])
     async def image_gallery(limit: int = 50, offset: int = 0):
         unit = _get_image_gen_unit()
@@ -2503,16 +2503,29 @@ def create_web_app(bot) -> FastAPI:
     @app.get("/api/image/workflows", dependencies=[Depends(_verify)])
     async def image_workflows():
         rows = await bot.database.workflow_list()
-        out = [
-            {
+        out = []
+        for r in rows:
+            required_nodes = []
+            required_loras = []
+            try:
+                required_nodes = json.loads(r.get("required_nodes") or "[]")
+            except (TypeError, ValueError):
+                pass
+            try:
+                required_loras = json.loads(r.get("required_loras") or "[]")
+            except (TypeError, ValueError):
+                pass
+            out.append({
+                "id": r.get("id"),
                 "name": r.get("name"),
                 "description": r.get("description"),
                 "category": r.get("category"),
                 "main_pc_only": bool(r.get("main_pc_only")),
                 "starred": bool(r.get("starred")),
-            }
-            for r in rows
-        ]
+                "default_timeout_sec": r.get("default_timeout_sec"),
+                "required_nodes": required_nodes,
+                "required_loras": required_loras,
+            })
         return {"workflows": out}
 
     # --- /api/generation/* ( Phase 3.5c 並立 + セクション合成 ) ---
@@ -2578,20 +2591,6 @@ def create_web_app(bot) -> FastAPI:
             )
         return {"jobs": jobs}
 
-    @app.get("/api/generation/jobs/{job_id}", dependencies=[Depends(_verify)])
-    async def generation_job_detail(job_id: str):
-        unit = _get_image_gen_unit()
-        job = await unit.get_job(job_id)
-        if not job:
-            raise HTTPException(404, "job not found")
-        return job
-
-    @app.post("/api/generation/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
-    async def generation_job_cancel(job_id: str):
-        unit = _get_image_gen_unit()
-        ok = await unit.cancel_job(job_id)
-        return {"ok": bool(ok)}
-
     @app.get("/api/generation/jobs/stream")
     async def generation_jobs_stream():
         """ImageGenUnit イベントの SSE（/api/image/jobs/stream と同一ソース）。"""
@@ -2617,6 +2616,20 @@ def create_web_app(bot) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/generation/jobs/{job_id}", dependencies=[Depends(_verify)])
+    async def generation_job_detail(job_id: str):
+        unit = _get_image_gen_unit()
+        job = await unit.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        return job
+
+    @app.post("/api/generation/jobs/{job_id}/cancel", dependencies=[Depends(_verify)])
+    async def generation_job_cancel(job_id: str):
+        unit = _get_image_gen_unit()
+        ok = await unit.cancel_job(job_id)
+        return {"ok": bool(ok)}
 
     @app.get("/api/generation/gallery", dependencies=[Depends(_verify)])
     async def generation_gallery(limit: int = 50, offset: int = 0):
