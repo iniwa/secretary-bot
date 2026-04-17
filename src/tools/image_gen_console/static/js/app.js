@@ -26,16 +26,27 @@ const routes = [
 
 const DEFAULT_HASH = '#/generate';
 
-const containers = {};   // nav -> HTMLElement
+const containers = {};   // nav -> { el, module }
 let currentNav = null;
-let _navGen = 0;
+let _navChain = Promise.resolve();   // 直列実行用 mutex
 
 function resolve(rawHash) {
   const base = (rawHash || '').split('?')[0];
   return routes.find(r => r.hash === base) || null;
 }
 
-async function navigate() {
+/** すべての navigate をチェーン化して直列実行する。
+ *  これにより mount() の await 中に別の navigate が割り込んで
+ *  複数のページコンテナが同時表示されてしまう race を防ぐ。
+ */
+function navigate() {
+  _navChain = _navChain.then(_navigateImpl).catch((err) => {
+    console.error('navigate failed', err);
+  });
+  return _navChain;
+}
+
+async function _navigateImpl() {
   const rawHash = location.hash || DEFAULT_HASH;
   const route = resolve(rawHash);
   if (!route) {
@@ -43,37 +54,36 @@ async function navigate() {
     return;
   }
 
-  // 切替前ページの onHide
-  if (currentNav && currentNav !== route.nav) {
-    const prev = containers[currentNav];
-    if (prev) {
-      prev.el.style.display = 'none';
-      try { prev.module.onHide?.(); } catch (err) { console.error('onHide failed', err); }
-    }
-  }
-
   // ナビ ハイライト更新
   document.querySelectorAll('.ig-nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === route.nav);
   });
 
+  // 対象以外のすべてのページを必ず hide（currentNav に頼らず safety net）
+  for (const [nav, entry] of Object.entries(containers)) {
+    if (nav === route.nav) continue;
+    if (entry.el.style.display !== 'none') {
+      entry.el.style.display = 'none';
+      try { entry.module.onHide?.(); } catch (err) { console.error('onHide failed', err); }
+    }
+  }
+
   // 既存コンテナがあれば表示するだけ。なければ初回マウント
   let entry = containers[route.nav];
   const main = document.getElementById('main-content');
-  const gen = ++_navGen;
 
   if (!entry) {
     const el = document.createElement('div');
     el.className = 'ig-page-container';
     el.dataset.page = route.nav;
+    // race 対策で先に containers へ登録（同期実行内で完結）
+    entry = { el, module: route.module };
+    containers[route.nav] = entry;
     try {
       el.innerHTML = route.module.render();
       main.appendChild(el);
-      entry = { el, module: route.module };
-      containers[route.nav] = entry;
       if (route.module.mount) await route.module.mount();
     } catch (err) {
-      if (gen !== _navGen) return;
       console.error(`page mount error (${route.nav}):`, err);
       el.innerHTML = `<div class="imggen-empty">ページの読み込みに失敗しました<br><span class="text-xs text-muted">${escapeHtml(err.message || String(err))}</span></div>`;
       toast(`${route.title} の読み込みに失敗`, 'error');
