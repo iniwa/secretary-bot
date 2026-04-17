@@ -43,6 +43,9 @@ export const GenerationAPI = {
   listWorkflows() {
     return api('/api/image/workflows');
   },
+  workflowLoras(name) {
+    return api(`/api/generation/workflows/${encodeURIComponent(name)}/loras`);
+  },
 
   // Section categories
   listCategories() {

@@ -2023,13 +2023,19 @@ def create_web_app(bot) -> FastAPI:
         month: int | None = None,
         start: str | None = None,
         end: str | None = None,
+        pc: str = "main",
     ):
-        """日別のゲーム時間（ゲーム別の内訳付き）。棒グラフ / カレンダー用。
+        """日別の活動時間。棒グラフ / カレンダー用。
+        pc='main' (default): game_sessions（ゲームプレイ時間）
+        pc='sub': foreground_sessions WHERE pc='sub'（Sub PC 作業時間）
+        pc='both': 両方を含めて返す（クライアントで並列表示）
         start/end (YYYY-MM-DD) が最優先、次に year/month、最後に直近 days 日。"""
         from datetime import date as _date
+        if pc not in ("main", "sub", "both"):
+            pc = "main"
         if start or end:
             parts, params_list, meta = _activity_range(days, start, end)
-            where = " AND ".join(["end_at IS NOT NULL", *parts])
+            base_where = " AND ".join(["end_at IS NOT NULL", *parts])
             params: tuple = tuple(params_list)
         elif year and month:
             month_start = _date(year, month, 1)
@@ -2039,34 +2045,90 @@ def create_web_app(bot) -> FastAPI:
                 next_month = _date(year, month + 1, 1)
             m_start = month_start.strftime("%Y-%m-%d 00:00:00")
             m_end = next_month.strftime("%Y-%m-%d 00:00:00")
-            where = "end_at IS NOT NULL AND start_at >= ? AND start_at < ?"
+            base_where = "end_at IS NOT NULL AND start_at >= ? AND start_at < ?"
             params = (m_start, m_end)
             meta = {"year": year, "month": month}
         else:
             days = max(1, min(int(days or 30), 3650))
             cutoff = _activity_cutoff(days)
-            where = "end_at IS NOT NULL AND start_at >= ?"
+            base_where = "end_at IS NOT NULL AND start_at >= ?"
             params = (cutoff,)
             meta = {"days": days, "since": cutoff}
 
-        rows = await bot.database.fetchall(
-            f"""
-            SELECT date(start_at) AS day, game_name,
-                   SUM(COALESCE(duration_sec, 0)) AS sec
-            FROM game_sessions
-            WHERE {where}
-            GROUP BY day, game_name ORDER BY day
-            """,
-            params,
-        )
-        by_day: dict[str, dict] = {}
-        for r in rows:
-            d = r["day"]
-            if d not in by_day:
-                by_day[d] = {"day": d, "total_sec": 0, "games": []}
-            by_day[d]["total_sec"] += int(r["sec"] or 0)
-            by_day[d]["games"].append({"game_name": r["game_name"], "sec": int(r["sec"] or 0)})
-        return {**meta, "daily": list(by_day.values())}
+        # Main: game_sessions（pc カラムなし → そのまま）
+        main_by_day: dict[str, dict] = {}
+        if pc in ("main", "both"):
+            rows = await bot.database.fetchall(
+                f"""
+                SELECT date(start_at) AS day, game_name,
+                       SUM(COALESCE(duration_sec, 0)) AS sec
+                FROM game_sessions
+                WHERE {base_where}
+                GROUP BY day, game_name ORDER BY day, sec DESC
+                """,
+                params,
+            )
+            for r in rows:
+                d = r["day"]
+                if d not in main_by_day:
+                    main_by_day[d] = {"sec": 0, "items": []}
+                main_by_day[d]["sec"] += int(r["sec"] or 0)
+                main_by_day[d]["items"].append(
+                    {"name": r["game_name"], "sec": int(r["sec"] or 0)}
+                )
+
+        # Sub: foreground_sessions WHERE pc='sub'
+        sub_by_day: dict[str, dict] = {}
+        if pc in ("sub", "both"):
+            sub_where = f"{base_where} AND pc = 'sub'"
+            rows = await bot.database.fetchall(
+                f"""
+                SELECT date(start_at) AS day, process_name,
+                       SUM(COALESCE(duration_sec, 0)) AS sec
+                FROM foreground_sessions
+                WHERE {sub_where}
+                GROUP BY day, process_name ORDER BY day, sec DESC
+                """,
+                params,
+            )
+            for r in rows:
+                d = r["day"]
+                if d not in sub_by_day:
+                    sub_by_day[d] = {"sec": 0, "items": []}
+                sub_by_day[d]["sec"] += int(r["sec"] or 0)
+                sub_by_day[d]["items"].append(
+                    {"name": r["process_name"], "sec": int(r["sec"] or 0)}
+                )
+
+        all_days = sorted(set(main_by_day.keys()) | set(sub_by_day.keys()))
+        daily: list[dict] = []
+        for d in all_days:
+            m = main_by_day.get(d)
+            s = sub_by_day.get(d)
+            entry: dict = {"day": d}
+            main_sec = (m["sec"] if m else 0) if pc in ("main", "both") else 0
+            sub_sec = (s["sec"] if s else 0) if pc in ("sub", "both") else 0
+            if pc in ("main", "both"):
+                entry["main_sec"] = main_sec
+                entry["main_items"] = m["items"] if m else []
+            if pc in ("sub", "both"):
+                entry["sub_sec"] = sub_sec
+                entry["sub_items"] = s["items"] if s else []
+            # 後方互換: 既存の単独モード呼び出し用
+            if pc == "main":
+                entry["total_sec"] = main_sec
+                entry["games"] = [
+                    {"game_name": i["name"], "sec": i["sec"]} for i in entry["main_items"]
+                ]
+            elif pc == "sub":
+                entry["total_sec"] = sub_sec
+                entry["processes"] = [
+                    {"process_name": i["name"], "sec": i["sec"]} for i in entry["sub_items"]
+                ]
+            else:
+                entry["total_sec"] = main_sec + sub_sec
+            daily.append(entry)
+        return {**meta, "pc": pc, "daily": daily}
 
     @app.get("/api/activity/sessions", dependencies=[Depends(_verify)])
     async def activity_sessions(
@@ -2553,6 +2615,9 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(400, "section_ids must be integers")
         user_position = str(body.get("user_position") or "tail")
         modality = body.get("modality")
+        lora_overrides = body.get("lora_overrides")
+        if lora_overrides is not None and not isinstance(lora_overrides, list):
+            raise HTTPException(400, "lora_overrides must be an array")
         try:
             job_id = await unit.enqueue(
                 user_id=_webgui_user_id or "webgui",
@@ -2564,6 +2629,7 @@ def create_web_app(bot) -> FastAPI:
                 section_ids=section_ids or None,
                 user_position=user_position,
                 modality=modality,
+                lora_overrides=lora_overrides,
             )
         except HTTPException:
             raise
@@ -2703,6 +2769,19 @@ def create_web_app(bot) -> FastAPI:
         if not ok:
             raise HTTPException(404, "job not found")
         return {"ok": True, "tags": cleaned}
+
+    @app.get(
+        "/api/generation/workflows/{name}/loras",
+        dependencies=[Depends(_verify)],
+    )
+    async def generation_workflow_loras(name: str):
+        """workflow に含まれる LoraLoader ノード一覧（UI のセレクタ用）。"""
+        unit = _get_image_gen_unit()
+        try:
+            loras = await unit.workflow_mgr.list_lora_nodes_by_name(name)
+        except Exception as e:
+            raise HTTPException(500, f"failed to load loras: {e}")
+        return {"loras": loras}
 
     @app.get("/api/generation/gallery/tags", dependencies=[Depends(_verify)])
     async def generation_gallery_tags():

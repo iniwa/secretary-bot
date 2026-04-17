@@ -225,6 +225,43 @@ html, body { height: 100vh; overflow: hidden; }
   font-size: 0.8125rem;
 }
 .imggen-submit-row .imggen-submit { margin-top: 0; flex: 1; }
+
+/* LoRA selector */
+.imggen-lora-block {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-base);
+  margin-top: 0.4rem;
+}
+.imggen-lora-row {
+  display: grid;
+  grid-template-columns: auto 1fr 8rem 4.5rem;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+}
+.imggen-lora-row + .imggen-lora-row {
+  border-top: 1px dashed var(--border);
+}
+.imggen-lora-toggle { display: flex; align-items: center; }
+.imggen-lora-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.imggen-lora-strength { width: 100%; }
+.imggen-lora-strength-num {
+  width: 4.5rem;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.3rem;
+}
+.imggen-lora-strength:disabled,
+.imggen-lora-strength-num:disabled {
+  opacity: 0.4;
+}
 .imggen-submit { width: 100%; }
 .imggen-status-line {
   margin-top: 0.6rem;

@@ -21,6 +21,10 @@ const comfyBusy = new Set();
 // Presets modal state
 let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
 
+// LoRA state（workflow ごとに [{node_id, enabled, strength, lora_name}, ...]）
+let loraNodes = [];
+const LORA_LS_PREFIX = 'imggen:lora:';   // + workflow_name → JSON
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -46,6 +50,11 @@ export function render() {
     <div class="imggen-form">
       <label for="ig-workflow">Workflow</label>
       <select id="ig-workflow" class="form-input"><option value="">Loading...</option></select>
+
+      <div id="ig-lora-block" class="imggen-lora-block" hidden>
+        <h4 style="margin:0.5rem 0 0.3rem;font-size:0.8rem;">LoRA</h4>
+        <div id="ig-lora-list"></div>
+      </div>
 
       <div class="imggen-sections-block">
         <h4>
@@ -264,6 +273,131 @@ function persistWorkflowSelection() {
     if (v) localStorage.setItem(LAST_WORKFLOW_KEY, v);
     else localStorage.removeItem(LAST_WORKFLOW_KEY);
   } catch { /* ignore */ }
+}
+
+function handleWorkflowChange() {
+  persistWorkflowSelection();
+  loadLoras();
+}
+
+// ============================================================
+// LoRA selector
+// ============================================================
+function loraStorageKey(workflow) {
+  return `${LORA_LS_PREFIX}${workflow}`;
+}
+
+function loadLoraOverridesLS(workflow) {
+  if (!workflow) return {};
+  try {
+    const raw = localStorage.getItem(loraStorageKey(workflow));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+}
+
+function persistLoraOverridesLS() {
+  const wf = $('ig-workflow')?.value || '';
+  if (!wf) return;
+  const map = {};
+  for (const node of loraNodes) {
+    map[node.node_id] = {
+      enabled: !!node.enabled,
+      strength: (typeof node.strength === 'number') ? node.strength : null,
+    };
+  }
+  try { localStorage.setItem(loraStorageKey(wf), JSON.stringify(map)); }
+  catch { /* ignore */ }
+}
+
+async function loadLoras() {
+  const wf = $('ig-workflow')?.value || '';
+  const block = $('ig-lora-block');
+  const list = $('ig-lora-list');
+  if (!block || !list) return;
+  if (!wf) { block.hidden = true; loraNodes = []; return; }
+  list.innerHTML = '<div class="imggen-empty" style="padding:0.4rem;">Loading LoRA...</div>';
+  try {
+    const data = await GenerationAPI.workflowLoras(wf);
+    const items = data?.loras || [];
+    if (!items.length) {
+      block.hidden = true;
+      loraNodes = [];
+      return;
+    }
+    const saved = loadLoraOverridesLS(wf);
+    loraNodes = items.map(it => {
+      const ovr = saved[it.node_id] || {};
+      const defStrength = (typeof it.strength_model === 'number') ? it.strength_model : 1.0;
+      return {
+        node_id: it.node_id,
+        lora_name: it.lora_name || '(unknown)',
+        title: it.title || null,
+        default_strength: defStrength,
+        enabled: (typeof ovr.enabled === 'boolean') ? ovr.enabled : true,
+        strength: (typeof ovr.strength === 'number') ? ovr.strength : defStrength,
+      };
+    });
+    block.hidden = false;
+    renderLoraList();
+  } catch (err) {
+    console.error('loras load failed', err);
+    list.innerHTML = `<div class="imggen-empty" style="padding:0.4rem;">取得失敗: ${esc(err?.message || err)}</div>`;
+    block.hidden = false;
+  }
+}
+
+function renderLoraList() {
+  const list = $('ig-lora-list');
+  if (!list) return;
+  if (!loraNodes.length) { list.innerHTML = ''; return; }
+  list.innerHTML = loraNodes.map((n, i) => {
+    const label = n.title ? `${n.title} (${n.lora_name})` : n.lora_name;
+    const strengthVal = Number.isFinite(n.strength) ? n.strength.toFixed(2) : n.default_strength.toFixed(2);
+    return `
+      <div class="imggen-lora-row" data-idx="${i}">
+        <label class="imggen-lora-toggle" title="LoRA を適用するか">
+          <input type="checkbox" data-lora-toggle ${n.enabled ? 'checked' : ''}>
+        </label>
+        <span class="imggen-lora-name" title="${esc(n.lora_name)} (node ${esc(n.node_id)})">${esc(label)}</span>
+        <input class="imggen-lora-strength" type="range" min="-2" max="2" step="0.05"
+               value="${strengthVal}" data-lora-strength ${n.enabled ? '' : 'disabled'}>
+        <input class="imggen-lora-strength-num" type="number" step="0.05"
+               value="${strengthVal}" data-lora-strength-num ${n.enabled ? '' : 'disabled'}>
+      </div>`;
+  }).join('');
+  list.querySelectorAll('.imggen-lora-row').forEach(row => {
+    const idx = Number(row.dataset.idx);
+    const toggle = row.querySelector('[data-lora-toggle]');
+    const range = row.querySelector('[data-lora-strength]');
+    const num = row.querySelector('[data-lora-strength-num]');
+    toggle?.addEventListener('change', () => {
+      loraNodes[idx].enabled = !!toggle.checked;
+      if (range) range.disabled = !toggle.checked;
+      if (num) num.disabled = !toggle.checked;
+      persistLoraOverridesLS();
+    });
+    const onStrength = (v) => {
+      const f = parseFloat(v);
+      if (!Number.isFinite(f)) return;
+      loraNodes[idx].strength = f;
+      if (range && range.value !== String(f)) range.value = String(f);
+      if (num && num.value !== String(f)) num.value = String(f);
+      persistLoraOverridesLS();
+    };
+    range?.addEventListener('input', () => onStrength(range.value));
+    num?.addEventListener('change', () => onStrength(num.value));
+  });
+}
+
+function collectLoraOverrides() {
+  if (!loraNodes.length) return [];
+  return loraNodes.map(n => ({
+    node_id: n.node_id,
+    enabled: !!n.enabled,
+    strength: Number.isFinite(n.strength) ? n.strength : null,
+  }));
 }
 
 // ============================================================
@@ -502,11 +636,13 @@ async function checkStashPrefill() {
   if (!stash) return;
   try {
     const sel = $('ig-workflow');
+    let workflowChanged = false;
     if (sel && stash.workflow_name) {
       const found = Array.from(sel.options).some(o => o.value === stash.workflow_name);
-      if (found) {
+      if (found && sel.value !== stash.workflow_name) {
         sel.value = stash.workflow_name;
         persistWorkflowSelection();
+        workflowChanged = true;
       }
     }
     if (stash.positive != null) $('ig-positive').value = stash.positive || '';
@@ -518,6 +654,19 @@ async function checkStashPrefill() {
     };
     for (const [k, id] of Object.entries(map)) {
       if (p[k] !== undefined && $(id)) $(id).value = p[k];
+    }
+    // ギャラリー再利用時に LoRA 状態も引き継ぐ
+    const ovrList = Array.isArray(p.__LORA_OVERRIDES__) ? p.__LORA_OVERRIDES__ : null;
+    if (workflowChanged) await loadLoras();
+    if (ovrList && loraNodes.length) {
+      for (const ovr of ovrList) {
+        const node = loraNodes.find(n => n.node_id === String(ovr.node_id));
+        if (!node) continue;
+        if (typeof ovr.enabled === 'boolean') node.enabled = ovr.enabled;
+        if (typeof ovr.strength === 'number') node.strength = ovr.strength;
+      }
+      renderLoraList();
+      persistLoraOverridesLS();
     }
     toast(`取り込み完了（${kind}）`, 'info');
     stashClear();
@@ -584,6 +733,8 @@ async function handleSubmit() {
           section_ids: chosen,
           user_position: $('ig-userpos')?.value || 'tail',
         };
+        const overrides = collectLoraOverrides();
+        if (overrides.length) body.lora_overrides = overrides;
         const res = await GenerationAPI.submit(body);
         if (res?.job_id) jobIds.push(res.job_id);
       } catch (err) {
@@ -965,7 +1116,7 @@ export async function mount() {
   $('ig-sec-reload')?.addEventListener('click', loadSections);
   $('ig-prompt-crafter')?.addEventListener('click', handlePromptCrafterClick);
   $('ig-preview-show')?.addEventListener('click', runPreview);
-  $('ig-workflow')?.addEventListener('change', persistWorkflowSelection);
+  $('ig-workflow')?.addEventListener('change', handleWorkflowChange);
 
   await Promise.all([
     loadWorkflows(),
@@ -973,6 +1124,8 @@ export async function mount() {
     loadComfyPanel(),
     loadPresets(),
   ]);
+  // workflows ロード後に初期 LoRA も読み込む
+  await loadLoras();
 }
 
 export async function onShow() {

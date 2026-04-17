@@ -338,6 +338,7 @@ class ImageGenUnit(BaseUnit):
         section_ids: list[int] | None = None,
         user_position: str = "tail",
         modality: str | None = None,
+        lora_overrides: list[dict] | None = None,
     ) -> str:
         """ジョブを登録し、job_id (UUID hex) を返す。
 
@@ -360,6 +361,22 @@ class ImageGenUnit(BaseUnit):
                 if v is None:
                     continue
                 merged[str(k).upper()] = v
+        # LoRA オーバーライドは予約キーで params に埋めて DB 保存・再現性を担保。
+        # 値が空の場合は埋めない（プレースホルダ未設定として扱う）。
+        if lora_overrides:
+            cleaned = [
+                {
+                    "node_id": str(o.get("node_id") or ""),
+                    "enabled": bool(o.get("enabled", True)),
+                    "strength": (
+                        float(o["strength"]) if o.get("strength") is not None else None
+                    ),
+                }
+                for o in lora_overrides
+                if isinstance(o, dict) and o.get("node_id")
+            ]
+            if cleaned:
+                merged["__LORA_OVERRIDES__"] = cleaned
         # preset 共通の placeholder はユーザー未指定なら config の既定で補完する。
         ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
         if "CKPT" not in merged:

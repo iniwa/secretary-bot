@@ -203,6 +203,8 @@ class WorkflowManager:
 
         - params は大文字キー推奨（{{POSITIVE}} に対して "POSITIVE"）
         - 欠けているプレースホルダは DEFAULT_PARAMS → ValidationError の順で補完
+        - params["__LORA_OVERRIDES__"] が在れば LoraLoader ノードを書き換える
+          （disabled は削除して再配線、enabled は strength を上書き）
         """
         wf = await self._get_workflow(name)
         if wf is None:
@@ -215,8 +217,41 @@ class WorkflowManager:
                 continue
             resolved_params[str(k).upper()] = v
 
+        # LoRA override（プレースホルダ置換より先に処理）
+        overrides = resolved_params.pop("__LORA_OVERRIDES__", None)
+        wf_to_use = wf
+        if overrides:
+            try:
+                wf_to_use = apply_lora_overrides(wf, overrides)
+            except Exception as e:
+                log.warning("apply_lora_overrides failed: %s", e)
+
         # 深いコピーしつつプレースホルダ置換
-        return _substitute(wf, resolved_params)
+        return _substitute(wf_to_use, resolved_params)
+
+    def list_lora_nodes(self, workflow_json: dict) -> list[dict]:
+        """workflow JSON から LoraLoader ノード一覧を返す（UI 表示用）。"""
+        out: list[dict] = []
+        for node_id, node in workflow_json.items():
+            if not isinstance(node, dict):
+                continue
+            if node.get("class_type") != "LoraLoader":
+                continue
+            inputs = node.get("inputs", {}) or {}
+            out.append({
+                "node_id": str(node_id),
+                "lora_name": inputs.get("lora_name") if isinstance(inputs.get("lora_name"), str) else None,
+                "strength_model": inputs.get("strength_model"),
+                "strength_clip": inputs.get("strength_clip"),
+                "title": (node.get("_meta") or {}).get("title") if isinstance(node.get("_meta"), dict) else None,
+            })
+        return out
+
+    async def list_lora_nodes_by_name(self, name: str) -> list[dict]:
+        wf = await self._get_workflow(name)
+        if wf is None:
+            return []
+        return self.list_lora_nodes(wf)
 
     async def _get_workflow(self, name: str) -> dict | None:
         if name in self._cache:
@@ -232,6 +267,80 @@ class WorkflowManager:
         except Exception as e:
             log.error("Failed to decode workflow %s: %s", name, e)
             return None
+
+
+def apply_lora_overrides(workflow: dict, overrides: list[dict]) -> dict:
+    """LoraLoader ノードの enabled/strength オーバーライドを適用する。
+
+    overrides: [{"node_id": str, "enabled": bool, "strength": float?}, ...]
+
+    - enabled=False のノードは workflow から削除し、その出力（MODEL/CLIP）を
+      参照していた他ノードの入力を、削除ノードの入力元へ付け替える（バイパス）。
+      連続して LoraLoader が disabled な場合は再帰的に上流へ辿る。
+    - enabled=True で strength が指定されたノードは strength_model/strength_clip を
+      その値で上書きする。
+    - workflow 自体は破壊せず deep copy 上で操作する。
+    """
+    if not overrides:
+        return workflow
+
+    disabled: set[str] = set()
+    strength_map: dict[str, float] = {}
+    for ov in overrides:
+        if not isinstance(ov, dict):
+            continue
+        nid = str(ov.get("node_id") or "")
+        if not nid:
+            continue
+        node = workflow.get(nid)
+        if not isinstance(node, dict) or node.get("class_type") != "LoraLoader":
+            continue
+        if ov.get("enabled") is False:
+            disabled.add(nid)
+        elif ov.get("strength") is not None:
+            try:
+                strength_map[nid] = float(ov["strength"])
+            except (TypeError, ValueError):
+                continue
+
+    # 削除ノードの入力元を記録（MODEL=output 0, CLIP=output 1）
+    bypass_map: dict[str, dict[str, Any]] = {}
+    for nid in disabled:
+        node = workflow[nid]
+        inputs = node.get("inputs", {}) or {}
+        bypass_map[nid] = {
+            0: inputs.get("model"),   # output index 0 → input.model
+            1: inputs.get("clip"),    # output index 1 → input.clip
+        }
+
+    def _redirect(ref_id: str, out_idx: int, seen: set[str]) -> list:
+        """disabled なノードへの参照を、上流の生きているノードへチェーン解決。"""
+        if ref_id not in disabled or ref_id in seen:
+            return [ref_id, out_idx]
+        seen.add(ref_id)
+        src = bypass_map.get(ref_id, {}).get(out_idx)
+        if not (isinstance(src, list) and len(src) == 2 and isinstance(src[0], str)):
+            return [ref_id, out_idx]   # フォールバック（壊れた workflow）
+        return _redirect(src[0], int(src[1]), seen)
+
+    out: dict[str, Any] = {}
+    for nid, node in workflow.items():
+        if nid in disabled:
+            continue
+        new_node = json.loads(json.dumps(node))   # deep copy
+        # 強度上書き
+        if nid in strength_map and new_node.get("class_type") == "LoraLoader":
+            inputs = new_node.setdefault("inputs", {})
+            inputs["strength_model"] = strength_map[nid]
+            inputs["strength_clip"] = strength_map[nid]
+        # 入力リンクの再配線
+        inputs = new_node.get("inputs", {}) or {}
+        for k, v in list(inputs.items()):
+            if not (isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)):
+                continue
+            inputs[k] = _redirect(v[0], int(v[1]), set())
+        out[nid] = new_node
+    return out
 
 
 def _substitute(obj: Any, params: dict[str, Any]) -> Any:
