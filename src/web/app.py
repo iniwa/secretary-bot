@@ -2632,11 +2632,17 @@ def create_web_app(bot) -> FastAPI:
         return {"ok": bool(ok)}
 
     @app.get("/api/generation/gallery", dependencies=[Depends(_verify)])
-    async def generation_gallery(limit: int = 50, offset: int = 0):
+    async def generation_gallery(
+        limit: int = 50, offset: int = 0,
+        favorite: int = 0, tag: str | None = None,
+    ):
         unit = _get_image_gen_unit()
         limit = max(1, min(200, int(limit)))
         offset = max(0, int(offset))
-        rows = await unit.list_gallery(limit=limit, offset=offset)
+        rows = await unit.list_gallery(
+            limit=limit, offset=offset,
+            favorite_only=bool(favorite), tag=(tag or None),
+        )
         items: list[dict] = []
         for r in rows:
             paths = r.get("result_paths") or []
@@ -2653,8 +2659,72 @@ def create_web_app(bot) -> FastAPI:
                     "created_at": r.get("finished_at"),
                     "positive": r.get("positive"),
                     "negative": r.get("negative"),
+                    "favorite": r.get("favorite", False),
+                    "tags": r.get("tags") or [],
                 })
         return {"items": items}
+
+    @app.patch(
+        "/api/generation/jobs/{job_id}/favorite",
+        dependencies=[Depends(_verify)],
+    )
+    async def generation_job_favorite(job_id: str, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        favorite = bool(body.get("favorite"))
+        ok = await bot.database.generation_job_set_favorite(job_id, favorite)
+        if not ok:
+            raise HTTPException(404, "job not found")
+        return {"ok": True, "favorite": favorite}
+
+    @app.patch(
+        "/api/generation/jobs/{job_id}/tags",
+        dependencies=[Depends(_verify)],
+    )
+    async def generation_job_tags(job_id: str, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        tags = body.get("tags") or []
+        if not isinstance(tags, list):
+            raise HTTPException(400, "tags must be an array")
+        # 文字列に正規化、空除去、重複除去（順序保持）
+        seen = set()
+        cleaned: list[str] = []
+        for t in tags:
+            s = str(t).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            cleaned.append(s)
+        tags_json = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+        ok = await bot.database.generation_job_set_tags(job_id, tags_json)
+        if not ok:
+            raise HTTPException(404, "job not found")
+        return {"ok": True, "tags": cleaned}
+
+    @app.get("/api/generation/gallery/tags", dependencies=[Depends(_verify)])
+    async def generation_gallery_tags():
+        """ギャラリーで使われているタグ一覧（出現回数つき）。"""
+        rows = await bot.database.fetchall(
+            "SELECT tags FROM generation_jobs "
+            "WHERE modality = 'image' AND status = 'done' "
+            "  AND tags IS NOT NULL AND tags != ''"
+        )
+        counts: dict[str, int] = {}
+        for r in rows:
+            try:
+                tags = json.loads(r.get("tags") or "[]") or []
+            except Exception:
+                continue
+            for t in tags:
+                s = str(t).strip()
+                if not s:
+                    continue
+                counts[s] = counts.get(s, 0) + 1
+        items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        return {"tags": [{"tag": k, "count": v} for k, v in items]}
 
     # --- section categories ---
 

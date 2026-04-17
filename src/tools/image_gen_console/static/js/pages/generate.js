@@ -118,7 +118,11 @@ export function render() {
         </div>
       </div>
 
-      <button id="ig-submit" class="btn btn-primary imggen-submit">投入</button>
+      <div class="imggen-submit-row">
+        <label for="ig-batch-count" class="imggen-submit-batch-label">枚数</label>
+        <input id="ig-batch-count" class="form-input" type="number" min="1" max="50" value="1" title="同じプロンプトで連続投入する枚数（seed 指定時は +1 ずつ加算）">
+        <button id="ig-submit" class="btn btn-primary imggen-submit">投入</button>
+      </div>
       <div id="ig-status" class="imggen-status-line"></div>
     </div>
   </section>
@@ -548,31 +552,58 @@ async function handleSubmit() {
   if (!workflow_name) { toast('Workflow is required', 'error'); return; }
   const positive = $('ig-positive')?.value?.trim() || '';
   const negative = $('ig-negative')?.value?.trim() || '';
-  const params = {};
-  const w = readNum('ig-width');  if (w !== null) params.WIDTH = w;
-  const h = readNum('ig-height'); if (h !== null) params.HEIGHT = h;
-  const st = readNum('ig-steps'); if (st !== null) params.STEPS = st;
-  const c  = readNum('ig-cfg');   if (c !== null) params.CFG = c;
-  const se = readNum('ig-seed');  if (se !== null) params.SEED = se;
-  const sp = readStr('ig-sampler');   if (sp) params.SAMPLER = sp;
-  const sc = readStr('ig-scheduler'); if (sc) params.SCHEDULER = sc;
+  const baseParams = {};
+  const w = readNum('ig-width');  if (w !== null) baseParams.WIDTH = w;
+  const h = readNum('ig-height'); if (h !== null) baseParams.HEIGHT = h;
+  const st = readNum('ig-steps'); if (st !== null) baseParams.STEPS = st;
+  const c  = readNum('ig-cfg');   if (c !== null) baseParams.CFG = c;
+  const seedSpecified = readNum('ig-seed');
+  if (seedSpecified !== null) baseParams.SEED = seedSpecified;
+  const sp = readStr('ig-sampler');   if (sp) baseParams.SAMPLER = sp;
+  const sc = readStr('ig-scheduler'); if (sc) baseParams.SCHEDULER = sc;
+
+  // バッチ枚数。seed が指定されていれば +1 ずつ加算、未指定/-1 なら毎回ランダム任せ
+  let count = parseInt($('ig-batch-count')?.value, 10);
+  if (!Number.isFinite(count) || count < 1) count = 1;
+  if (count > 50) count = 50;
+  const incrementSeed = seedSpecified !== null && seedSpecified >= 0;
 
   btn.disabled = true;
-  statusEl.textContent = '投入中...';
+  const jobIds = [];
+  const failures = [];
   try {
-    const body = {
-      workflow_name, positive, negative, params,
-      section_ids: chosen,
-      user_position: $('ig-userpos')?.value || 'tail',
-    };
-    const res = await GenerationAPI.submit(body);
-    const jid = res?.job_id || '';
-    statusEl.innerHTML = `Enqueued: <code>${esc(jid)}</code> — <a href="#/jobs">Jobs を見る →</a>`;
-    toast('Job enqueued', 'success');
-  } catch (err) {
-    console.error('generate failed', err);
-    statusEl.textContent = `Error: ${err.message || err}`;
-    toast('Generate failed', 'error');
+    for (let i = 0; i < count; i++) {
+      const params = { ...baseParams };
+      if (incrementSeed) params.SEED = seedSpecified + i;
+      statusEl.textContent = count > 1
+        ? `投入中... ${i + 1}/${count}`
+        : '投入中...';
+      try {
+        const body = {
+          workflow_name, positive, negative, params,
+          section_ids: chosen,
+          user_position: $('ig-userpos')?.value || 'tail',
+        };
+        const res = await GenerationAPI.submit(body);
+        if (res?.job_id) jobIds.push(res.job_id);
+      } catch (err) {
+        console.error(`generate ${i + 1}/${count} failed`, err);
+        failures.push({ i: i + 1, err });
+      }
+    }
+    if (jobIds.length) {
+      const head = jobIds[0];
+      statusEl.innerHTML = count > 1
+        ? `Enqueued ${jobIds.length}/${count}: <code>${esc(head)}</code> ほか — <a href="#/jobs">Jobs を見る →</a>`
+        : `Enqueued: <code>${esc(head)}</code> — <a href="#/jobs">Jobs を見る →</a>`;
+    } else {
+      statusEl.textContent = 'Error: 全ジョブ投入失敗';
+    }
+    if (failures.length) {
+      toast(`投入失敗 ${failures.length}/${count}`, 'error');
+    } else {
+      toast(count > 1 ? `${count} 件投入しました` : 'Job enqueued', 'success');
+    }
   } finally {
     btn.disabled = false;
   }

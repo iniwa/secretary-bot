@@ -713,6 +713,14 @@ class Database:
                 "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('lora_trigger', 'LoRA トリガー',  'LoRA 呼び出しトークン',  80,  1)",
                 "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('negative',     'ネガティブ',     '抑制したい要素',         100, 1)",
             ],
+            29: [
+                # Gallery 強化: お気に入り / タグ
+                # favorite=1 のジョブはギャラリーで ⭐ 表示・絞り込み可
+                # tags は JSON 配列文字列（["風景","夜景"] 等）
+                "ALTER TABLE generation_jobs ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE generation_jobs ADD COLUMN tags TEXT",
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_favorite ON generation_jobs(favorite, created_at DESC)",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -1267,6 +1275,20 @@ class Database:
             "  AND timeout_at < datetime('now') "
             "ORDER BY created_at ASC"
         )
+
+    async def generation_job_set_favorite(self, job_id: str, favorite: bool) -> bool:
+        rc = await self.execute_returning_rowcount(
+            "UPDATE generation_jobs SET favorite = ? WHERE id = ?",
+            (1 if favorite else 0, job_id),
+        )
+        return rc > 0
+
+    async def generation_job_set_tags(self, job_id: str, tags_json: str | None) -> bool:
+        rc = await self.execute_returning_rowcount(
+            "UPDATE generation_jobs SET tags = ? WHERE id = ?",
+            (tags_json, job_id),
+        )
+        return rc > 0
 
     async def generation_job_cancel(self, job_id: str) -> bool:
         """非終端状態のジョブを cancelled に遷移させる。"""

@@ -1,8 +1,8 @@
-/** Gallery page — 日別グループ + lightbox + 「この設定で再現」。 */
+/** Gallery page — 日別グループ + lightbox + 「この設定で再現」+ ⭐ / タグ。 */
 import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import {
-  esc, fmtDate, openLightbox, stashSet,
+  esc, fmtDate, openLightbox, promptTags, stashSet,
 } from '../lib/common.js';
 
 // ============================================================
@@ -12,7 +12,10 @@ let items = [];
 let allItems = [];
 let offset = 0;
 const PAGE_SIZE = 60;
-let highlightJobId = null;  // URL ?job=<id> から
+let highlightJobId = null;     // URL ?job=<id> から
+let favoriteOnly = false;      // ⭐ のみ表示
+let tagFilter = null;          // タグ絞り込み（単一）
+let availableTags = [];        // タグサジェスト一覧
 
 function $(id) { return document.getElementById(id); }
 
@@ -24,8 +27,14 @@ export function render() {
 <section class="card imggen-section">
   <div class="imggen-header">
     <h3>Gallery</h3>
-    <div style="display:flex;gap:0.4rem;align-items:center;">
+    <div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;">
       <input id="gal-filter" class="form-input" type="search" placeholder="prompt で検索..." style="width:200px;font-size:0.75rem;padding:0.2rem 0.4rem;">
+      <label class="imggen-fav-toggle">
+        <input id="gal-favonly" type="checkbox"> ⭐ のみ
+      </label>
+      <select id="gal-tag" class="form-input" style="font-size:0.75rem;padding:0.2rem 0.4rem;width:auto;">
+        <option value="">タグ: すべて</option>
+      </select>
       <button id="gal-reload" class="btn btn-sm">再読込</button>
       <button id="gal-more" class="btn btn-sm btn-primary">もっと読む</button>
     </div>
@@ -64,10 +73,11 @@ function renderGallery() {
           const kind = g.kind || 'image';
           const hilit = (highlightJobId && g.job_id === highlightJobId) ? 'style="outline:2px solid var(--accent);"' : '';
           const badge = kind !== 'image' ? `<span class="kind-badge">${esc(kind)}</span>` : '';
+          const star = g.favorite ? `<span class="imggen-gallery-star" title="お気に入り">★</span>` : '';
           const thumb = kind === 'image'
             ? `<img loading="lazy" src="${esc(g.thumb_url || g.url)}" alt="">`
             : `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:0.7rem;color:var(--text-secondary);">${esc(kind)}</div>`;
-          return `<div class="imggen-gallery-item" data-idx="${idx}" ${hilit}>${thumb}${badge}</div>`;
+          return `<div class="imggen-gallery-item" data-idx="${idx}" ${hilit}>${thumb}${badge}${star}</div>`;
         }).join('')}
       </div>
     </div>
@@ -77,13 +87,26 @@ function renderGallery() {
     if (!node) return;
     const g = items[Number(node.dataset.idx)];
     if (!g) return;
-    openLightbox(g, { onReuse: handleReuse });
+    openLightbox(g, {
+      onReuse: handleReuse,
+      onFavoriteToggle: handleFavoriteToggle,
+      onTagsEdit: handleTagsEdit,
+    });
   };
 
   if (highlightJobId) {
     const hit = el.querySelector('[style*="outline"]');
     if (hit) hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+}
+
+function refreshTagSelect() {
+  const sel = $('gal-tag');
+  if (!sel) return;
+  const cur = tagFilter || '';
+  sel.innerHTML = `<option value="">タグ: すべて</option>` +
+    availableTags.map(t => `<option value="${esc(t.tag)}">${esc(t.tag)} (${t.count})</option>`).join('');
+  sel.value = cur;
 }
 
 // ============================================================
@@ -95,7 +118,11 @@ async function loadGallery({ reset = true } = {}) {
     allItems = [];
   }
   try {
-    const data = await GenerationAPI.gallery({ limit: PAGE_SIZE, offset });
+    const data = await GenerationAPI.gallery({
+      limit: PAGE_SIZE, offset,
+      favorite: favoriteOnly,
+      tag: tagFilter,
+    });
     const page = data?.items || [];
     allItems = reset ? page : [...allItems, ...page];
     offset = allItems.length;
@@ -107,13 +134,24 @@ async function loadGallery({ reset = true } = {}) {
   }
 }
 
+async function loadTags() {
+  try {
+    const data = await GenerationAPI.galleryTags();
+    availableTags = data?.tags || [];
+    refreshTagSelect();
+  } catch (err) {
+    console.error('tags load failed', err);
+  }
+}
+
 function applyFilter() {
   const q = ($('gal-filter')?.value || '').trim().toLowerCase();
   if (!q) {
     items = [...allItems];
   } else {
     items = allItems.filter(it => {
-      const hay = `${it.positive || ''} ${it.negative || ''}`.toLowerCase();
+      const tagsHay = (it.tags || []).join(' ');
+      const hay = `${it.positive || ''} ${it.negative || ''} ${tagsHay}`.toLowerCase();
       return hay.includes(q);
     });
   }
@@ -147,6 +185,43 @@ async function handleReuse(item) {
 }
 
 // ============================================================
+// Favorite / Tags
+// ============================================================
+async function handleFavoriteToggle(item, next) {
+  if (!item.job_id) { toast('job_id がありません', 'error'); return false; }
+  try {
+    await GenerationAPI.setJobFavorite(item.job_id, next);
+    // 同じ job_id を持つ全アイテム（複数 result_paths）に反映
+    for (const it of allItems) {
+      if (it.job_id === item.job_id) it.favorite = next;
+    }
+    renderGallery();
+    return true;
+  } catch (err) {
+    toast(`お気に入り更新失敗: ${err?.message || err}`, 'error');
+    return false;
+  }
+}
+
+async function handleTagsEdit(item, applyTags) {
+  if (!item.job_id) { toast('job_id がありません', 'error'); return; }
+  const next = promptTags(item.tags || []);
+  if (next === null) return;
+  try {
+    const res = await GenerationAPI.setJobTags(item.job_id, next);
+    const tags = res?.tags || next;
+    for (const it of allItems) {
+      if (it.job_id === item.job_id) it.tags = tags;
+    }
+    applyTags(tags);     // lightbox 即時反映
+    renderGallery();
+    loadTags();          // サジェスト更新
+  } catch (err) {
+    toast(`タグ更新失敗: ${err?.message || err}`, 'error');
+  }
+}
+
+// ============================================================
 // Mount / Show / Hide
 // ============================================================
 function parseQuery(rawHash) {
@@ -157,7 +232,10 @@ function parseQuery(rawHash) {
 }
 
 export async function mount() {
-  $('gal-reload')?.addEventListener('click', () => loadGallery({ reset: true }));
+  $('gal-reload')?.addEventListener('click', () => {
+    loadGallery({ reset: true });
+    loadTags();
+  });
   $('gal-more')?.addEventListener('click', () => loadGallery({ reset: false }));
   const filter = $('gal-filter');
   if (filter) {
@@ -167,7 +245,15 @@ export async function mount() {
       debounce = setTimeout(applyFilter, 200);
     });
   }
-  await loadGallery({ reset: true });
+  $('gal-favonly')?.addEventListener('change', (e) => {
+    favoriteOnly = !!e.target.checked;
+    loadGallery({ reset: true });
+  });
+  $('gal-tag')?.addEventListener('change', (e) => {
+    tagFilter = e.target.value || null;
+    loadGallery({ reset: true });
+  });
+  await Promise.all([loadGallery({ reset: true }), loadTags()]);
 }
 
 export function onShow(rawHash) {

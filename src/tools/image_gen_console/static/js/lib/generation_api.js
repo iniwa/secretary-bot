@@ -19,8 +19,24 @@ export const GenerationAPI = {
       method: 'POST',
     });
   },
-  gallery({ limit = 50, offset = 0 } = {}) {
-    return api('/api/generation/gallery', { params: { limit, offset } });
+  gallery({ limit = 50, offset = 0, favorite = false, tag = null } = {}) {
+    const params = { limit, offset };
+    if (favorite) params.favorite = 1;
+    if (tag) params.tag = tag;
+    return api('/api/generation/gallery', { params });
+  },
+  galleryTags() {
+    return api('/api/generation/gallery/tags');
+  },
+  setJobFavorite(jobId, favorite) {
+    return api(`/api/generation/jobs/${encodeURIComponent(jobId)}/favorite`, {
+      method: 'PATCH', body: { favorite },
+    });
+  },
+  setJobTags(jobId, tags) {
+    return api(`/api/generation/jobs/${encodeURIComponent(jobId)}/tags`, {
+      method: 'PATCH', body: { tags },
+    });
   },
 
   // Workflows (既存 /api/image/workflows を流用)

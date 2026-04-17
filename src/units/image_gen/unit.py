@@ -439,11 +439,14 @@ class ImageGenUnit(BaseUnit):
 
     async def list_gallery(
         self, limit: int = 50, offset: int = 0,
+        favorite_only: bool = False, tag: str | None = None,
     ) -> list[dict]:
         """完了ジョブの result_paths を日付降順で列挙する。
 
         Phase1 は DB の generation_jobs.result_paths を参照する簡易実装。
         Phase2 で NAS outputs/ を直接走査する実装に差し替える。
+
+        favorite_only=True で ⭐ のみ、tag 指定で当該タグを含むジョブのみ返す。
         """
         rows = await self.bot.database.generation_job_list(
             status=STATUS_DONE, modality="image", limit=limit, offset=offset,
@@ -464,6 +467,16 @@ class ImageGenUnit(BaseUnit):
                 kinds = []
             if len(kinds) != len(paths):
                 kinds = ["image"] * len(paths)
+            tags: list[str] = []
+            try:
+                tags = json.loads(r.get("tags") or "[]") or []
+            except Exception:
+                tags = []
+            favorite = bool(r.get("favorite"))
+            if favorite_only and not favorite:
+                continue
+            if tag and tag not in tags:
+                continue
             out.append({
                 "job_id": r["id"],
                 "user_id": r["user_id"],
@@ -472,6 +485,8 @@ class ImageGenUnit(BaseUnit):
                 "result_kinds": kinds,
                 "positive": r.get("positive"),
                 "negative": r.get("negative"),
+                "favorite": favorite,
+                "tags": tags,
             })
         return out
 
@@ -583,7 +598,13 @@ class ImageGenUnit(BaseUnit):
             started_at=row.get("started_at"),
             finished_at=row.get("finished_at"),
         )
-        return js.to_dict()
+        out = js.to_dict()
+        out["favorite"] = bool(row.get("favorite"))
+        try:
+            out["tags"] = json.loads(row.get("tags") or "[]") or []
+        except Exception:
+            out["tags"] = []
+        return out
 
     def _find_agent(self, agent_id: str) -> dict | None:
         for a in getattr(self.bot.unit_manager.agent_pool, "_agents", []):
