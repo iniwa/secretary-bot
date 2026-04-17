@@ -84,6 +84,6 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "STEPS": 30,
     "CFG": 5.5,
     "SAMPLER": "euler_ancestral",
-    "SCHEDULER": "normal",
+    "SCHEDULER": "karras",
     "SEED": -1,  # -1 は Pi 側で乱数生成
 }

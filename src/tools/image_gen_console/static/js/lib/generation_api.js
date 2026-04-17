@@ -85,6 +85,20 @@ export const GenerationAPI = {
     return api(`/api/generation/sections/${id}`, { method: 'DELETE' });
   },
 
+  // Section presets（選択中セクション + ユーザー追記プロンプトのスナップショット）
+  listSectionPresets() {
+    return api('/api/generation/section-presets');
+  },
+  createSectionPreset(body) {
+    return api('/api/generation/section-presets', { method: 'POST', body });
+  },
+  updateSectionPreset(id, body) {
+    return api(`/api/generation/section-presets/${id}`, { method: 'PATCH', body });
+  },
+  deleteSectionPreset(id) {
+    return api(`/api/generation/section-presets/${id}`, { method: 'DELETE' });
+  },
+
   // Compose preview（サーバ検証用）
   composePreview(body) {
     return api('/api/generation/compose-preview', { method: 'POST', body });

@@ -25,6 +25,27 @@ let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
 let loraNodes = [];
 const LORA_LS_PREFIX = 'imggen:lora:';   // + workflow_name → JSON
 
+// セクションプリセット（DB 由来）
+let sectionPresets = [];
+
+// セクションカテゴリのアコーディオン展開状態（key → bool）
+const SECTION_EXPANDED_LS = 'imggen:sections:expanded';
+let sectionExpanded = {};
+
+// 既知の sampler / scheduler（datalist 候補）
+const KNOWN_SAMPLERS = [
+  'euler', 'euler_ancestral', 'heun', 'heunpp2', 'dpm_2', 'dpm_2_ancestral',
+  'lms', 'dpm_fast', 'dpm_adaptive',
+  'dpmpp_2s_ancestral', 'dpmpp_sde', 'dpmpp_sde_gpu',
+  'dpmpp_2m', 'dpmpp_2m_sde', 'dpmpp_2m_sde_gpu',
+  'dpmpp_3m_sde', 'dpmpp_3m_sde_gpu',
+  'ddpm', 'ddim', 'uni_pc', 'uni_pc_bh2', 'lcm',
+];
+const KNOWN_SCHEDULERS = [
+  'normal', 'karras', 'exponential', 'sgm_uniform', 'simple',
+  'ddim_uniform', 'beta',
+];
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -60,10 +81,23 @@ export function render() {
         <h4>
           <span>セクション（プロンプト断片）</span>
           <span>
+            <button id="ig-sec-expand-all" class="imggen-toggle" title="全カテゴリを展開">⤓ 全展開</button>
+            <button id="ig-sec-collapse-all" class="imggen-toggle" title="全カテゴリを収納">⤒ 全収納</button>
             <button id="ig-sec-reload" class="imggen-toggle" title="再読込">↻</button>
             <button id="ig-sec-new" class="imggen-toggle">+ 新規</button>
           </span>
         </h4>
+
+        <div class="imggen-secpreset-row">
+          <select id="ig-secpreset-select" class="form-input" style="flex:1;">
+            <option value="">— セクションプリセット選択 —</option>
+          </select>
+          <button id="ig-secpreset-load" class="btn btn-sm" title="このプリセットを読み込み">読込</button>
+          <button id="ig-secpreset-overwrite" class="btn btn-sm" title="現在の選択で上書き保存">上書</button>
+          <button id="ig-secpreset-save" class="btn btn-sm btn-primary" title="新規プリセットとして保存">+ 保存</button>
+          <button id="ig-secpreset-delete" class="btn btn-sm btn-danger" title="プリセット削除">削除</button>
+        </div>
+
         <div id="ig-sec-cats">
           <div class="imggen-empty" style="padding:0.4rem;">Loading...</div>
         </div>
@@ -88,12 +122,9 @@ export function render() {
         <button id="ig-prompt-crafter" class="btn btn-sm" title="プロンプト履歴から選択">📝 履歴</button>
       </div>
 
-      <div class="imggen-compose-preview" id="ig-preview">
-        <div class="label" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
-          <span>合成プレビュー</span>
-          <button id="ig-preview-show" class="btn btn-sm" type="button">プレビュー表示</button>
-        </div>
-        <div id="ig-preview-body"><span class="text-muted text-xs">「プレビュー表示」を押すと表示されます</span></div>
+      <div class="imggen-preview-row">
+        <button id="ig-preview-show" class="btn btn-sm" type="button">🔍 プレビュー表示</button>
+        <span class="text-muted text-xs">合成済みプロンプトをモーダルで確認</span>
       </div>
 
       <div class="imggen-params">
@@ -119,11 +150,17 @@ export function render() {
         </div>
         <div>
           <label for="ig-sampler">Sampler</label>
-          <input id="ig-sampler" class="form-input" type="text" placeholder="euler_ancestral">
+          <input id="ig-sampler" class="form-input" type="text" list="ig-sampler-list" placeholder="euler_ancestral" autocomplete="off">
+          <datalist id="ig-sampler-list">
+            ${KNOWN_SAMPLERS.map(s => `<option value="${esc(s)}"></option>`).join('')}
+          </datalist>
         </div>
         <div>
           <label for="ig-scheduler">Scheduler</label>
-          <input id="ig-scheduler" class="form-input" type="text" placeholder="normal">
+          <input id="ig-scheduler" class="form-input" type="text" list="ig-scheduler-list" placeholder="karras" autocomplete="off">
+          <datalist id="ig-scheduler-list">
+            ${KNOWN_SCHEDULERS.map(s => `<option value="${esc(s)}"></option>`).join('')}
+          </datalist>
         </div>
       </div>
 
@@ -434,6 +471,30 @@ function renderUserPosOptions() {
   sel.value = cur;
 }
 
+function loadSectionExpandedLS() {
+  try {
+    const raw = localStorage.getItem(SECTION_EXPANDED_LS);
+    sectionExpanded = raw ? (JSON.parse(raw) || {}) : {};
+  } catch { sectionExpanded = {}; }
+}
+
+function persistSectionExpandedLS() {
+  try { localStorage.setItem(SECTION_EXPANDED_LS, JSON.stringify(sectionExpanded)); }
+  catch { /* ignore */ }
+}
+
+function isCategoryExpanded(key) {
+  if (key in sectionExpanded) return !!sectionExpanded[key];
+  // 初期値: quality / character / style は展開、その他は折畳
+  return ['quality', 'character', 'style'].includes(key);
+}
+
+function setAllCategoriesExpanded(expanded) {
+  for (const c of categories) sectionExpanded[c.key] = !!expanded;
+  persistSectionExpandedLS();
+  renderSections();
+}
+
 function renderSections() {
   const el = $('ig-sec-cats');
   if (!el) return;
@@ -442,25 +503,43 @@ function renderSections() {
     return;
   }
   el.innerHTML = categories.map(c => {
+    const expanded = isCategoryExpanded(c.key);
     const list = sections.filter(s => s.category_key === c.key)
       .sort((a, b) => (b.starred - a.starred) || a.name.localeCompare(b.name));
     const chips = list.map(s => {
       const selected = chosen.includes(s.id);
       const star = s.starred ? '★ ' : '';
-      return `<span class="imggen-section-chip ${selected ? 'selected' : ''}" data-sid="${s.id}" title="${esc(s.positive || s.negative || '')}">${star}${esc(s.name)}</span>`;
+      const tooltip = [s.positive, s.negative].filter(Boolean).join(' / ');
+      return `<span class="imggen-section-chip ${selected ? 'selected' : ''}" data-sid="${s.id}" title="${esc(tooltip)}">
+        <span class="chip-label">${star}${esc(s.name)}</span>
+        <span class="chip-edit" data-edit-sid="${s.id}" title="編集">✎</span>
+      </span>`;
     }).join('') || '<span class="text-muted text-xs">（未登録）</span>';
     return `
-      <div class="imggen-section-cat" data-cat="${esc(c.key)}">
+      <div class="imggen-section-cat ${expanded ? 'expanded' : 'collapsed'}" data-cat="${esc(c.key)}">
         <div class="cat-label">
+          <button class="cat-toggle" data-toggle-cat="${esc(c.key)}" title="${expanded ? '折畳' : '展開'}">${expanded ? '▼' : '▶'}</button>
           <strong>${esc(c.label)}</strong>
+          <span class="cat-count">(${list.length})</span>
           <button class="add-btn" data-add-cat="${esc(c.key)}">+ 追加</button>
         </div>
-        <div class="imggen-section-picker">${chips}</div>
+        <div class="imggen-section-picker" ${expanded ? '' : 'hidden'}>${chips}</div>
       </div>`;
   }).join('');
 
+  el.querySelectorAll('[data-toggle-cat]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.toggleCat;
+      sectionExpanded[key] = !isCategoryExpanded(key);
+      persistSectionExpandedLS();
+      renderSections();
+    });
+  });
   el.querySelectorAll('.imggen-section-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
+    chip.addEventListener('click', (e) => {
+      // 編集アイコンクリック時は選択トグルしない
+      if (e.target.closest('[data-edit-sid]')) return;
       const sid = Number(chip.dataset.sid);
       const idx = chosen.indexOf(sid);
       if (idx >= 0) chosen.splice(idx, 1);
@@ -469,8 +548,18 @@ function renderSections() {
       chip.classList.toggle('selected');
     });
   });
+  el.querySelectorAll('[data-edit-sid]').forEach(icon => {
+    icon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sid = Number(icon.dataset.editSid);
+      openSectionModal({ section_id: sid });
+    });
+  });
   el.querySelectorAll('[data-add-cat]').forEach(btn => {
-    btn.addEventListener('click', () => openSectionModal({ category_key: btn.dataset.addCat }));
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSectionModal({ category_key: btn.dataset.addCat });
+    });
   });
   renderChosen();
 }
@@ -504,11 +593,129 @@ function renderChosen() {
 }
 
 // ============================================================
-// Compose preview (client-side; manual button trigger)
+// Section presets（DB 永続化）
 // ============================================================
+async function loadSectionPresets() {
+  try {
+    const data = await GenerationAPI.listSectionPresets();
+    sectionPresets = data?.presets || [];
+  } catch (err) {
+    console.error('section presets load failed', err);
+    sectionPresets = [];
+  }
+  renderSectionPresetSelect();
+}
+
+function renderSectionPresetSelect() {
+  const sel = $('ig-secpreset-select');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">— セクションプリセット選択 —</option>` +
+    sectionPresets.map(p => {
+      const sids = (p.payload?.section_ids || []).length;
+      return `<option value="${p.id}">${esc(p.name)} (${sids} sections)</option>`;
+    }).join('');
+  if (cur && sectionPresets.some(p => String(p.id) === cur)) sel.value = cur;
+}
+
+function applySectionPreset(payload) {
+  if (!payload) return;
+  const sids = (payload.section_ids || []).filter(sid => sections.some(s => s.id === sid));
+  chosen = sids;
+  $('ig-positive').value = payload.user_positive || '';
+  $('ig-negative').value = payload.user_negative || '';
+  if (payload.user_position) {
+    const sel = $('ig-userpos');
+    if (sel) {
+      const exists = Array.from(sel.options).some(o => o.value === payload.user_position);
+      if (exists) sel.value = payload.user_position;
+    }
+  }
+  renderSections();
+}
+
+function currentSectionPresetPayload() {
+  return {
+    section_ids: chosen.slice(),
+    user_positive: $('ig-positive')?.value || '',
+    user_negative: $('ig-negative')?.value || '',
+    user_position: $('ig-userpos')?.value || 'tail',
+  };
+}
+
+async function handleSectionPresetLoad() {
+  const sel = $('ig-secpreset-select');
+  const id = Number(sel?.value);
+  if (!id) { toast('プリセットを選択', 'error'); return; }
+  const p = sectionPresets.find(x => x.id === id);
+  if (!p) { toast('プリセットが見つからない', 'error'); return; }
+  applySectionPreset(p.payload);
+  toast(`「${p.name}」を読込`, 'success');
+}
+
+async function handleSectionPresetSave() {
+  const name = prompt('新規セクションプリセット名（1〜64 文字）:', '');
+  if (!name) return;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 64) { toast('名前は 1〜64 文字', 'error'); return; }
+  try {
+    const res = await GenerationAPI.createSectionPreset({
+      name: trimmed,
+      payload: currentSectionPresetPayload(),
+    });
+    toast('保存しました', 'success');
+    await loadSectionPresets();
+    const sel = $('ig-secpreset-select');
+    if (sel && res?.id) sel.value = String(res.id);
+  } catch (err) {
+    toast(`保存失敗: ${err?.message || err}`, 'error');
+  }
+}
+
+async function handleSectionPresetOverwrite() {
+  const sel = $('ig-secpreset-select');
+  const id = Number(sel?.value);
+  if (!id) { toast('上書き対象を選択', 'error'); return; }
+  const p = sectionPresets.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`「${p.name}」を現在の選択で上書きしますか？`)) return;
+  try {
+    await GenerationAPI.updateSectionPreset(id, { payload: currentSectionPresetPayload() });
+    toast('上書きしました', 'success');
+    await loadSectionPresets();
+    sel.value = String(id);
+  } catch (err) {
+    toast(`上書き失敗: ${err?.message || err}`, 'error');
+  }
+}
+
+async function handleSectionPresetDelete() {
+  const sel = $('ig-secpreset-select');
+  const id = Number(sel?.value);
+  if (!id) { toast('削除対象を選択', 'error'); return; }
+  const p = sectionPresets.find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`プリセット「${p.name}」を削除しますか？`)) return;
+  try {
+    await GenerationAPI.deleteSectionPreset(id);
+    toast('削除しました', 'info');
+    await loadSectionPresets();
+  } catch (err) {
+    toast(`削除失敗: ${err?.message || err}`, 'error');
+  }
+}
+
+// ============================================================
+// Compose preview (client-side; モーダルで表示)
+// ============================================================
+function closePreviewModal() {
+  const root = $('ig-preview-modal-root');
+  if (root) root.innerHTML = '';
+}
+
 function runPreview() {
-  const el = $('ig-preview-body');
-  if (!el) return;
+  const root = $('ig-preview-modal-root');
+  if (!root) return;
   const rows = chosen.map(sid => sections.find(s => s.id === sid)).filter(Boolean);
   const userPos = $('ig-positive')?.value || '';
   const userNeg = $('ig-negative')?.value || '';
@@ -517,12 +724,53 @@ function runPreview() {
     userPositive: userPos, userNegative: userNeg, userPosition: pos,
   });
   const warnHtml = res.warnings.length
-    ? `<div class="warn">⚠ ${res.warnings.map(esc).join(' / ')}</div>` : '';
-  el.innerHTML = `
-    <div><strong>POS</strong>: ${esc(res.positive) || '<span class="text-muted">(empty)</span>'}</div>
-    <div style="margin-top:0.2rem;"><strong>NEG</strong>: ${esc(res.negative) || '<span class="text-muted">(empty)</span>'}</div>
-    ${warnHtml}
-  `;
+    ? `<div class="imggen-preview-warn">⚠ ${res.warnings.map(esc).join(' / ')}</div>` : '';
+  const sectionLines = rows.length
+    ? rows.map(s => `<li>${esc(s.name)} <span class="text-muted">(${esc(s.category_key)})</span></li>`).join('')
+    : '<li class="text-muted">（未選択）</li>';
+  root.innerHTML = `
+    <div class="imggen-modal-backdrop" id="ig-preview-bg">
+      <div class="imggen-modal imggen-modal-wide">
+        <div class="imggen-modal-header">
+          <span>🔍 合成プレビュー</span>
+          <button id="ig-preview-close" class="btn btn-sm">×</button>
+        </div>
+        <div class="imggen-modal-body">
+          ${warnHtml}
+          <div class="imggen-preview-section">
+            <div class="imggen-preview-label">POSITIVE</div>
+            <div class="imggen-preview-text">${esc(res.positive) || '<span class="text-muted">(empty)</span>'}</div>
+            <button class="btn btn-sm imggen-preview-copy" data-copy-target="pos">📋 コピー</button>
+          </div>
+          <div class="imggen-preview-section">
+            <div class="imggen-preview-label">NEGATIVE</div>
+            <div class="imggen-preview-text">${esc(res.negative) || '<span class="text-muted">(empty)</span>'}</div>
+            <button class="btn btn-sm imggen-preview-copy" data-copy-target="neg">📋 コピー</button>
+          </div>
+          <div class="imggen-preview-section">
+            <div class="imggen-preview-label">使用セクション (${rows.length})</div>
+            <ul class="imggen-preview-list">${sectionLines}</ul>
+          </div>
+          <div class="imggen-preview-section">
+            <div class="imggen-preview-label">挿入位置</div>
+            <div>${esc(pos)}</div>
+          </div>
+        </div>
+        <div class="imggen-modal-footer">
+          <button id="ig-preview-cancel" class="btn btn-sm">閉じる</button>
+        </div>
+      </div>
+    </div>`;
+  $('ig-preview-close')?.addEventListener('click', closePreviewModal);
+  $('ig-preview-cancel')?.addEventListener('click', closePreviewModal);
+  $('ig-preview-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-preview-bg') closePreviewModal(); });
+  root.querySelectorAll('[data-copy-target]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = btn.dataset.copyTarget === 'pos' ? res.positive : res.negative;
+      try { await navigator.clipboard.writeText(text || ''); toast('コピーしました', 'info'); }
+      catch { toast('コピー失敗', 'error'); }
+    });
+  });
 }
 
 // ============================================================
@@ -1110,19 +1358,29 @@ async function handlePresetSave(edit) {
 // Mount / Show / Hide
 // ============================================================
 export async function mount() {
+  loadSectionExpandedLS();
+
   $('ig-submit')?.addEventListener('click', handleSubmit);
   $('ig-preset-new')?.addEventListener('click', () => openPresetModal({}));
   $('ig-sec-new')?.addEventListener('click', () => openSectionModal({}));
   $('ig-sec-reload')?.addEventListener('click', loadSections);
+  $('ig-sec-expand-all')?.addEventListener('click', () => setAllCategoriesExpanded(true));
+  $('ig-sec-collapse-all')?.addEventListener('click', () => setAllCategoriesExpanded(false));
   $('ig-prompt-crafter')?.addEventListener('click', handlePromptCrafterClick);
   $('ig-preview-show')?.addEventListener('click', runPreview);
   $('ig-workflow')?.addEventListener('change', handleWorkflowChange);
+
+  $('ig-secpreset-load')?.addEventListener('click', handleSectionPresetLoad);
+  $('ig-secpreset-save')?.addEventListener('click', handleSectionPresetSave);
+  $('ig-secpreset-overwrite')?.addEventListener('click', handleSectionPresetOverwrite);
+  $('ig-secpreset-delete')?.addEventListener('click', handleSectionPresetDelete);
 
   await Promise.all([
     loadWorkflows(),
     loadSections(),
     loadComfyPanel(),
     loadPresets(),
+    loadSectionPresets(),
   ]);
   // workflows ロード後に初期 LoRA も読み込む
   await loadLoras();

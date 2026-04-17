@@ -2949,6 +2949,104 @@ def create_web_app(bot) -> FastAPI:
         ok = await bot.database.section_delete(int(section_id))
         return {"ok": bool(ok)}
 
+    # --- section presets (selected sections + user prompts snapshot) ---
+
+    def _section_preset_to_dict(r: dict) -> dict:
+        try:
+            payload = json.loads(r.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+        return {
+            "id": int(r["id"]),
+            "name": r.get("name"),
+            "description": r.get("description"),
+            "payload": payload,
+            "updated_at": r.get("updated_at"),
+        }
+
+    def _validate_section_preset_payload(payload) -> dict:
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "payload must be an object")
+        sids = payload.get("section_ids") or []
+        if not isinstance(sids, list):
+            raise HTTPException(400, "section_ids must be an array")
+        try:
+            sids = [int(v) for v in sids]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "section_ids must be integers")
+        pos = str(payload.get("user_position") or "tail")
+        return {
+            "section_ids": sids,
+            "user_positive": str(payload.get("user_positive") or ""),
+            "user_negative": str(payload.get("user_negative") or ""),
+            "user_position": pos,
+        }
+
+    @app.get("/api/generation/section-presets", dependencies=[Depends(_verify)])
+    async def section_presets_list():
+        rows = await bot.database.section_preset_list()
+        return {"presets": [_section_preset_to_dict(r) for r in rows]}
+
+    @app.post("/api/generation/section-presets", dependencies=[Depends(_verify)])
+    async def section_preset_create(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        name = (body.get("name") or "").strip()
+        if not name or len(name) > 64:
+            raise HTTPException(400, "name is required (1-64 chars)")
+        if await bot.database.section_preset_get_by_name(name):
+            raise HTTPException(409, "name already exists")
+        normalized = _validate_section_preset_payload(body.get("payload"))
+        pid = await bot.database.section_preset_insert(
+            name=name,
+            description=(body.get("description") or None),
+            payload_json=json.dumps(normalized, ensure_ascii=False),
+        )
+        return {"id": pid}
+
+    @app.patch(
+        "/api/generation/section-presets/{preset_id}",
+        dependencies=[Depends(_verify)],
+    )
+    async def section_preset_update(preset_id: int, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        existing = await bot.database.section_preset_get(int(preset_id))
+        if not existing:
+            raise HTTPException(404, "preset not found")
+        kwargs: dict = {}
+        if "name" in body:
+            new_name = (body.get("name") or "").strip()
+            if not new_name or len(new_name) > 64:
+                raise HTTPException(400, "name must be 1-64 chars")
+            if new_name != existing["name"]:
+                if await bot.database.section_preset_get_by_name(new_name):
+                    raise HTTPException(409, "name already exists")
+            kwargs["name"] = new_name
+        if "description" in body:
+            kwargs["description"] = body.get("description") or None
+        if "payload" in body:
+            normalized = _validate_section_preset_payload(body.get("payload"))
+            kwargs["payload_json"] = json.dumps(normalized, ensure_ascii=False)
+        if not kwargs:
+            raise HTTPException(400, "no fields to update")
+        ok = await bot.database.section_preset_update(int(preset_id), **kwargs)
+        if not ok:
+            raise HTTPException(500, "update failed")
+        return {"ok": True}
+
+    @app.delete(
+        "/api/generation/section-presets/{preset_id}",
+        dependencies=[Depends(_verify)],
+    )
+    async def section_preset_delete(preset_id: int):
+        ok = await bot.database.section_preset_delete(int(preset_id))
+        if not ok:
+            raise HTTPException(404, "preset not found")
+        return {"ok": True}
+
     @app.post("/api/generation/compose-preview", dependencies=[Depends(_verify)])
     async def section_compose_preview(request: Request):
         """クライアントのプレビューと同じロジックをサーバで走らせる検証用。"""

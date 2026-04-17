@@ -721,6 +721,18 @@ class Database:
                 "ALTER TABLE generation_jobs ADD COLUMN tags TEXT",
                 "CREATE INDEX IF NOT EXISTS idx_generation_jobs_favorite ON generation_jobs(favorite, created_at DESC)",
             ],
+            30: [
+                # セクション選択 + ユーザー追記プロンプト + 挿入位置を一つのプリセットとして保存
+                # payload_json には {section_ids, user_positive, user_negative, user_position} を格納
+                """CREATE TABLE IF NOT EXISTS prompt_section_presets (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL UNIQUE,
+                    description  TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -1536,6 +1548,63 @@ class Database:
             description=description, tags=tags,
             is_builtin=1,
         )
+
+    # === セクションプリセット: prompt_section_presets ===
+
+    async def section_preset_list(self) -> list[dict]:
+        return await self.fetchall(
+            "SELECT * FROM prompt_section_presets ORDER BY name ASC",
+        )
+
+    async def section_preset_get(self, preset_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM prompt_section_presets WHERE id = ?", (preset_id,),
+        )
+
+    async def section_preset_get_by_name(self, name: str) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM prompt_section_presets WHERE name = ?", (name,),
+        )
+
+    async def section_preset_insert(
+        self, *, name: str, payload_json: str, description: str | None = None,
+    ) -> int:
+        cursor = await self.execute(
+            "INSERT INTO prompt_section_presets "
+            "(name, description, payload_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, description, payload_json, jst_now(), jst_now()),
+        )
+        return cursor.lastrowid
+
+    async def section_preset_update(
+        self, preset_id: int, *,
+        name: str | None = None, description: str | None = None,
+        payload_json: str | None = None,
+    ) -> bool:
+        sets: list[str] = []
+        params: list = []
+        if name is not None:
+            sets.append("name = ?"); params.append(name)
+        if description is not None:
+            sets.append("description = ?"); params.append(description)
+        if payload_json is not None:
+            sets.append("payload_json = ?"); params.append(payload_json)
+        if not sets:
+            return False
+        sets.append("updated_at = ?"); params.append(jst_now())
+        params.append(preset_id)
+        rowcount = await self.execute_returning_rowcount(
+            f"UPDATE prompt_section_presets SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        return rowcount == 1
+
+    async def section_preset_delete(self, preset_id: int) -> bool:
+        rowcount = await self.execute_returning_rowcount(
+            "DELETE FROM prompt_section_presets WHERE id = ?", (preset_id,),
+        )
+        return rowcount == 1
 
     # === 画像生成: prompt_sessions ===
 
