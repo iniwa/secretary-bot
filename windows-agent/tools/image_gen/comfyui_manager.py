@@ -151,6 +151,24 @@ class ComfyUIManager:
                 await asyncio.sleep(1.0)
         return False
 
+    def adopt_if_alive(self) -> bool:
+        """エージェント起動直後に呼び、port が応答していれば既存 ComfyUI を採用する。
+
+        Code Update で agent.py だけが再起動されたとき、Windows の subprocess は
+        親が死んでも子が残るため ComfyUI は port を握ったまま生存している。
+        UI 上「停止」と表示されないよう、起動時に一度だけ採用判定する。"""
+        with self._lock:
+            if self._proc is not None or self.state.available:
+                return False
+            if not self._probe_existing():
+                return False
+            self.state.available = True
+            self.state.last_health_at = time.time()
+            self.state.last_error = None
+            self._log("info", f"adopted existing ComfyUI at {self.base_url} (on agent boot)")
+            self._ensure_monitor()
+            return True
+
     def start(self) -> dict:
         """起動要求。既に起動中なら no-op。"""
         with self._lock:

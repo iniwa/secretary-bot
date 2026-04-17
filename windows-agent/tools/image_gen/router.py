@@ -84,6 +84,14 @@ def init_image_gen(role: str, agent_config: dict, agent_dir: str, logger=None) -
         crash_restart_max_retries=int(comfy_cfg.get("crash_restart_max_retries", 3)),
         logger=logger,
     )
+    # エージェント再起動時、Code Update 等で agent.py だけが落ちて
+    # ComfyUI プロセスが port を握ったまま残るケースに備えて、起動時に
+    # 一発だけ port を叩き、応答があれば既存プロセスを採用する。
+    # （UI 上「停止」と表示されてしまう問題を回避）
+    try:
+        _ctx.comfy.adopt_if_alive()
+    except Exception as e:
+        print(f"[image_gen] adopt_if_alive failed: {e}")
 
 
 # --- 共通ユーティリティ ---
