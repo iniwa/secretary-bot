@@ -1,0 +1,8 @@
+{
+  "category_key": "character",
+  "name": "character_iniwa_vrc_male",
+  "description": "Iniwa_VRC（男性版・猫耳・水色ショートヘア・眼鏡・青パーカー・左耳に V 字の欠け）。LoRA INIWA_NOOBXL と併用推奨",
+  "positive": "Iniwa_VRC, solo, male focus, 1boy, animal ears, tail, cat ears, cat tail, ahoge, hood, blue eyes, open hoodie, skyblue hair, glasses, (A distinctive V-shaped notch on its left ear:1.2), printed shirts, crocs",
+  "negative": null,
+  "tags": "character,iniwa_vrc,male,cat_ears,lora_friendly"
+}
