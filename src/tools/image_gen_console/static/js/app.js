@@ -15,6 +15,7 @@ import * as jobs from './pages/jobs.js';
 import * as gallery from './pages/gallery.js';
 import * as prompts from './pages/prompts.js';
 import * as extract from './pages/extract.js';
+import { toast } from './lib/toast.js';
 
 const routes = [
   { hash: '#/generate', module: generate, nav: 'generate', title: 'Generate' },
@@ -103,22 +104,6 @@ function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-// ============================================================
-// Toast（src/web/static/js/app.js と同じ API）
-// ============================================================
-export function toast(message, type = 'info') {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.textContent = message;
-  container.appendChild(el);
-  setTimeout(() => {
-    el.classList.add('removing');
-    el.addEventListener('animationend', () => el.remove());
-  }, 3000);
 }
 
 // ============================================================

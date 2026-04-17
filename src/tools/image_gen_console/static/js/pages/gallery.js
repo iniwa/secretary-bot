@@ -1,5 +1,5 @@
 /** Gallery page — 日別グループ + lightbox + 「この設定で再現」。 */
-import { toast } from '../app.js';
+import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import {
   esc, fmtDate, openLightbox, stashSet,

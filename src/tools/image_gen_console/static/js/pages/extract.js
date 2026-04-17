@@ -6,7 +6,7 @@
  *
  *  実装は pure JS。zTXt（deflate 圧縮）は依存を増やさないため未対応。
  */
-import { toast } from '../app.js';
+import { toast } from '../lib/toast.js';
 import { esc, stashSet } from '../lib/common.js';
 
 let lastResult = null;   // { source, positive, negative, params, model, raw }

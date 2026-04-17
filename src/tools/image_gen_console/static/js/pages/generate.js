@@ -2,7 +2,7 @@
  *  Jobs / Gallery は別ページ（#/jobs, #/gallery）。
  */
 import { api } from '../api.js';
-import { toast } from '../app.js';
+import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import { composePromptClient } from '../lib/compose.js';
 import { esc, makeSortable, stashGet, stashClear } from '../lib/common.js';

@@ -1,6 +1,6 @@
 /** Prompts page — prompt_crafter セッションの閲覧・編集。 */
 import { api } from '../api.js';
-import { toast } from '../app.js';
+import { toast } from '../lib/toast.js';
 import { esc, fmtTime, stashSet } from '../lib/common.js';
 
 let activeSession = null;

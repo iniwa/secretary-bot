@@ -1,5 +1,5 @@
 /** Jobs page — 投入済みジョブの一覧・SSE 自動更新・Cancel / 再実行。 */
-import { toast } from '../app.js';
+import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import {
   esc, fmtTime, statusBadgeClass, isTerminal, stashSet,
