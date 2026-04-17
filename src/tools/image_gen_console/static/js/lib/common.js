@@ -189,6 +189,21 @@ function getDragAfter(container, x, y) {
   }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
 }
 
+/** モーダル背景クリックで閉じる際、テキスト選択ドラッグの離し位置が
+ *  背景上だった場合に意図せず閉じてしまう問題を回避する。
+ *  mousedown の起点も背景でなければ閉じない。 */
+export function bindModalBackdropClose(backdropEl, closeFn) {
+  if (!backdropEl) return;
+  let downOnBackdrop = false;
+  backdropEl.addEventListener('mousedown', (e) => {
+    downOnBackdrop = (e.target === backdropEl);
+  });
+  backdropEl.addEventListener('click', (e) => {
+    if (downOnBackdrop && e.target === backdropEl) closeFn();
+    downOnBackdrop = false;
+  });
+}
+
 /** localStorage を介した簡易 stash（ページ間のプリセット受け渡し）。
  *  メイン WebGUI と同じキーを使うので、外部からの prefill とも互換。
  */

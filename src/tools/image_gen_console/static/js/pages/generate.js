@@ -5,7 +5,7 @@ import { api } from '../api.js';
 import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import { composePromptClient } from '../lib/compose.js';
-import { esc, makeSortable, stashGet, stashClear } from '../lib/common.js';
+import { esc, makeSortable, stashGet, stashClear, bindModalBackdropClose } from '../lib/common.js';
 
 // ============================================================
 // State
@@ -763,7 +763,7 @@ function runPreview() {
     </div>`;
   $('ig-preview-close')?.addEventListener('click', closePreviewModal);
   $('ig-preview-cancel')?.addEventListener('click', closePreviewModal);
-  $('ig-preview-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-preview-bg') closePreviewModal(); });
+  bindModalBackdropClose($('ig-preview-bg'), closePreviewModal);
   root.querySelectorAll('[data-copy-target]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const text = btn.dataset.copyTarget === 'pos' ? res.positive : res.negative;
@@ -827,7 +827,7 @@ function openSectionModal({ category_key = '', section_id = null } = {}) {
   const close = closeSectionModal;
   $('ig-sec-close')?.addEventListener('click', close);
   $('ig-sec-cancel')?.addEventListener('click', close);
-  $('ig-sec-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-sec-bg') close(); });
+  bindModalBackdropClose($('ig-sec-bg'), close);
   $('ig-sec-save')?.addEventListener('click', () => handleSectionSave(editing));
   $('ig-sec-del')?.addEventListener('click', () => handleSectionDelete(editing));
 }
@@ -1127,7 +1127,7 @@ function renderPresetModal(edit = null) {
     </div>`;
   $('ig-preset-modal-close')?.addEventListener('click', closePresetModal);
   $('ig-preset-cancel')?.addEventListener('click', closePresetModal);
-  $('ig-preset-modal-bg')?.addEventListener('click', (e) => { if (e.target.id === 'ig-preset-modal-bg') closePresetModal(); });
+  bindModalBackdropClose($('ig-preset-modal-bg'), closePresetModal);
   $('ig-preset-save')?.addEventListener('click', () => handlePresetSave(edit));
   $('ig-preset-json')?.addEventListener('input', (e) => {
     try {
