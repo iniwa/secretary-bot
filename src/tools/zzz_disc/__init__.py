@@ -11,9 +11,9 @@ import os
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from src.logger import get_logger
+from src.web.cache_headers import NO_CACHE_HEADERS, NoCacheStaticFiles
 from . import models
 from .routes import build_router
 from .job_queue import ZzzDiscJobQueue
@@ -105,7 +105,7 @@ def register(app: FastAPI, bot) -> None:
     if os.path.isdir(_STATIC_DIR):
         app.mount(
             "/tools/zzz-disc/static",
-            StaticFiles(directory=_STATIC_DIR),
+            NoCacheStaticFiles(directory=_STATIC_DIR),
             name="zzz_disc_static",
         )
 
@@ -130,10 +130,7 @@ def register(app: FastAPI, bot) -> None:
         ver = h.hexdigest()[:8]
         html = html.replace('src="static/js/app.js"', f'src="static/js/app.js?v={ver}"')
         html = html.replace('href="static/css/zzz_disc.css"', f'href="static/css/zzz_disc.css?v={ver}"')
-        return HTMLResponse(
-            content=html,
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+        return HTMLResponse(content=html, headers=NO_CACHE_HEADERS)
 
     # API ルータ
     router = build_router(bot, {

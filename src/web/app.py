@@ -10,11 +10,11 @@ from datetime import datetime
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.responses import StreamingResponse
 
 from src.flow_tracker import get_flow_tracker
 from src.logger import get_logger
+from src.web.cache_headers import NO_CACHE_HEADERS, NoCacheStaticFiles
 
 log = get_logger(__name__)
 
@@ -3135,9 +3135,9 @@ def create_web_app(bot) -> FastAPI:
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
 
-    @app.get("/", response_class=HTMLResponse, )
+    @app.get("/", response_class=HTMLResponse)
     async def index():
         html_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
         try:
@@ -3154,8 +3154,11 @@ def create_web_app(bot) -> FastAPI:
             html = html.replace('href="/static/css/base.css"', f'href="/static/css/base.css?v={ver}"')
             html = html.replace('href="/static/css/layout.css"', f'href="/static/css/layout.css?v={ver}"')
             html = html.replace('href="/static/css/components.css"', f'href="/static/css/components.css?v={ver}"')
-            return html
+            return HTMLResponse(content=html, headers=NO_CACHE_HEADERS)
         except FileNotFoundError:
-            return "<h1>Secretary Bot WebGUI</h1><p>static/index.html not found</p>"
+            return HTMLResponse(
+                content="<h1>Secretary Bot WebGUI</h1><p>static/index.html not found</p>",
+                headers=NO_CACHE_HEADERS,
+            )
 
     return app

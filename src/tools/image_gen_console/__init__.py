@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 
 from src.logger import get_logger
+from src.web.cache_headers import NO_CACHE_HEADERS, NoCacheStaticFiles
 
 log = get_logger(__name__)
 
@@ -29,7 +29,7 @@ def register(app: FastAPI, bot) -> None:
 
     app.mount(
         "/tools/image-gen/static",
-        StaticFiles(directory=_STATIC_DIR),
+        NoCacheStaticFiles(directory=_STATIC_DIR),
         name="image_gen_console_static",
     )
 
@@ -54,9 +54,6 @@ def register(app: FastAPI, bot) -> None:
         ver = h.hexdigest()[:8]
         html = html.replace('src="static/js/app.js"', f'src="static/js/app.js?v={ver}"')
         html = html.replace('href="static/css/image_gen.css"', f'href="static/css/image_gen.css?v={ver}"')
-        return HTMLResponse(
-            content=html,
-            headers={"Cache-Control": "no-cache, must-revalidate"},
-        )
+        return HTMLResponse(content=html, headers=NO_CACHE_HEADERS)
 
     log.info("Image Gen Console registered at /tools/image-gen")
