@@ -182,7 +182,7 @@ class ImageGenUnit(BaseUnit):
             return "画像生成するプロンプトを教えてください。"
 
         ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
-        preset = (extracted.get("preset") or "").strip() or ig_cfg.get("default_preset", "t2i_base")
+        preset = (extracted.get("preset") or "").strip() or ig_cfg.get("default_preset", "t2i_default")
 
         params: dict[str, Any] = {}
         for key_in, key_out in [("width", "WIDTH"), ("height", "HEIGHT"),

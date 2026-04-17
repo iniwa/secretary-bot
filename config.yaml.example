@@ -114,7 +114,7 @@ units:
     enabled: true                             # 機能全体のトグル
     discord_output_channel_id: 0              # 生成結果を投稿する固定チャンネル（0 で無効）
     discord_lora_max_slots: 1                 # Discord から指定可能な LoRA 枚数上限（将来拡張用）
-    default_preset: "t2i_base"                # 未指定時のプリセット
+    default_preset: "t2i_default"             # 未指定時のプリセット
     default_base_model: "chenkinNoobXLCKXL_v05.safetensors"   # CKPT 未指定時の既定モデル
     default_sampler: "euler_ancestral"
     default_scheduler: "normal"

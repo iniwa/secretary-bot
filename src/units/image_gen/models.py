@@ -77,7 +77,7 @@ class WorkflowRequirements:
     placeholders: list[str] = field(default_factory=list)        # {{VAR}} 一覧
 
 
-# デフォルトパラメータ（t2i_base 想定）
+# デフォルトパラメータ（t2i_default 想定）
 DEFAULT_PARAMS: dict[str, Any] = {
     "WIDTH": 1024,
     "HEIGHT": 1024,

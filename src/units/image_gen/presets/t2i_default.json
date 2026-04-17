@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "LoRA (INIWA_NOOBXL) 付き t2i（SDXL/NoobXL, 1024x1024, euler/karras 推奨）",
+    "description": "標準 t2i（SDXL/NoobXL, 1024x1024）。LoRA をデフォルト含むが UI でオフ可（バイパス）",
     "category": "t2i",
     "main_pc_only": false,
     "default_timeout_sec": 300
