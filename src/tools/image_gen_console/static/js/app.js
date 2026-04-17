@@ -1,9 +1,13 @@
 /** Image Gen Console — hash router + toast。
  *
- * 各ページモジュールは以下の API を export:
- *   render(params): string  — HTML を返す
- *   mount(params): Promise  — DOM に紐づけ
- *   unmount(): void         — タイマー/SSE 等のクリーンアップ
+ * ページモジュールは以下の API を持つ:
+ *   render(): string         — 初回 1 回だけ呼ばれる。HTML を返す
+ *   mount(): Promise         — 初回 1 回だけ呼ばれる。イベント結線・初期データ取得
+ *   onShow?(rawHash): void   — 表示されるたびに呼ばれる（タイマー再開・クエリ反映）
+ *   onHide?(): void          — 非表示になるときに呼ばれる（タイマー停止）
+ *
+ * ページコンテナはタブ切替で破棄されないため、フォーム値・取得済みデータ・
+ * スクロール位置がすべて保持される。
  */
 
 import * as generate from './pages/generate.js';
@@ -20,11 +24,11 @@ const routes = [
 
 const DEFAULT_HASH = '#/generate';
 
-let currentModule = null;
+const containers = {};   // nav -> HTMLElement
+let currentNav = null;
 let _navGen = 0;
 
 function resolve(rawHash) {
-  // クエリ部を除いてマッチさせる
   const base = (rawHash || '').split('?')[0];
   return routes.find(r => r.hash === base) || null;
 }
@@ -37,26 +41,49 @@ async function navigate() {
     return;
   }
 
-  if (currentModule?.unmount) {
-    try { currentModule.unmount(); } catch { /* silent */ }
+  // 切替前ページの onHide
+  if (currentNav && currentNav !== route.nav) {
+    const prev = containers[currentNav];
+    if (prev) {
+      prev.el.style.display = 'none';
+      try { prev.module.onHide?.(); } catch (err) { console.error('onHide failed', err); }
+    }
   }
-  currentModule = route.module;
-  const gen = ++_navGen;
 
+  // ナビ ハイライト更新
   document.querySelectorAll('.ig-nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === route.nav);
   });
 
+  // 既存コンテナがあれば表示するだけ。なければ初回マウント
+  let entry = containers[route.nav];
   const main = document.getElementById('main-content');
-  try {
-    main.innerHTML = route.module.render();
-    if (route.module.mount) await route.module.mount();
-  } catch (err) {
-    if (gen !== _navGen) return;
-    console.error(`page mount error (${route.nav}):`, err);
-    main.innerHTML = `<div class="imggen-empty">ページの読み込みに失敗しました<br><span class="text-xs text-muted">${escapeHtml(err.message || String(err))}</span></div>`;
-    toast(`${route.title} の読み込みに失敗`, 'error');
+  const gen = ++_navGen;
+
+  if (!entry) {
+    const el = document.createElement('div');
+    el.className = 'ig-page-container';
+    el.dataset.page = route.nav;
+    try {
+      el.innerHTML = route.module.render();
+      main.appendChild(el);
+      entry = { el, module: route.module };
+      containers[route.nav] = entry;
+      if (route.module.mount) await route.module.mount();
+    } catch (err) {
+      if (gen !== _navGen) return;
+      console.error(`page mount error (${route.nav}):`, err);
+      el.innerHTML = `<div class="imggen-empty">ページの読み込みに失敗しました<br><span class="text-xs text-muted">${escapeHtml(err.message || String(err))}</span></div>`;
+      toast(`${route.title} の読み込みに失敗`, 'error');
+    }
+  } else {
+    entry.el.style.display = '';
   }
+
+  currentNav = route.nav;
+
+  // 表示のたびに呼ばれる（mount の直後でも 1 回呼ばれる）
+  try { route.module.onShow?.(rawHash); } catch (err) { console.error('onShow failed', err); }
 }
 
 function escapeHtml(s) {

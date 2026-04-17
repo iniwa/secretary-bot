@@ -913,7 +913,7 @@ async function handlePresetSave(edit) {
 }
 
 // ============================================================
-// Mount / Unmount
+// Mount / Show / Hide
 // ============================================================
 export async function mount() {
   $('ig-submit')?.addEventListener('click', handleSubmit);
@@ -932,19 +932,19 @@ export async function mount() {
     loadPresets(),
   ]);
 
-  await checkStashPrefill();
   schedulePreview();
-  comfyStatusTimer = setInterval(refreshComfyStatus, 15000);
 }
 
-export function unmount() {
+export async function onShow() {
+  // ?prefill=... 付きで遷移してきた場合のみ stash 取り込み
+  await checkStashPrefill();
+  // ComfyUI ステータスは表示中のみポーリング
+  if (!comfyStatusTimer) {
+    refreshComfyStatus();
+    comfyStatusTimer = setInterval(refreshComfyStatus, 15000);
+  }
+}
+
+export function onHide() {
   if (comfyStatusTimer) { clearInterval(comfyStatusTimer); comfyStatusTimer = null; }
-  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  closePresetModal();
-  closeSectionModal();
-  workflows = [];
-  categories = [];
-  sections = [];
-  chosen = [];
-  comfyAgents = [];
 }

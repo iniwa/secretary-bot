@@ -178,7 +178,7 @@ function connectSSE() {
 }
 
 // ============================================================
-// Mount / Unmount
+// Mount / Show / Hide
 // ============================================================
 export async function mount() {
   $('ij-reload')?.addEventListener('click', loadJobs);
@@ -190,12 +190,18 @@ export async function mount() {
     });
   }
   await loadJobs();
-  connectSSE();
-  pollTimer = setInterval(loadJobs, 15000);
 }
 
-export function unmount() {
+export function onShow() {
+  // 表示中のみ SSE と定期ポーリングを動かす
+  if (!sse) connectSSE();
+  if (!pollTimer) {
+    pollTimer = setInterval(loadJobs, 15000);
+    loadJobs();  // 戻ってきた瞬間に最新を 1 回叩く
+  }
+}
+
+export function onHide() {
   if (sse) { try { sse.close(); } catch { /* nop */ } sse = null; }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  jobs = [];
 }

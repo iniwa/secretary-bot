@@ -171,8 +171,3 @@ export async function mount() {
   $('pc-reload')?.addEventListener('click', loadAll);
   await loadAll();
 }
-
-export function unmount() {
-  activeSession = null;
-  sessions = [];
-}

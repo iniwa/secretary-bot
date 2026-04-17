@@ -147,17 +147,16 @@ async function handleReuse(item) {
 }
 
 // ============================================================
-// Mount / Unmount
+// Mount / Show / Hide
 // ============================================================
-function parseQuery() {
-  const h = location.hash || '';
+function parseQuery(rawHash) {
+  const h = rawHash || location.hash || '';
   const q = h.split('?')[1] || '';
   const params = new URLSearchParams(q);
   highlightJobId = params.get('job') || null;
 }
 
 export async function mount() {
-  parseQuery();
   $('gal-reload')?.addEventListener('click', () => loadGallery({ reset: true }));
   $('gal-more')?.addEventListener('click', () => loadGallery({ reset: false }));
   const filter = $('gal-filter');
@@ -171,9 +170,9 @@ export async function mount() {
   await loadGallery({ reset: true });
 }
 
-export function unmount() {
-  items = [];
-  allItems = [];
-  offset = 0;
-  highlightJobId = null;
+export function onShow(rawHash) {
+  // ?job=... 付きで遷移してきたら、その都度ハイライトを更新
+  const prev = highlightJobId;
+  parseQuery(rawHash);
+  if (highlightJobId && highlightJobId !== prev) renderGallery();
 }
