@@ -516,17 +516,52 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
                       icon_url: str | None = None,
                       name: str | None = None,
                       source_image_path: str | None = None,
-                      note: str | None = None) -> int:
+                      note: str | None = None,
+                      owner_character_id: int | None = None) -> int:
     """既存検索の優先順位:
     1. hoyolab_disc_id 一致 → 強化スナップショットなので最新値で UPDATE
     2. fingerprint 一致 → 同一内容の手動登録/旧データ、既存 id を返す
-    どちらにも該当しなければ新規 INSERT。"""
+    どちらにも該当しなければ新規 INSERT。
+
+    HoYoLAB の disc.id はキャラ間で同値を返すことがあるため、
+    owner_character_id が指定されたとき、hoyolab_disc_id / fingerprint で
+    ヒットした既存行が「他キャラの current build から参照中」ならマッチを
+    キャンセルして新規 INSERT に落とす（ディスク行の共有化を防ぐ／既存の
+    共有化を次回同期で自然に解消する）。
+    """
     fp = compute_fingerprint(slot, set_id, main_stat_name, main_stat_value, sub_stats)
-    if hoyolab_disc_id:
-        existing = await db.fetchone(
-            "SELECT id FROM zzz_discs WHERE hoyolab_disc_id = ?",
-            (hoyolab_disc_id,),
+
+    async def _used_by_other_character(disc_id: int) -> bool:
+        if owner_character_id is None:
+            return False
+        row = await db.fetchone(
+            "SELECT 1 FROM zzz_build_slots bs "
+            "JOIN zzz_builds b ON b.id = bs.build_id "
+            "WHERE bs.disc_id = ? AND b.is_current = 1 "
+            "AND b.character_id != ? LIMIT 1",
+            (disc_id, owner_character_id),
         )
+        return row is not None
+
+    if hoyolab_disc_id:
+        existing = None
+        # 同キャラ current が参照中の行を優先（複数行があった場合の非決定性を排除）
+        if owner_character_id is not None:
+            existing = await db.fetchone(
+                "SELECT d.id FROM zzz_discs d "
+                "JOIN zzz_build_slots bs ON bs.disc_id = d.id "
+                "JOIN zzz_builds b ON b.id = bs.build_id "
+                "WHERE d.hoyolab_disc_id = ? AND b.character_id = ? "
+                "AND b.is_current = 1 LIMIT 1",
+                (hoyolab_disc_id, owner_character_id),
+            )
+        if not existing:
+            existing = await db.fetchone(
+                "SELECT id FROM zzz_discs WHERE hoyolab_disc_id = ?",
+                (hoyolab_disc_id,),
+            )
+            if existing and await _used_by_other_character(existing["id"]):
+                existing = None
         if existing:
             # fingerprint UNIQUE と衝突しないかを事前確認（異常データ保護）
             clash = await db.fetchone(
@@ -547,6 +582,8 @@ async def insert_disc(db, *, slot: int, set_id: int | None,
             return existing["id"]
     existing = await db.fetchone(
         "SELECT id, icon_url, name FROM zzz_discs WHERE fingerprint = ?", (fp,))
+    if existing and await _used_by_other_character(existing["id"]):
+        existing = None
     if existing:
         sets, params = [], []
         if icon_url and not existing.get("icon_url"):

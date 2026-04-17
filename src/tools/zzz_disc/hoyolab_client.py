@@ -510,6 +510,9 @@ async def _sync_one_agent(db, client, uid: int, agent) -> int:
             icon_url=str(_pick(d, "icon", default="") or "") or None,
             name=(re.sub(r"\s*\[\d+\]\s*$", "",
                          str(_pick(d, "name", default="") or "")).strip() or None),
+            # HoYoLAB の disc.id はキャラ間で同値が返ることがあり、
+            # 既存の他キャラ行を UPDATE で巻き込まないよう所有キャラを渡す。
+            owner_character_id=character_id,
         )
         disc_ids_by_slot[slot] = disc_id
         count += 1
