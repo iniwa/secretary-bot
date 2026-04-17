@@ -14,12 +14,14 @@ import * as generate from './pages/generate.js';
 import * as jobs from './pages/jobs.js';
 import * as gallery from './pages/gallery.js';
 import * as prompts from './pages/prompts.js';
+import * as extract from './pages/extract.js';
 
 const routes = [
   { hash: '#/generate', module: generate, nav: 'generate', title: 'Generate' },
   { hash: '#/jobs',     module: jobs,     nav: 'jobs',     title: 'Jobs' },
   { hash: '#/gallery',  module: gallery,  nav: 'gallery',  title: 'Gallery' },
   { hash: '#/prompts',  module: prompts,  nav: 'prompts',  title: 'Prompts' },
+  { hash: '#/extract',  module: extract,  nav: 'extract',  title: 'Extract' },
 ];
 
 const DEFAULT_HASH = '#/generate';
