@@ -122,6 +122,9 @@ function teamSlotHtml(team, pos) {
   const buildInfo = filled
     ? `<div class="text-xs text-muted">${escapeHtml(slot.build_name || '-')}${slot.build_is_current ? ' <span class="build-current-badge">現在</span>' : ''}</div>`
     : '';
+  const editLink = filled && slot.character_slug
+    ? `<a href="#/characters/${encodeURIComponent(slot.character_slug)}" class="btn btn-sm" title="キャラ詳細ページで装備を編集">装備</a>`
+    : '';
   return `
     <div class="team-slot ${filled ? '' : 'empty'}" data-team-id="${team.id}" data-pos="${pos}">
       <div class="team-slot-name">${escapeHtml(name)}</div>
@@ -130,6 +133,7 @@ function teamSlotHtml(team, pos) {
         <button class="btn btn-sm" data-act="pick-member" data-team-id="${team.id}" data-pos="${pos}">
           ${filled ? '変更' : '選択'}
         </button>
+        ${editLink}
         ${filled ? `<button class="btn btn-sm btn-danger" data-act="clear-member" data-team-id="${team.id}" data-pos="${pos}">×</button>` : ''}
       </div>
     </div>
