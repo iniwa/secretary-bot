@@ -602,6 +602,13 @@ html, body { height: 100vh; overflow: hidden; }
   min-height: 26px;
   padding: 0 0.5rem 0.5rem;
 }
+.imggen-section-picker[hidden],
+.imggen-section-cat.collapsed .imggen-section-picker {
+  display: none;
+}
+.imggen-section-cat.collapsed .cat-label {
+  padding: 0.25rem 0.5rem;
+}
 .imggen-section-chip {
   font-size: 0.78rem;
   padding: 0.3rem 0.5rem 0.3rem 0.65rem;
