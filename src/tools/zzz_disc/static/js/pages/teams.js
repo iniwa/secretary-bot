@@ -1,6 +1,7 @@
 /** 編成モード: スタンドアロン部隊 + 高難易度グループ。ディスク使い回し検知 */
 import { api } from '../api.js';
 import { escapeHtml, toast, confirmDialog, promptDialog, openModal } from '../app.js';
+import { elementLabel } from '../labels.js';
 
 let state = {
   groups: [],
@@ -245,14 +246,32 @@ async function onPickMember(teamId, pos) {
   const team = findTeam(teamId);
   const current = team?.slots?.find(s => s.position === pos) || {};
   const wrap = document.createElement('div');
+
+  const elementValues = [...new Set(state.characters.map(c => c.element).filter(v => v !== null && v !== undefined && v !== ''))];
+  const factionValues = [...new Set(state.characters.map(c => c.faction).filter(Boolean))].sort();
+
   wrap.innerHTML = `
-    <label class="text-secondary text-sm">キャラ</label>
-    <select id="mem-char" style="width:100%;margin:4px 0 12px;">
+    <div class="row gap-1 mb-1" style="flex-wrap:wrap;">
+      <input type="search" id="mem-search" placeholder="名前で検索" style="flex:1;min-width:140px;" />
+      <select id="mem-element" style="min-width:110px;">
+        <option value="">全属性</option>
+        ${elementValues.map(e => `<option value="${escapeHtml(String(e))}">${escapeHtml(elementLabel(e))}</option>`).join('')}
+      </select>
+      <select id="mem-faction" style="min-width:110px;">
+        <option value="">全陣営</option>
+        ${factionValues.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('')}
+      </select>
+      <select id="mem-sort" style="min-width:110px;">
+        <option value="display_order">既定順</option>
+        <option value="name_ja">名前</option>
+        <option value="element">属性</option>
+        <option value="faction">陣営</option>
+        <option value="has_current">現在ビルド有→無</option>
+      </select>
+    </div>
+    <label class="text-secondary text-sm">キャラ <span id="mem-count" class="text-muted text-xs"></span></label>
+    <select id="mem-char" size="10" style="width:100%;margin:4px 0 12px;">
       <option value="">（未選択）</option>
-      ${state.characters.map(c => `
-        <option value="${c.id}" ${c.id === current.character_id ? 'selected' : ''}>
-          ${escapeHtml(c.name_ja)}
-        </option>`).join('')}
     </select>
     <label class="text-secondary text-sm">ビルド</label>
     <select id="mem-build" style="width:100%;margin-top:4px;">
@@ -265,9 +284,58 @@ async function onPickMember(teamId, pos) {
     <button class="btn" data-act="cancel">キャンセル</button>
     <button class="btn btn-primary" data-act="ok">OK</button>
   `;
+  const searchInput = wrap.querySelector('#mem-search');
+  const elemSel = wrap.querySelector('#mem-element');
+  const factionSel = wrap.querySelector('#mem-faction');
+  const sortSel = wrap.querySelector('#mem-sort');
   const charSel = wrap.querySelector('#mem-char');
   const buildSel = wrap.querySelector('#mem-build');
+  const countSpan = wrap.querySelector('#mem-count');
   const hint = wrap.querySelector('#mem-build-hint');
+
+  const collator = new Intl.Collator('ja');
+
+  function rebuildChars() {
+    const q = (searchInput.value || '').trim().toLowerCase();
+    const fe = elemSel.value;
+    const ff = factionSel.value;
+    const sk = sortSel.value;
+    let list = state.characters.filter(c => {
+      if (fe && String(c.element) !== fe) return false;
+      if (ff && (c.faction || '') !== ff) return false;
+      if (q && !(c.name_ja || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+    if (sk === 'name_ja') {
+      list.sort((a, b) => collator.compare(a.name_ja || '', b.name_ja || ''));
+    } else if (sk === 'element') {
+      list.sort((a, b) => collator.compare(elementLabel(a.element), elementLabel(b.element))
+        || (a.display_order ?? 0) - (b.display_order ?? 0));
+    } else if (sk === 'faction') {
+      list.sort((a, b) => collator.compare(a.faction || '', b.faction || '')
+        || (a.display_order ?? 0) - (b.display_order ?? 0));
+    } else if (sk === 'has_current') {
+      list.sort((a, b) => {
+        const av = (a.has_current_build || a.current_build_id) ? 1 : 0;
+        const bv = (b.has_current_build || b.current_build_id) ? 1 : 0;
+        return bv - av || (a.display_order ?? 0) - (b.display_order ?? 0);
+      });
+    } else {
+      list.sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0));
+    }
+    const prevId = Number(charSel.value) || current.character_id || null;
+    const options = [`<option value="">（未選択）</option>`];
+    for (const c of list) {
+      const label = `${c.name_ja}（${elementLabel(c.element)} / ${c.faction || '-'}）`;
+      const selected = c.id === prevId ? ' selected' : '';
+      options.push(`<option value="${c.id}"${selected}>${escapeHtml(label)}</option>`);
+    }
+    charSel.innerHTML = options.join('');
+    countSpan.textContent = `${list.length} 件`;
+    if ((Number(charSel.value) || null) !== prevId) {
+      refreshBuilds();
+    }
+  }
 
   async function refreshBuilds() {
     const cid = Number(charSel.value) || null;
@@ -288,7 +356,12 @@ async function onPickMember(teamId, pos) {
       hint.textContent = `ビルド取得失敗: ${e.message}`;
     }
   }
+  searchInput.addEventListener('input', rebuildChars);
+  elemSel.addEventListener('change', rebuildChars);
+  factionSel.addEventListener('change', rebuildChars);
+  sortSel.addEventListener('change', rebuildChars);
   charSel.addEventListener('change', refreshBuilds);
+  rebuildChars();
   await refreshBuilds();
 
   await new Promise(resolve => {

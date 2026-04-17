@@ -144,7 +144,6 @@ export function openModal({ title, body, footer, size }) {
 
   const close = () => backdrop.remove();
   backdrop.querySelector('[data-action="close"]').addEventListener('click', close);
-  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   root.appendChild(backdrop);
   return { backdrop, bodyEl, footerEl, close };
 }
