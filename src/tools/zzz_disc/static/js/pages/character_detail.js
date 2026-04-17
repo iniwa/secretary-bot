@@ -150,12 +150,65 @@ function renderBody() {
   const el = document.getElementById('detail-body');
   el.innerHTML = `
     <div id="rec-editors-area"></div>
+    <div id="rec-notes-area"></div>
     <div id="skills-area"></div>
     <div id="builds-area"></div>
   `;
   renderRecEditorsSection();
+  renderRecNotesSection();
   renderSkillsSection();
   renderBuildsSection();
+}
+
+function renderRecNotesSection() {
+  const el = document.getElementById('rec-notes-area');
+  if (!el) return;
+  const notes = state.character?.recommended_notes || '';
+  el.innerHTML = `
+    <div class="skills-block">
+      <div class="skills-head">
+        <h3 class="mb-1">📝 オススメステータス / ディスク（メモ）</h3>
+        <button class="btn btn-sm" id="rec-notes-edit-btn">編集</button>
+      </div>
+      ${notes
+        ? `<div class="skill-summary">${escapeHtml(notes)}</div>`
+        : '<div class="text-muted text-sm">ネットから拾ってきた推奨ステ・ディスクをフリーテキストで残せます。（未設定）</div>'}
+    </div>
+  `;
+  document.getElementById('rec-notes-edit-btn').addEventListener('click', openRecNotesEditor);
+}
+
+function openRecNotesEditor() {
+  const ch = state.character;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="text-muted text-sm mb-1">
+      ネット記事や攻略サイトから集めた「上げるべきステータス」「推奨ディスク」等を自由に記入。<br>
+      既存の推奨サブステ／ディスクのチェックには影響しません（表示専用）。
+    </div>
+    <textarea id="rec-notes-text" rows="6" style="width:100%;"
+      placeholder="例: 異常マスタリーを最優先。ディスクは○○4セット推奨。&#10;ATK 3,500 以上で××バフ最大化など。">${escapeHtml(ch?.recommended_notes || '')}</textarea>
+  `;
+  const { footerEl, close } = openModal({ title: 'オススメステータス（メモ）編集', body: wrap });
+  footerEl.innerHTML = `
+    <button class="btn" data-act="cancel">キャンセル</button>
+    <button class="btn btn-primary" data-act="ok">保存</button>
+  `;
+  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
+    const notes = wrap.querySelector('#rec-notes-text').value;
+    try {
+      const res = await api(`/characters/${ch.id}/recommended-notes`, {
+        method: 'PUT', body: { notes: notes || null },
+      });
+      state.character = res.character || state.character;
+      close();
+      toast('保存しました', 'success');
+      renderRecNotesSection();
+    } catch (err) {
+      toast(err.message || String(err), 'error');
+    }
+  });
 }
 
 const SKILL_KINDS = ['通常攻撃', '回避', '支援', '特殊攻撃', '連携攻撃', 'コアスキル', 'その他'];

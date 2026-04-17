@@ -166,6 +166,8 @@ async def init_schema(db) -> None:
     # スキル情報（手動入力）
     await _maybe_add_column(db, "zzz_characters", "skills_json", "TEXT")
     await _maybe_add_column(db, "zzz_characters", "skill_summary", "TEXT")
+    # ネットから取得したオススメステータス・ディスクのフリーテキスト
+    await _maybe_add_column(db, "zzz_characters", "recommended_notes", "TEXT")
     # 音動機（W-Engine）情報を build に保存
     await _maybe_add_column(db, "zzz_builds", "w_engine_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
@@ -356,7 +358,7 @@ def _decode_char_row(row: dict) -> dict:
 _CHAR_COLS = (
     "id, slug, name_ja, element, faction, icon_url, display_order, "
     "hoyolab_agent_id, recommended_substats_json, recommended_disc_sets_json, "
-    "skills_json, skill_summary"
+    "skills_json, skill_summary, recommended_notes"
 )
 
 
@@ -391,6 +393,14 @@ async def update_character_skills(db, character_id: int,
     return await db.execute_returning_rowcount(
         "UPDATE zzz_characters SET skills_json = ?, skill_summary = ? WHERE id = ?",
         (payload, summary, character_id),
+    )
+
+
+async def update_character_recommended_notes(db, character_id: int,
+                                             notes: str | None) -> int:
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET recommended_notes = ? WHERE id = ?",
+        (notes, character_id),
     )
 
 

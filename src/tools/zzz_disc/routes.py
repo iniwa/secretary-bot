@@ -199,6 +199,19 @@ def build_router(bot, config: dict) -> APIRouter:
         ch = await models.get_character(db, character_id)
         return {"character": ch}
 
+    @router.put("/api/characters/{character_id}/recommended-notes")
+    async def put_recommended_notes(character_id: int, payload: dict):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        notes = payload.get("notes")
+        if notes is not None and not isinstance(notes, str):
+            raise HTTPException(400, "notes must be string or null")
+        await models.update_character_recommended_notes(
+            db, character_id, (notes or None))
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
     @router.get("/api/characters/{character_id}/builds")
     async def get_character_builds(character_id: int):
         ch = await models.get_character(db, character_id)
