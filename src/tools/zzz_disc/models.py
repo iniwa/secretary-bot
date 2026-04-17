@@ -1044,12 +1044,22 @@ async def reset_hoyolab_synced_data(db) -> dict:
 
     Returns: {'slots': n, 'builds': n, 'discs': n, 'chars': 0}
     """
+    # team_slots.build_id が current ビルドを参照していると FK 違反になるので先に NULL 化
+    await db.execute(
+        "UPDATE zzz_team_slots SET build_id = NULL "
+        "WHERE build_id IN (SELECT id FROM zzz_builds WHERE is_current = 1)"
+    )
     c = await db.execute_returning_rowcount(
         "DELETE FROM zzz_build_slots WHERE build_id IN "
         "(SELECT id FROM zzz_builds WHERE is_current = 1)"
     )
     b = await db.execute_returning_rowcount(
         "DELETE FROM zzz_builds WHERE is_current = 1"
+    )
+    # プリセット（is_current=0）の build_slots が disc を参照していると
+    # DELETE FROM zzz_discs が FK 違反で失敗するので先に NULL 化
+    await db.execute(
+        "UPDATE zzz_build_slots SET disc_id = NULL WHERE disc_id IS NOT NULL"
     )
     d = await db.execute_returning_rowcount("DELETE FROM zzz_discs")
     return {"slots": c, "builds": b, "discs": d, "chars": 0}
