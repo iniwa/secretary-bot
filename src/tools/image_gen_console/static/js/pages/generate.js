@@ -17,7 +17,6 @@ let chosen = [];          // Array<number> section_id の配列（順序保持�
 let comfyAgents = [];
 let comfyStatusTimer = null;
 const comfyBusy = new Set();
-let previewTimer = null;
 
 // Presets modal state
 let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
@@ -81,8 +80,11 @@ export function render() {
       </div>
 
       <div class="imggen-compose-preview" id="ig-preview">
-        <div class="label">合成プレビュー</div>
-        <div id="ig-preview-body">---</div>
+        <div class="label" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
+          <span>合成プレビュー</span>
+          <button id="ig-preview-show" class="btn btn-sm" type="button">プレビュー表示</button>
+        </div>
+        <div id="ig-preview-body"><span class="text-muted text-xs">「プレビュー表示」を押すと表示されます</span></div>
       </div>
 
       <div class="imggen-params">
@@ -227,6 +229,8 @@ async function handleComfyAction(agentId, action) {
 // ============================================================
 // Workflows
 // ============================================================
+const LAST_WORKFLOW_KEY = 'imggen:last_workflow';
+
 async function loadWorkflows() {
   const sel = $('ig-workflow');
   if (!sel) return;
@@ -238,10 +242,24 @@ async function loadWorkflows() {
       const label = `${w.name}${w.description ? ' — ' + w.description : ''}${w.main_pc_only ? ' [main]' : ''}`;
       return `<option value="${esc(w.name)}">${esc(label)}</option>`;
     }).join('');
+    // 前回選択した workflow を復元（存在する場合のみ）
+    let saved = '';
+    try { saved = localStorage.getItem(LAST_WORKFLOW_KEY) || ''; } catch { /* ignore */ }
+    if (saved && workflows.some(w => w.name === saved)) {
+      sel.value = saved;
+    }
   } catch (err) {
     console.error('workflows load failed', err);
     sel.innerHTML = '<option value="">(load failed)</option>';
   }
+}
+
+function persistWorkflowSelection() {
+  const v = $('ig-workflow')?.value || '';
+  try {
+    if (v) localStorage.setItem(LAST_WORKFLOW_KEY, v);
+    else localStorage.removeItem(LAST_WORKFLOW_KEY);
+  } catch { /* ignore */ }
 }
 
 // ============================================================
@@ -311,7 +329,6 @@ function renderSections() {
       else chosen.push(sid);
       renderChosen();
       chip.classList.toggle('selected');
-      schedulePreview();
     });
   });
   el.querySelectorAll('[data-add-cat]').forEach(btn => {
@@ -341,23 +358,16 @@ function renderChosen() {
       const sid = Number(btn.dataset.remove);
       chosen = chosen.filter(x => x !== sid);
       renderSections();
-      schedulePreview();
     });
   });
   makeSortable(el, (order) => {
     chosen = order.map(k => Number(k)).filter(n => !isNaN(n));
-    schedulePreview();
   });
 }
 
 // ============================================================
-// Compose preview (client-side; debounced)
+// Compose preview (client-side; manual button trigger)
 // ============================================================
-function schedulePreview() {
-  clearTimeout(previewTimer);
-  previewTimer = setTimeout(runPreview, 300);
-}
-
 function runPreview() {
   const el = $('ig-preview-body');
   if (!el) return;
@@ -490,7 +500,10 @@ async function checkStashPrefill() {
     const sel = $('ig-workflow');
     if (sel && stash.workflow_name) {
       const found = Array.from(sel.options).some(o => o.value === stash.workflow_name);
-      if (found) sel.value = stash.workflow_name;
+      if (found) {
+        sel.value = stash.workflow_name;
+        persistWorkflowSelection();
+      }
     }
     if (stash.positive != null) $('ig-positive').value = stash.positive || '';
     if (stash.negative != null) $('ig-negative').value = stash.negative || '';
@@ -504,7 +517,6 @@ async function checkStashPrefill() {
     }
     toast(`取り込み完了（${kind}）`, 'info');
     stashClear();
-    schedulePreview();
   } catch (err) {
     console.error('prefill failed', err);
   }
@@ -597,7 +609,7 @@ async function loadPresets() {
             <div class="meta">${esc(w.description || '(no description)')}</div>
             <div class="meta">nodes: ${nodes} / loras: ${loras} / timeout: ${w.default_timeout_sec ?? '—'}s</div>
           </div>
-          <button class="btn btn-sm" data-preset-view="${w.id}">表示</button>
+          <button class="btn btn-sm" data-preset-view="${w.id}">編集</button>
           <button class="btn btn-sm btn-danger" data-preset-del="${w.id}" data-preset-name="${esc(w.name)}">削除</button>
         </div>`;
     }).join('')}</div>`;
@@ -921,9 +933,8 @@ export async function mount() {
   $('ig-sec-new')?.addEventListener('click', () => openSectionModal({}));
   $('ig-sec-reload')?.addEventListener('click', loadSections);
   $('ig-prompt-crafter')?.addEventListener('click', handlePromptCrafterClick);
-  $('ig-positive')?.addEventListener('input', schedulePreview);
-  $('ig-negative')?.addEventListener('input', schedulePreview);
-  $('ig-userpos')?.addEventListener('change', schedulePreview);
+  $('ig-preview-show')?.addEventListener('click', runPreview);
+  $('ig-workflow')?.addEventListener('change', persistWorkflowSelection);
 
   await Promise.all([
     loadWorkflows(),
@@ -931,8 +942,6 @@ export async function mount() {
     loadComfyPanel(),
     loadPresets(),
   ]);
-
-  schedulePreview();
 }
 
 export async function onShow() {
