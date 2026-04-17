@@ -1,4 +1,4 @@
-/** Activity page — Main PC のゲーム/プロセスプレイ履歴ビューア。 */
+/** Activity page — Main PC のゲームプレイ履歴と Main / Sub PC の作業履歴ビューア。 */
 import { api, apiBatch } from '../api.js';
 
 // ------------------------------------------------------------
@@ -19,6 +19,7 @@ let _gameFilter = '';
 let _dayFilter = '';              // YYYY-MM-DD。カレンダーから1日絞込み
 let _sessionOffset = 0;
 let _viewMode = 'bar';            // 'bar' | 'calendar'
+let _barPc = 'main';              // 'main' | 'sub' | 'both' — 棒グラフ／カレンダーの PC 切替
 let _fgPc = 'main';               // 'main' | 'sub'
 let _lastFg = [];                 // 直近の foreground データ（トグル切替時の再レンダ用）
 let _calYear = 0;
@@ -89,6 +90,15 @@ function gameColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
+// プロセス名 → 決定的な色（Sub PC 作業用。ゲームより彩度を落として区別しやすく）
+function processColor(name) {
+  if (!name) return '#888';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  return `hsl(${hue}, 30%, 60%)`;
+}
+
 // ------------------------------------------------------------
 // render
 // ------------------------------------------------------------
@@ -128,8 +138,13 @@ export function render() {
 
   <section class="card">
     <div class="card-header">
-      <h3>日別プレイ時間</h3>
-      <div style="display:flex;gap:0.5rem;align-items:center">
+      <h3>日別アクティビティ</h3>
+      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+        <div id="a-bar-pc-toggle" style="display:flex;gap:0.25rem">
+          <button class="pill" data-pc="main">Main</button>
+          <button class="pill" data-pc="sub">Sub</button>
+          <button class="pill" data-pc="both">両方</button>
+        </div>
         <div id="a-view-toggle" style="display:flex;gap:0.25rem">
           <button class="pill" data-view="bar">棒グラフ</button>
           <button class="pill" data-view="calendar">カレンダー</button>
@@ -260,20 +275,21 @@ async function loadDaily() {
     return;
   }
   if (rangeActive()) {
-    const qs = rangeParams().toString();
-    const data = await api(`/api/activity/daily?${qs}`).catch(() => null);
+    const params = rangeParams();
+    params.set('pc', _barPc);
+    const data = await api(`/api/activity/daily?${params.toString()}`).catch(() => null);
     renderDailyRange(data?.daily || [], _rangeStart, _rangeEnd);
     return;
   }
   // 棒グラフは最大365日に制限して視認性確保
   const days = _days === 0 ? 365 : _days;
-  const data = await api(`/api/activity/daily?days=${days}`).catch(() => null);
+  const data = await api(`/api/activity/daily?days=${days}&pc=${_barPc}`).catch(() => null);
   renderDaily(data?.daily || [], days);
 }
 
 async function loadCalendar() {
   const data = await api(
-    `/api/activity/daily?year=${_calYear}&month=${_calMonth}`
+    `/api/activity/daily?year=${_calYear}&month=${_calMonth}&pc=${_barPc}`
   ).catch(() => null);
   renderCalendar(data?.daily || []);
 }
@@ -386,99 +402,127 @@ function renderFgRanking(fg) {
   }).join('');
 }
 
+function emptyEntry(day) {
+  return { day, main_sec: 0, main_items: [], sub_sec: 0, sub_items: [], total_sec: 0 };
+}
+
+// API レスポンスのエントリを正規化（旧形式の games/processes も拾う）
+function normalizeEntry(raw) {
+  if (!raw) return null;
+  return {
+    day: raw.day,
+    main_sec: raw.main_sec ?? 0,
+    main_items: raw.main_items
+      ?? (raw.games ? raw.games.map(g => ({ name: g.game_name, sec: g.sec })) : []),
+    sub_sec: raw.sub_sec ?? 0,
+    sub_items: raw.sub_items
+      ?? (raw.processes ? raw.processes.map(p => ({ name: p.process_name, sec: p.sec })) : []),
+    total_sec: raw.total_sec ?? 0,
+  };
+}
+
 function renderDaily(daily, expectedDays) {
-  const chart = document.getElementById('a-daily-chart');
-  const axis = document.getElementById('a-daily-axis');
-  if (!chart) return;
-  if (!daily.length) {
-    chart.innerHTML = '<div style="color:var(--text-muted);padding:1rem;margin:auto">データなし</div>';
-    axis.innerHTML = '';
-    return;
-  }
-  // 日付の連続性を保つため、抜けている日は 0 で埋める
-  const map = new Map(daily.map(d => [d.day, d]));
+  const map = new Map(daily.map(d => [d.day, normalizeEntry(d)]));
   const today = new Date();
   const series = [];
   for (let i = expectedDays - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
     const key = ymdLocal(d);
-    series.push(map.get(key) || { day: key, total_sec: 0, games: [] });
+    series.push(map.get(key) || emptyEntry(key));
   }
-  const max = Math.max(...series.map(s => s.total_sec || 0), 1);
-  const barWidth = Math.max(6, Math.floor(800 / series.length));
-
-  chart.innerHTML = series.map(s => {
-    const pct = ((s.total_sec || 0) / max) * 100;
-    const hours = (s.total_sec / 3600).toFixed(1);
-    let stack = '';
-    if (s.games?.length && s.total_sec > 0) {
-      // ゲーム別に色を分けて積み上げ
-      stack = s.games.map(g => {
-        const h = (g.sec / s.total_sec) * 100;
-        return `<div style="height:${h}%;background:${gameColor(g.game_name)}" title="${escapeHtml(g.game_name)}: ${fmtDuration(g.sec)}"></div>`;
-      }).join('');
-    }
-    return `
-      <div class="daily-bar" data-day="${s.day}" title="${s.day}: ${hours}h"
-           style="flex:0 0 ${barWidth}px;height:100%;display:flex;align-items:flex-end;cursor:pointer">
-        <div style="width:100%;height:${pct}%;display:flex;flex-direction:column-reverse;background:var(--bg-elevated);border-radius:2px 2px 0 0;overflow:hidden">
-          ${stack}
-        </div>
-      </div>`;
-  }).join('');
-
-  // 軸: 週間隔でラベル、それ以外は空
-  axis.innerHTML = series.map((s, i) => {
-    const label = (i === 0 || i === series.length - 1 || i % 7 === 0)
-      ? s.day.slice(5) : '';
-    return `<div style="flex:0 0 ${barWidth}px;text-align:center;overflow:hidden">${label}</div>`;
-  }).join('');
+  renderBars(series, 7);
 }
 
 function renderDailyRange(daily, startStr, endStr) {
-  const chart = document.getElementById('a-daily-chart');
-  const axis = document.getElementById('a-daily-axis');
-  if (!chart) return;
-  const map = new Map(daily.map(d => [d.day, d]));
-  // 連続日付列を start〜end で生成
+  const map = new Map(daily.map(d => [d.day, normalizeEntry(d)]));
   const series = [];
   const start = new Date(startStr + 'T00:00:00');
   const end = new Date(endStr + 'T00:00:00');
   for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
     const key = ymdLocal(new Date(t));
-    series.push(map.get(key) || { day: key, total_sec: 0, games: [] });
+    series.push(map.get(key) || emptyEntry(key));
   }
+  const step = Math.max(1, Math.ceil(series.length / 10));
+  renderBars(series, step);
+}
+
+function renderBars(series, axisStep) {
+  const chart = document.getElementById('a-daily-chart');
+  const axis = document.getElementById('a-daily-axis');
+  if (!chart) return;
   if (!series.length) {
     chart.innerHTML = '<div style="color:var(--text-muted);padding:1rem;margin:auto">データなし</div>';
     axis.innerHTML = '';
     return;
   }
-  const max = Math.max(...series.map(s => s.total_sec || 0), 1);
-  const barWidth = Math.max(6, Math.floor(800 / series.length));
-  chart.innerHTML = series.map(s => {
-    const pct = ((s.total_sec || 0) / max) * 100;
-    const hours = (s.total_sec / 3600).toFixed(1);
-    let stack = '';
-    if (s.games?.length && s.total_sec > 0) {
-      stack = s.games.map(g => {
-        const h = (g.sec / s.total_sec) * 100;
-        return `<div style="height:${h}%;background:${gameColor(g.game_name)}" title="${escapeHtml(g.game_name)}: ${fmtDuration(g.sec)}"></div>`;
-      }).join('');
-    }
+
+  const isBoth = _barPc === 'both';
+  // スケール: both は両 PC を横断して比較できるよう共通の最大を使う
+  let max;
+  if (isBoth) {
+    max = Math.max(
+      ...series.map(s => Math.max(s.main_sec || 0, s.sub_sec || 0)),
+      1,
+    );
+  } else if (_barPc === 'sub') {
+    max = Math.max(...series.map(s => s.sub_sec || 0), 1);
+  } else {
+    max = Math.max(...series.map(s => s.main_sec || 0), 1);
+  }
+  // both は 2 本入るので最低スロット幅を広めに
+  const slotWidth = Math.max(isBoth ? 12 : 6, Math.floor(800 / series.length));
+
+  chart.innerHTML = series.map(s => renderBarSlot(s, max, slotWidth, isBoth)).join('');
+
+  axis.innerHTML = series.map((s, i) => {
+    const label = (i === 0 || i === series.length - 1 || i % axisStep === 0)
+      ? s.day.slice(5) : '';
+    return `<div style="flex:0 0 ${slotWidth}px;text-align:center;overflow:hidden">${label}</div>`;
+  }).join('');
+}
+
+function renderBarSlot(s, max, slotWidth, isBoth) {
+  if (!isBoth) {
+    const isSub = _barPc === 'sub';
+    const items = isSub ? s.sub_items : s.main_items;
+    const sec = isSub ? s.sub_sec : s.main_sec;
+    const colorFn = isSub ? processColor : gameColor;
+    const label = isSub ? '作業' : 'ゲーム';
+    const pct = (sec / max) * 100;
+    const stack = renderStack(items, sec, colorFn);
     return `
-      <div class="daily-bar" data-day="${s.day}" title="${s.day}: ${hours}h"
-           style="flex:0 0 ${barWidth}px;height:100%;display:flex;align-items:flex-end;cursor:pointer">
+      <div class="daily-bar" data-day="${s.day}" title="${s.day} ${label}: ${(sec/3600).toFixed(1)}h"
+           style="flex:0 0 ${slotWidth}px;height:100%;display:flex;align-items:flex-end;cursor:pointer">
         <div style="width:100%;height:${pct}%;display:flex;flex-direction:column-reverse;background:var(--bg-elevated);border-radius:2px 2px 0 0;overflow:hidden">
           ${stack}
         </div>
       </div>`;
-  }).join('');
-  const step = Math.max(1, Math.ceil(series.length / 10));
-  axis.innerHTML = series.map((s, i) => {
-    const label = (i === 0 || i === series.length - 1 || i % step === 0)
-      ? s.day.slice(5) : '';
-    return `<div style="flex:0 0 ${barWidth}px;text-align:center;overflow:hidden">${label}</div>`;
+  }
+  // 両方モード: スロット内に Main / Sub の 2 本を並べる
+  const mainPct = (s.main_sec / max) * 100;
+  const subPct = (s.sub_sec / max) * 100;
+  const mainStack = renderStack(s.main_items, s.main_sec, gameColor);
+  const subStack = renderStack(s.sub_items, s.sub_sec, processColor);
+  const halfW = Math.max(3, Math.floor((slotWidth - 2) / 2));
+  const tooltip = `${s.day}\nMain: ${(s.main_sec/3600).toFixed(1)}h\nSub:  ${(s.sub_sec/3600).toFixed(1)}h`;
+  return `
+    <div class="daily-bar" data-day="${s.day}" title="${tooltip}"
+         style="flex:0 0 ${slotWidth}px;height:100%;display:flex;align-items:flex-end;gap:2px;cursor:pointer">
+      <div style="flex:0 0 ${halfW}px;height:100%;display:flex;align-items:flex-end" title="Main: ${(s.main_sec/3600).toFixed(1)}h">
+        <div style="width:100%;height:${mainPct}%;display:flex;flex-direction:column-reverse;background:var(--bg-elevated);border-radius:2px 2px 0 0;overflow:hidden">${mainStack}</div>
+      </div>
+      <div style="flex:0 0 ${halfW}px;height:100%;display:flex;align-items:flex-end" title="Sub: ${(s.sub_sec/3600).toFixed(1)}h">
+        <div style="width:100%;height:${subPct}%;display:flex;flex-direction:column-reverse;background:var(--bg-elevated);border-radius:2px 2px 0 0;overflow:hidden">${subStack}</div>
+      </div>
+    </div>`;
+}
+
+function renderStack(items, totalSec, colorFn) {
+  if (!items?.length || totalSec <= 0) return '';
+  return items.map(it => {
+    const h = (it.sec / totalSec) * 100;
+    return `<div style="height:${h}%;background:${colorFn(it.name)}" title="${escapeHtml(it.name)}: ${fmtDuration(it.sec)}"></div>`;
   }).join('');
 }
 
@@ -490,11 +534,18 @@ function renderCalendar(daily) {
 
   title.textContent = `${_calYear}年${_calMonth}月`;
 
-  const dailyMap = new Map(daily.map(d => [d.day, d]));
-  const monthTotal = daily.reduce((s, d) => s + (d.total_sec || 0), 0);
-  totalEl.textContent = `月合計: ${fmtDuration(monthTotal)}`;
+  const normalized = daily.map(normalizeEntry);
+  const dailyMap = new Map(normalized.map(d => [d.day, d]));
+  const showMain = _barPc === 'main' || _barPc === 'both';
+  const showSub = _barPc === 'sub' || _barPc === 'both';
 
-  const monthMax = Math.max(...daily.map(d => d.total_sec || 0), 1);
+  const cellSec = (info) => {
+    if (!info) return 0;
+    return (showMain ? info.main_sec : 0) + (showSub ? info.sub_sec : 0);
+  };
+  const monthTotal = normalized.reduce((acc, d) => acc + cellSec(d), 0);
+  totalEl.textContent = `月合計: ${fmtDuration(monthTotal)}`;
+  const monthMax = Math.max(...normalized.map(cellSec), 1);
 
   // 月初の曜日（日曜=0）
   const first = new Date(_calYear, _calMonth - 1, 1);
@@ -512,21 +563,33 @@ function renderCalendar(daily) {
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${_calYear}-${String(_calMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const info = dailyMap.get(dateStr);
-    const sec = info?.total_sec || 0;
+    const sec = cellSec(info);
     const intensity = sec > 0 ? Math.min(1, sec / monthMax) : 0;
     const bg = sec > 0 ? `hsla(210,60%,50%,${0.25 + intensity * 0.75})` : 'var(--bg-elevated)';
     const isSelected = _dayFilter === dateStr;
     const isToday = dateStr === todayStr;
 
-    const games = info?.games || [];
-    const topGame = games[0];
-    const stripes = games.slice(0, 3).map(g => {
-      const pct = (g.sec / sec) * 100;
-      return `<div style="height:3px;width:${pct}%;background:${gameColor(g.game_name)};display:inline-block"></div>`;
-    }).join('');
+    const stripeParts = [];
+    const tooltipLines = [];
+    if (showMain && info?.main_items?.length) {
+      stripeParts.push(...info.main_items.slice(0, 3).map(it => {
+        const pct = sec > 0 ? (it.sec / sec) * 100 : 0;
+        return `<div style="height:3px;width:${pct}%;background:${gameColor(it.name)};display:inline-block"></div>`;
+      }));
+      const prefix = _barPc === 'both' ? '[Main] ' : '';
+      tooltipLines.push(...info.main_items.map(i => `・${prefix}${i.name}: ${fmtDuration(i.sec)}`));
+    }
+    if (showSub && info?.sub_items?.length) {
+      stripeParts.push(...info.sub_items.slice(0, 3).map(it => {
+        const pct = sec > 0 ? (it.sec / sec) * 100 : 0;
+        return `<div style="height:3px;width:${pct}%;background:${processColor(it.name)};display:inline-block"></div>`;
+      }));
+      const prefix = _barPc === 'both' ? '[Sub] ' : '';
+      tooltipLines.push(...info.sub_items.map(i => `・${prefix}${i.name}: ${fmtDuration(i.sec)}`));
+    }
 
-    const tooltip = games.length
-      ? `${dateStr}: ${fmtDuration(sec)}\n` + games.map(g => `・${g.game_name}: ${fmtDuration(g.sec)}`).join('\n')
+    const tooltip = tooltipLines.length
+      ? `${dateStr}: ${fmtDuration(sec)}\n` + tooltipLines.slice(0, 10).join('\n')
       : `${dateStr}: データなし`;
 
     html += `
@@ -535,7 +598,7 @@ function renderCalendar(daily) {
            style="background:${bg};cursor:${sec > 0 ? 'pointer' : 'default'}">
         <div class="cal-date">${d}</div>
         <div class="cal-sec">${sec > 0 ? fmtDuration(sec) : ''}</div>
-        <div class="cal-stripes" style="display:flex;gap:1px;margin-top:2px">${stripes}</div>
+        <div class="cal-stripes" style="display:flex;gap:1px;margin-top:2px;flex-wrap:wrap">${stripeParts.join('')}</div>
       </div>`;
   }
 
@@ -587,6 +650,12 @@ function updateViewMode() {
   document.getElementById('a-view-calendar').style.display = _viewMode === 'calendar' ? '' : 'none';
 }
 
+function updateBarPcToggle() {
+  document.querySelectorAll('#a-bar-pc-toggle .pill').forEach(el => {
+    el.classList.toggle('active', el.dataset.pc === _barPc);
+  });
+}
+
 function updatePeriodPills() {
   const ra = rangeActive();
   document.querySelectorAll('#a-period-pills .pill').forEach(el => {
@@ -605,6 +674,7 @@ export async function mount() {
   _calYear = now.getFullYear();
   _calMonth = now.getMonth() + 1;
   updateViewMode();
+  updateBarPcToggle();
 
   // 期間pill
   document.getElementById('a-period-pills').addEventListener('click', ev => {
@@ -659,6 +729,15 @@ export async function mount() {
     if (!btn) return;
     _viewMode = btn.dataset.view;
     updateViewMode();
+    loadDaily();
+  });
+
+  // 棒グラフ／カレンダーの PC トグル（Main / Sub / 両方）
+  document.getElementById('a-bar-pc-toggle').addEventListener('click', ev => {
+    const btn = ev.target.closest('.pill');
+    if (!btn) return;
+    _barPc = btn.dataset.pc;
+    updateBarPcToggle();
     loadDaily();
   });
 
@@ -737,6 +816,7 @@ export function unmount() {
   _rangeEnd = '';
   _sessionOffset = 0;
   _viewMode = 'bar';
+  _barPc = 'main';
   _fgPc = 'main';
   _lastFg = [];
 }
