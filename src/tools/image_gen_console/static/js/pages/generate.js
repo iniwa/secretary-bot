@@ -1,11 +1,11 @@
-/** Image Gen page — 生成フォーム + セクション選択 + 合成プレビュー + プリセット管理。
- *  ジョブ一覧とギャラリーは独立ページ（image-jobs / image-gallery）に分離済。
+/** Generate page — 生成フォーム + セクション選択 + 合成プレビュー + プリセット管理。
+ *  Jobs / Gallery は別ページ（#/jobs, #/gallery）。
  */
 import { api } from '../api.js';
 import { toast } from '../app.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import { composePromptClient } from '../lib/compose.js';
-import { esc, makeSortable, stashGet, stashClear } from '../lib/image_gen_common.js';
+import { esc, makeSortable, stashGet, stashClear } from '../lib/common.js';
 
 // ============================================================
 // State
@@ -38,8 +38,8 @@ export function render() {
     <div class="imggen-header">
       <h3>Generate</h3>
       <div style="display:flex;gap:0.4rem;">
-        <a href="#image-jobs" class="btn btn-sm">Jobs →</a>
-        <a href="#image-gallery" class="btn btn-sm">Gallery →</a>
+        <a href="#/jobs" class="btn btn-sm">Jobs →</a>
+        <a href="#/gallery" class="btn btn-sm">Gallery →</a>
       </div>
     </div>
     <div id="ig-comfy-panel" class="imggen-comfy-panel"></div>
@@ -130,8 +130,6 @@ export function render() {
     <div id="ig-presets-body"><div class="imggen-empty">Loading...</div></div>
   </section>
 </div>
-<div id="ig-sec-modal-root"></div>
-<div id="ig-preset-modal-root"></div>
 `;
 }
 
@@ -212,7 +210,6 @@ async function handleComfyAction(agentId, action) {
       toast(`ComfyUI 起動リクエスト送信`, 'info');
     }
   } catch (err) {
-    // api() が throw する err に status/body が載っている想定
     const body = err?.body || err?.data || {};
     const klass = body.error_class || err?.error_class;
     if (action === 'stop' && klass === 'PermissionError') {
@@ -278,7 +275,7 @@ function renderUserPosOptions() {
     <option value="head">先頭</option>
     ${catOpts}
   `;
-  sel.value = cur;  // 既存選択が消えなければ復元
+  sel.value = cur;
 }
 
 function renderSections() {
@@ -306,7 +303,6 @@ function renderSections() {
       </div>`;
   }).join('');
 
-  // Chip click → toggle
   el.querySelectorAll('.imggen-section-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const sid = Number(chip.dataset.sid);
@@ -318,7 +314,6 @@ function renderSections() {
       schedulePreview();
     });
   });
-  // "+ 追加" → 新規作成モーダル
   el.querySelectorAll('[data-add-cat]').forEach(btn => {
     btn.addEventListener('click', () => openSectionModal({ category_key: btn.dataset.addCat }));
   });
@@ -340,7 +335,6 @@ function renderChosen() {
       <span class="x" data-remove="${sid}">×</span>
     </span>`;
   }).join('');
-  // × で削除
   el.querySelectorAll('[data-remove]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -350,7 +344,6 @@ function renderChosen() {
       schedulePreview();
     });
   });
-  // drag 並び替え
   makeSortable(el, (order) => {
     chosen = order.map(k => Number(k)).filter(n => !isNaN(n));
     schedulePreview();
@@ -518,8 +511,7 @@ async function checkStashPrefill() {
 }
 
 function handlePromptCrafterClick() {
-  // prompt_crafter ページへ誘導（現状は手動、後で stash ベース連携を拡張可能）
-  location.hash = '#prompts';
+  location.hash = '#/prompts';
   toast('Prompts ページで履歴を選んでください', 'info');
 }
 
@@ -563,7 +555,7 @@ async function handleSubmit() {
     };
     const res = await GenerationAPI.submit(body);
     const jid = res?.job_id || '';
-    statusEl.innerHTML = `Enqueued: <code>${esc(jid)}</code> — <a href="#image-jobs">Jobs を見る →</a>`;
+    statusEl.innerHTML = `Enqueued: <code>${esc(jid)}</code> — <a href="#/jobs">Jobs を見る →</a>`;
     toast('Job enqueued', 'success');
   } catch (err) {
     console.error('generate failed', err);

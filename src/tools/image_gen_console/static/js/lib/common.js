@@ -1,4 +1,4 @@
-/** Image Gen 共通ヘルパ（3 ページ共通）。*/
+/** Image Gen Console 共通ヘルパ（generate / jobs / gallery / prompts 共通）。*/
 
 export function esc(s) {
   if (s === null || s === undefined) return '';
@@ -31,7 +31,7 @@ export function statusBadgeClass(status) {
     case 'warming_cache': return 'badge-info';
     case 'dispatching':   return 'badge-info';
     case 'queued':        return 'badge-accent';
-    case 'failed':        return 'badge-danger';
+    case 'failed':        return 'badge-error';
     case 'cancelled':     return 'badge-muted';
     default:              return 'badge-muted';
   }
@@ -75,7 +75,6 @@ export function openLightbox(item, opts = {}) {
       opts.onReuse?.(item);
       return close();
     }
-    // 背景クリックで閉じる（ただし media/actions コンテナ内部は無視）
     if (ev.target === el) close();
   });
   document.addEventListener('keydown', function onKey(e) {
@@ -130,7 +129,9 @@ function getDragAfter(container, x, y) {
   }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
 }
 
-/** localStorage を介した簡易 stash（ページ間のプリセット受け渡し）。*/
+/** localStorage を介した簡易 stash（ページ間のプリセット受け渡し）。
+ *  メイン WebGUI と同じキーを使うので、外部からの prefill とも互換。
+ */
 const STASH_KEY = 'imggen:stash';
 export function stashSet(data) {
   try { localStorage.setItem(STASH_KEY, JSON.stringify(data)); }

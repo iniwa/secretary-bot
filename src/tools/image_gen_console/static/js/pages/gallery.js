@@ -1,15 +1,15 @@
-/** Image Gallery page — 日別グループ + lightbox + 「この設定で再現」。 */
+/** Gallery page — 日別グループ + lightbox + 「この設定で再現」。 */
 import { toast } from '../app.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import {
   esc, fmtDate, openLightbox, stashSet,
-} from '../lib/image_gen_common.js';
+} from '../lib/common.js';
 
 // ============================================================
 // State
 // ============================================================
 let items = [];
-let allItems = [];  // 全件キャッシュ（filter/reset 用）
+let allItems = [];
 let offset = 0;
 const PAGE_SIZE = 60;
 let highlightJobId = null;  // URL ?job=<id> から
@@ -23,7 +23,7 @@ export function render() {
   return `
 <section class="card imggen-section">
   <div class="imggen-header">
-    <h3>Image Gallery</h3>
+    <h3>Gallery</h3>
     <div style="display:flex;gap:0.4rem;align-items:center;">
       <input id="gal-filter" class="form-input" type="search" placeholder="prompt で検索..." style="width:200px;font-size:0.75rem;padding:0.2rem 0.4rem;">
       <button id="gal-reload" class="btn btn-sm">再読込</button>
@@ -38,7 +38,7 @@ export function render() {
 }
 
 function groupByDay(list) {
-  const groups = new Map();  // yyyy-mm-dd → items[]
+  const groups = new Map();
   for (const it of list) {
     const key = it.created_at ? fmtDate(it.created_at) : '---';
     if (!groups.has(key)) groups.set(key, []);
@@ -80,7 +80,6 @@ function renderGallery() {
     openLightbox(g, { onReuse: handleReuse });
   };
 
-  // ?job=<id> のハイライト要素へスクロール
   if (highlightJobId) {
     const hit = el.querySelector('[style*="outline"]');
     if (hit) hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -122,7 +121,7 @@ function applyFilter() {
 }
 
 // ============================================================
-// Reuse — lightbox から呼ばれる
+// Reuse
 // ============================================================
 async function handleReuse(item) {
   try {
@@ -139,7 +138,7 @@ async function handleReuse(item) {
       params: job.params || {},
       modality: job.modality || 'image',
     });
-    location.hash = '#image-gen?prefill=gallery';
+    location.hash = '#/generate?prefill=gallery';
     toast('生成フォームに取り込みました', 'info');
   } catch (err) {
     console.error('reuse failed', err);

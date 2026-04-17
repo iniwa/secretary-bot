@@ -1,9 +1,9 @@
-/** Image Jobs page — 投入済みジョブの一覧・SSE 自動更新・Cancel / 再実行。 */
+/** Jobs page — 投入済みジョブの一覧・SSE 自動更新・Cancel / 再実行。 */
 import { toast } from '../app.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import {
   esc, fmtTime, statusBadgeClass, isTerminal, stashSet,
-} from '../lib/image_gen_common.js';
+} from '../lib/common.js';
 
 // ============================================================
 // State
@@ -11,7 +11,7 @@ import {
 let jobs = [];
 let sse = null;
 let pollTimer = null;
-let filterStatus = '';  // '' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+let filterStatus = '';
 
 function $(id) { return document.getElementById(id); }
 
@@ -22,7 +22,7 @@ export function render() {
   return `
 <section class="card imggen-section">
   <div class="imggen-header">
-    <h3>Image Jobs</h3>
+    <h3>Jobs</h3>
     <div style="display:flex;gap:0.4rem;align-items:center;">
       <select id="ij-filter" class="form-input" style="width:auto;font-size:0.75rem;padding:0.2rem 0.4rem;">
         <option value="">すべて</option>
@@ -92,7 +92,7 @@ function renderJobs() {
     const reuse = e.target.closest('button[data-reuse]');
     if (cancel) return handleCancel(cancel.dataset.cancel);
     if (gallery) {
-      location.hash = `#image-gallery?job=${encodeURIComponent(gallery.dataset.gallery)}`;
+      location.hash = `#/gallery?job=${encodeURIComponent(gallery.dataset.gallery)}`;
       return;
     }
     if (reuse) return handleReuse(reuse.dataset.reuse);
@@ -136,7 +136,7 @@ async function handleReuse(jobId) {
       params: job.params || {},
       modality: job.modality || 'image',
     });
-    location.hash = '#image-gen?prefill=job';
+    location.hash = '#/generate?prefill=job';
     toast('生成フォームに取り込みました', 'info');
   } catch (err) {
     console.error('reuse failed', err);

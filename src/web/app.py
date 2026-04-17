@@ -3126,6 +3126,13 @@ def create_web_app(bot) -> FastAPI:
     except Exception as e:
         log.warning(f"ZZZ Disc Manager register failed: {e}")
 
+    # Image Gen Console（同居ツール）: 独立 SPA を /tools/image-gen/ で配信
+    try:
+        from src.tools.image_gen_console import register as register_image_gen_console
+        register_image_gen_console(app, bot)
+    except Exception as e:
+        log.warning(f"Image Gen Console register failed: {e}")
+
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")

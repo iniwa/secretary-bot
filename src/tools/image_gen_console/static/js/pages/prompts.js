@@ -1,48 +1,15 @@
 /** Prompts page — prompt_crafter セッションの閲覧・編集。 */
 import { api } from '../api.js';
 import { toast } from '../app.js';
-import { stashSet } from '../lib/image_gen_common.js';
+import { esc, fmtTime, stashSet } from '../lib/common.js';
 
 let activeSession = null;
 let sessions = [];
 
 function $(id) { return document.getElementById(id); }
 
-function esc(s) {
-  if (s === null || s === undefined) return '';
-  return String(s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-function fmtTime(iso) {
-  if (!iso) return '---';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return esc(iso);
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 export function render() {
   return `
-<style>
-  .pc-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
-  @media (min-width: 1000px) { .pc-grid { grid-template-columns: 1fr 1fr; } }
-  .pc-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-  .pc-card h3 { margin: 0 0 0.6rem; font-size: 0.95rem; color: var(--text-primary); }
-  .pc-input { width: 100%; min-height: 80px; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-primary); font-family: inherit; resize: vertical; }
-  .pc-prompt { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; min-height: 2.4em; }
-  .pc-label { font-size: 0.75rem; color: var(--text-muted); margin: 0.4rem 0 0.2rem; }
-  .pc-btn-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem; }
-  .pc-empty { color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0; }
-  .pc-session-row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--border); gap: 0.5rem; }
-  .pc-session-row:last-child { border-bottom: none; }
-  .pc-session-meta { font-size: 0.75rem; color: var(--text-muted); }
-  .pc-session-text { flex: 1; min-width: 0; }
-  .pc-session-positive { font-family: ui-monospace, monospace; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pc-note { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.3rem; }
-</style>
-
 <div class="pc-grid">
   <div class="pc-card">
     <h3>✏️ プロンプト編集</h3>
@@ -98,8 +65,8 @@ function handleToImageGen(s) {
     negative: s.negative || '',
     params: {},
   });
-  location.hash = '#image-gen?prefill=prompt';
-  toast('Image Gen に取り込みました', 'info');
+  location.hash = '#/generate?prefill=prompt';
+  toast('Generate に取り込みました', 'info');
 }
 
 function renderList() {

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Gen Console</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+  <link rel="stylesheet" href="/static/css/base.css" />
+  <link rel="stylesheet" href="/static/css/components.css" />
+  <link rel="stylesheet" href="static/css/image_gen.css" />
+</head>
+<body>
+  <div id="ig-app">
+    <header class="ig-topbar">
+      <a href="/" class="ig-back-link" title="Bot に戻る">&larr; Bot</a>
+      <h1 class="ig-topbar-title">🎨 Image Gen Console</h1>
+      <div id="ig-topbar-status" class="ig-topbar-status"></div>
+    </header>
+
+    <div class="ig-layout">
+      <nav class="ig-sidebar">
+        <a href="#/generate" class="ig-nav-item" data-page="generate">
+          <span class="ig-nav-icon">🎨</span><span>Generate</span>
+        </a>
+        <a href="#/jobs" class="ig-nav-item" data-page="jobs">
+          <span class="ig-nav-icon">📋</span><span>Jobs</span>
+        </a>
+        <a href="#/gallery" class="ig-nav-item" data-page="gallery">
+          <span class="ig-nav-icon">🖼️</span><span>Gallery</span>
+        </a>
+        <a href="#/prompts" class="ig-nav-item" data-page="prompts">
+          <span class="ig-nav-icon">✏️</span><span>Prompts</span>
+        </a>
+      </nav>
+
+      <main id="main-content" class="ig-main-content"></main>
+    </div>
+
+    <div id="ig-sec-modal-root"></div>
+    <div id="ig-preset-modal-root"></div>
+    <div id="toast-container"></div>
+  </div>
+
+  <script type="module" src="static/js/app.js"></script>
+</body>
+</html>
