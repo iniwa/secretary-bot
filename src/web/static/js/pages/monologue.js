@@ -237,6 +237,30 @@ export function render() {
     overflow-y: auto;
   }
 
+  .mono-action {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  .mono-reasoning {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .mono-skip-reason {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    background: var(--bg-raised);
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-sm);
+    font-family: ui-monospace, SFMono-Regular, monospace;
+  }
+
   @media (max-width: 600px) {
     .mono-timeline {
       padding-left: 1.25rem;
@@ -286,6 +310,26 @@ function renderContextBlock(contextJson) {
   </details>`;
 }
 
+function parseActionResult(jsonStr) {
+  if (!jsonStr) return null;
+  try {
+    const parsed = JSON.parse(jsonStr);
+    return (parsed && typeof parsed === 'object') ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function statusBadgeClass(status) {
+  switch (status) {
+    case 'executed': return 'badge-accent';
+    case 'queued':   return 'badge-warning';
+    case 'skipped':  return 'badge-muted';
+    case 'failed':   return 'badge-warning';
+    default:         return 'badge-muted';
+  }
+}
+
 function renderEntry(m) {
   const moodClass = MOOD_BADGE[m.mood] || 'badge-muted';
   const spokeClass = m.did_notify ? ' spoke' : '';
@@ -299,13 +343,26 @@ function renderEntry(m) {
       </div>`
     : '';
   const contextBlock = renderContextBlock(m.context_json);
-  const actionBlock = (m.action && m.action !== 'no_op')
-    ? `<div class="mono-action">
-        <span class="badge badge-accent">${esc(m.action)}</span>
-        ${m.reasoning ? `<span class="mono-reasoning">${esc(m.reasoning)}</span>` : ''}
-        ${m.pending_id ? `<span class="badge badge-warning">pending #${m.pending_id}</span>` : ''}
-      </div>`
-    : '';
+
+  let actionBlock = '';
+  if (m.action && m.action !== 'no_op') {
+    const result = parseActionResult(m.action_result);
+    const status = result?.status || '';
+    const reason = result?.reason || '';
+    const statusBadge = status
+      ? `<span class="badge ${statusBadgeClass(status)}">${esc(status)}</span>`
+      : '';
+    const reasonBadge = reason
+      ? `<span class="mono-skip-reason" title="${esc(reason)}">${esc(reason)}</span>`
+      : '';
+    actionBlock = `<div class="mono-action">
+      <span class="badge badge-accent">${esc(m.action)}</span>
+      ${statusBadge}
+      ${reasonBadge}
+      ${m.reasoning ? `<span class="mono-reasoning">${esc(m.reasoning)}</span>` : ''}
+      ${m.pending_id ? `<span class="badge badge-warning">pending #${m.pending_id}</span>` : ''}
+    </div>`;
+  }
 
   return `<div class="mono-entry${spokeClass}">
     <div class="mono-card">

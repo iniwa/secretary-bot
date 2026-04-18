@@ -123,3 +123,26 @@ class TavilyNewsSource(ContextSource):
             head = f"[{q}] {title}" if q else title
             lines.append(f"- {head}: {content}")
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """外部ニュースは curious/talkative で高く、静かな時は遮断する。"""
+        results = data.get("results", [])
+        if not results:
+            return 0.0
+        mood = shared.get("mood", "")
+        base = {
+            "curious": 0.7,
+            "talkative": 0.5,
+            "calm": 0.25,
+            "concerned": 0.2,
+            "idle": 0.1,
+        }.get(mood, 0.3)
+
+        interest = (shared.get("interest_topic") or "").strip()
+        if interest:
+            for r in results[:15]:
+                title = (r.get("title", "") or "")
+                if interest in title:
+                    base = min(1.0, base + 0.2)
+                    break
+        return base

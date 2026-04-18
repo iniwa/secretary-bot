@@ -297,6 +297,10 @@ inner_mind:
   target_user_id: ""              # Discordステータスを監視するユーザーID
   # 収集/思考分離: 直近この分数にユーザー発言があれば think() をスキップ（収集のみ）
   active_threshold_minutes: 10
+  # 注意（salience）フィルタ: ミミの現在状態（mood/lens/時間帯）で関心ソースを絞る
+  salience:
+    top_n: 5              # プロンプトに注入する最大ソース数（always_include除く）
+    threshold: 0.25       # このスコア未満のソースは無視
   # GitHub活動コンテキスト（GITHUB_TOKEN 必須、usernameが空なら無効）
   github:
     username: ""           # 監視対象のGitHubユーザー名

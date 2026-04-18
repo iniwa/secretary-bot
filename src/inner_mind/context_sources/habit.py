@@ -77,6 +77,39 @@ class HabitSource(ContextSource):
 
         return "\n".join(lines)
 
+    async def salience(self, data: dict, shared: dict) -> float:
+        """未プレイ連続や長期離脱があるほど高い。深夜は下げる。"""
+        missed = data.get("missed_today") or []
+        absent = data.get("long_absence") or []
+        if not missed and not absent:
+            return 0.0
+
+        max_streak = 0
+        for m in missed:
+            try:
+                max_streak = max(max_streak, int(m.get("streak_days", 1)))
+            except (TypeError, ValueError):
+                continue
+
+        if max_streak >= 3:
+            base = 0.7
+        elif max_streak >= 2:
+            base = 0.55
+        elif missed:
+            base = 0.4
+        else:
+            base = 0.35
+
+        if absent:
+            base = min(1.0, base + 0.1)
+
+        time_ctx = shared.get("time_context", "")
+        if time_ctx == "深夜":
+            base = max(0.1, base - 0.2)
+        elif time_ctx in ("夕方", "夜"):
+            base = min(1.0, base + 0.1)  # プレイ時間帯は気にしやすい
+        return base
+
     @staticmethod
     def _format_last(last_played_at: str | None) -> str:
         """last_played_at を『今日／昨日／N日前』の自然文に変換。"""

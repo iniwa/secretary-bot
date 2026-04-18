@@ -68,3 +68,39 @@ class CalendarSource(ContextSource):
                 title = ev["title"] or "（タイトルなし）"
                 lines.append(f"- {when}: {title}")
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """近い予定ほど高い。朝は1日を俯瞰するので上げる。深夜は下げる。"""
+        events = data.get("events", [])
+        if not events:
+            return 0.0
+
+        now = datetime.now(JST)
+        min_hours: float | None = None
+        for ev in events:
+            start = ev.get("start")
+            if start is None:
+                continue
+            hours = (start - now).total_seconds() / 3600
+            if hours < 0:
+                continue
+            if min_hours is None or hours < min_hours:
+                min_hours = hours
+
+        if min_hours is None:
+            base = 0.25
+        elif min_hours <= 2:
+            base = 0.85
+        elif min_hours <= 6:
+            base = 0.65
+        elif min_hours <= 24:
+            base = 0.45
+        else:
+            base = 0.3
+
+        time_ctx = shared.get("time_context", "")
+        if time_ctx == "朝":
+            base = min(1.0, base + 0.15)
+        elif time_ctx == "深夜":
+            base = max(0.1, base - 0.2)
+        return base

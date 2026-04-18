@@ -27,6 +27,8 @@ from src.inner_mind.prompts import (
     DECIDE_SYSTEM,
     EXTRACT_PROMPT,
     EXTRACT_SYSTEM,
+    SPEAK_TEXT_PROMPT,
+    SPEAK_TEXT_SYSTEM,
     THINK_PROMPT,
     THINK_SYSTEM,
 )
@@ -62,8 +64,9 @@ class InnerMind:
         self.registry = ContextSourceRegistry()
         self.activity_monitor = DiscordActivityMonitor(bot)
 
-        # レンズローテーション用の追跡リスト
+        # レンズローテーション用の追跡リスト（起動後に _restore_lens_history で DB から復元）
         self._last_used_lenses: list[str] = []
+        self._lens_history_loaded: bool = False
         # コンテキスト鮮度追跡
         self._stale_count: int = 0
 
@@ -122,6 +125,9 @@ class InnerMind:
         if not _to_bool(enabled):
             return
 
+        # 初回のみ DB からレンズ履歴を復元（起動後にリセットされないよう）
+        await self._restore_lens_history()
+
         # Discord アクティビティ検出による収集/思考分離
         activity_state = await self.activity_monitor.get_state()
         self._last_activity_state = activity_state
@@ -141,8 +147,14 @@ class InnerMind:
 
         log.info("InnerMind: think cycle started")
         try:
-            # コンテキスト収集
-            context = await self._collect_context()
+            # 先にレンズを選ぶ（salience 計算の shared に lens を載せるため）
+            lens_category, lens_instruction = self._select_thinking_lens()
+            await self._persist_lens_history()
+
+            # コンテキスト収集（lens を踏まえた salience フィルタ込み）
+            context = await self._collect_context(lens_category)
+            context["_lens_category"] = lens_category
+            context["_lens_instruction"] = lens_instruction
 
             # コンテキスト鮮度チェック（段階的スキップ）
             sources = context["sources"]
@@ -188,6 +200,20 @@ class InnerMind:
 
             # 保存（decision 結果も一緒に記録するため、先に decide する）
             decision = await self._decide_phase(thought, context)
+
+            # speak が選ばれたら、別プロンプトで短文を生成して params.text に入れる
+            if decision and decision.get("action") == "speak":
+                speak_text = await self._generate_speak_text(thought, context)
+                if speak_text:
+                    params = decision.get("params") or {}
+                    params["text"] = speak_text
+                    decision["params"] = params
+                else:
+                    # 本文生成失敗 → no_op に降格
+                    log.info("InnerMind: speak text empty, demoting to no_op")
+                    decision["action"] = "no_op"
+                    decision["params"] = {}
+
             monologue_id = await self._save_thought(thought, context, decision)
 
             # Actuator に決定を委譲
@@ -215,6 +241,30 @@ class InnerMind:
             log.error("InnerMind: think cycle failed", exc_info=True)
 
     # --- レンズ選択 ---
+
+    async def _restore_lens_history(self) -> None:
+        """self_model に保存された recent_lenses を in-memory に復元する。"""
+        if self._lens_history_loaded:
+            return
+        try:
+            sm = await self.bot.database.get_self_model() or {}
+            raw = sm.get("recent_lenses", "")
+            if isinstance(raw, str) and raw:
+                valid = {cat for cat, _ in THINKING_LENSES}
+                lenses = [s.strip() for s in raw.split(",") if s.strip() in valid]
+                # 直近 len(THINKING_LENSES) 件までに絞る
+                self._last_used_lenses = lenses[-len(THINKING_LENSES):]
+        except Exception:
+            log.debug("restore lens history failed", exc_info=True)
+        self._lens_history_loaded = True
+
+    async def _persist_lens_history(self) -> None:
+        """in-memory のレンズ履歴を self_model に保存する。"""
+        try:
+            csv = ",".join(self._last_used_lenses)
+            await self.bot.database.upsert_self_model("recent_lenses", csv)
+        except Exception:
+            log.debug("persist lens history failed", exc_info=True)
 
     def _select_thinking_lens(self) -> tuple[str, str]:
         """未使用のレンズを優先的に選択する。rest は重み付けで出やすくする。"""
@@ -308,8 +358,12 @@ class InnerMind:
 
     # --- コンテキスト収集 ---
 
-    async def _collect_context(self) -> dict:
-        """固定情報 + 全ContextSourceからコンテキストを収集。"""
+    async def _collect_context(self, lens_category: str = "") -> dict:
+        """固定情報 + 全ContextSourceからコンテキストを収集。
+
+        shared にミミの現在の内的状態（mood/interest_topic/lens/時間帯/energy_level）
+        を載せ、各ソースが salience() でそれを参照して注目度を返す。
+        """
         now = datetime.now(JST)
         weekdays = ["月", "火", "水", "木", "金", "土", "日"]
         dt_str = now.strftime("%Y-%m-%d %H:%M") + f"（{weekdays[now.weekday()]}曜日）"
@@ -322,18 +376,32 @@ class InnerMind:
             if act_text:
                 discord_status = f"{discord_status}（{act_text}）"
         last_mono = await self.bot.database.get_last_monologue()
-        self_model = await self.bot.database.get_self_model()
+        self_model = await self.bot.database.get_self_model() or {}
 
         last_monologue_text = last_mono["monologue"] if last_mono else ""
 
-        # shared コンテキスト（各ソースに渡す）
+        # shared: ミミの現在の内的状態
         shared = {
             "last_monologue": last_monologue_text,
             "now": dt_str,
+            "hour": now.hour,
+            "time_context": self._get_time_context(),
+            "mood": str(self_model.get("mood", "") or ""),
+            "interest_topic": str(self_model.get("interest_topic", "") or ""),
+            "energy_level": str(self_model.get("energy_level", "") or ""),
+            "lens": lens_category,
+            "discord_status": discord_status,
         }
 
-        # 全ソースから収集
-        source_results = await self.registry.collect_all(shared)
+        # salience 設定
+        cfg = self._get_config().get("salience", {}) or {}
+        top_n = int(cfg.get("top_n", 5))
+        threshold = float(cfg.get("threshold", 0.25))
+
+        # 全ソースから収集 → salience フィルタ
+        source_results = await self.registry.collect_all(
+            shared, top_n=top_n, threshold=threshold,
+        )
 
         # recent_summary を抽出（ConversationSource があれば）
         for sr in source_results:
@@ -342,6 +410,12 @@ class InnerMind:
                 if msgs:
                     shared["recent_summary"] = msgs[0].get("content", "")[:200]
                 break
+
+        log.info(
+            "InnerMind: collected %d sources (lens=%s mood=%s): %s",
+            len(source_results), lens_category, shared["mood"],
+            ", ".join(f"{r['name']}:{r.get('salience', 0):.2f}" for r in source_results),
+        )
 
         return {
             "datetime": dt_str,
@@ -366,8 +440,9 @@ class InnerMind:
 
     async def _think_phase(self, context: dict, staleness_note: str = "") -> dict | None:
         """思考フェーズ: Step1で自由形式モノローグ生成、Step2で構造化抽出。"""
+        lens_category = context.get("_lens_category", "")
         # --- Step 1: モノローグ生成 ---
-        monologue, lens_category = await self._generate_monologue(context, staleness_note)
+        monologue = await self._generate_monologue(context, staleness_note)
         if not monologue:
             return None
 
@@ -384,8 +459,8 @@ class InnerMind:
         }
         return result
 
-    async def _generate_monologue(self, context: dict, staleness_note: str = "") -> tuple[str, str]:
-        """Step 1: 自由形式でモノローグを生成。(monologue, lens_category) を返す。"""
+    async def _generate_monologue(self, context: dict, staleness_note: str = "") -> str:
+        """Step 1: 自由形式でモノローグを生成。モノローグ文字列を返す。"""
         persona = self.bot.config.get("character", {}).get("persona", "")
 
         # コンテキストソースをプロンプトセクションに変換
@@ -408,8 +483,9 @@ class InnerMind:
         else:
             recent_monologues_text = "（初回思考）"
 
-        # 思考レンズ選択
-        lens_category, lens_instruction = self._select_thinking_lens()
+        # レンズは think() で事前選択済み
+        lens_category = context.get("_lens_category", "")
+        lens_instruction = context.get("_lens_instruction", "")
         thinking_lens = f"カテゴリ: {lens_category}\n{lens_instruction}"
 
         system = THINK_SYSTEM.format(persona=persona)
@@ -431,9 +507,9 @@ class InnerMind:
         monologue = self._sanitize_monologue(raw)
         if not monologue or monologue == "特になし":
             log.info("InnerMind: monologue is empty/skipped")
-            return ("", lens_category)
+            return ""
 
-        return (monologue, lens_category)
+        return monologue
 
     async def _extract_structure(self, monologue: str, lens_category: str) -> dict:
         """Step 2: モノローグからmood/memory_update/interest_topicをJSON抽出。"""
@@ -628,6 +704,53 @@ class InnerMind:
             "summary": result.get("summary") or "",
         }
         return decision
+
+    async def _generate_speak_text(self, thought: dict, context: dict) -> str:
+        """action=speak 選択後、モノローグから短い発言本文を生成する。"""
+        persona = self.bot.config.get("character", {}).get("persona", "")
+
+        recent_conv = ""
+        for sr in context["sources"]:
+            if sr["name"] == "最近の会話":
+                recent_conv = sr["text"]
+                break
+
+        # 直近の自発発言（繰り返し抑制）
+        recent_rows = await self.bot.database.fetchall(
+            "SELECT notified_message FROM mimi_monologue "
+            "WHERE did_notify = 1 AND notified_message IS NOT NULL "
+            "ORDER BY id DESC LIMIT 5",
+        )
+        if recent_rows:
+            recent_speaks = "\n".join(
+                f"- {(r.get('notified_message') or '')[:100]}" for r in recent_rows
+            )
+        else:
+            recent_speaks = "（過去の自発発言なし）"
+
+        system = SPEAK_TEXT_SYSTEM.format(persona=persona)
+        prompt = SPEAK_TEXT_PROMPT.format(
+            monologue=thought.get("monologue", ""),
+            time_context=self._get_time_context(),
+            discord_status=context.get("discord_status", "unknown"),
+            recent_conversation=recent_conv or "（なし）",
+            recent_speaks=recent_speaks,
+        )
+        try:
+            raw = await self.bot.llm_router.generate(
+                prompt, system=system, purpose="inner_mind", ollama_only=True,
+            )
+        except Exception:
+            log.warning("speak text generation failed", exc_info=True)
+            return ""
+
+        text = (raw or "").strip()
+        # 囲み記号や引用符を剥がす
+        text = text.strip("`").strip('"').strip("'").strip()
+        # 長すぎる場合は先頭80文字でトリム
+        if len(text) > 80:
+            text = text[:80]
+        return text
 
     async def _build_tier_menu(self, tier: int) -> str:
         """Tier2/Tier3 の許可ユニット一覧をプロンプト用文字列に整形。"""

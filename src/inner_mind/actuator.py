@@ -93,6 +93,20 @@ class Actuator:
             )
         except Exception:
             pass
+        # モノローグ行に dispatch 結果を常に書き戻す（可視化・デバッグ用途）
+        if monologue_id:
+            try:
+                existing = await self.bot.database.fetchone(
+                    "SELECT action_result FROM mimi_monologue WHERE id = ?",
+                    (monologue_id,),
+                )
+                # _execute_unit が既に詳細結果を保存している場合は上書きしない
+                if not (existing and existing.get("action_result")):
+                    await self.bot.database.set_monologue_action_result(
+                        monologue_id, json.dumps(result, ensure_ascii=False),
+                    )
+            except Exception:
+                log.debug("failed to persist dispatch result", exc_info=True)
         return result
 
     async def _dispatch_inner(
@@ -109,7 +123,7 @@ class Actuator:
         if action in ("no_op",):
             return {"status": "skipped", "reason": "no_op"}
         if action == "speak":
-            return await self._execute_speak(decision)
+            return await self._execute_speak(decision, monologue_id)
         if action in ("memorize", "update_self_model", "recall"):
             # observe_only でも OK
             return await self._execute_internal(action, decision)
@@ -161,8 +175,8 @@ class Actuator:
 
     # --- 実行系 ---
 
-    async def _execute_speak(self, decision: dict) -> dict:
-        # 最低発言インターバル enforce
+    async def _execute_speak(self, decision: dict, monologue_id: int | None = None) -> dict:
+        # 最低発言インターバル enforce（did_notify=1 の行のみ対象 — 失敗は数えない）
         try:
             min_interval = int(await self._get_setting("inner_mind.min_speak_interval_minutes", "0"))
         except (TypeError, ValueError):
@@ -170,7 +184,7 @@ class Actuator:
         if min_interval > 0:
             row = await self.bot.database.fetchone(
                 "SELECT created_at FROM mimi_monologue "
-                "WHERE action='speak' ORDER BY id DESC LIMIT 1",
+                "WHERE action='speak' AND did_notify = 1 ORDER BY id DESC LIMIT 1",
             )
             if row and row.get("created_at"):
                 raw = row["created_at"]
@@ -201,8 +215,18 @@ class Actuator:
             ch = None
         if ch is None:
             return {"status": "failed", "reason": "channel_not_found"}
-        await ch.send(text)
-        return {"status": "executed", "result": {"sent": True}}
+        try:
+            await ch.send(text)
+        except Exception as e:
+            log.warning("speak send failed: %s", e)
+            return {"status": "failed", "reason": f"send_error:{e}"}
+        # DB 反映（did_notify=1, notified_message=text）
+        if monologue_id:
+            try:
+                await self.bot.database.update_monologue_notify(monologue_id, text)
+            except Exception:
+                log.debug("update_monologue_notify failed", exc_info=True)
+        return {"status": "executed", "result": {"sent": True, "text": text}}
 
     async def _execute_internal(self, action: str, decision: dict) -> dict:
         """T0 の内部処理。現時点では InnerMind 側に委譲（存在すれば）。"""

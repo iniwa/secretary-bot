@@ -147,3 +147,30 @@ class GitHubSource(ContextSource):
         for e in events:
             lines.append(f"- {e['text']}")
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """直近のイベントほど注目に値する。深夜は開発関心薄め。"""
+        events = data.get("events", [])
+        if not events:
+            return 0.0
+
+        time_ctx = shared.get("time_context", "")
+        if time_ctx == "深夜":
+            base = 0.2
+        else:
+            base = 0.5
+
+        # 1時間以内のイベントがあれば高める
+        try:
+            latest = datetime.fromisoformat(events[0]["at"])
+            age_hours = (datetime.now(timezone.utc) - latest).total_seconds() / 3600
+            if age_hours <= 1:
+                base = min(1.0, base + 0.35)
+            elif age_hours <= 6:
+                base = min(1.0, base + 0.2)
+        except Exception:
+            pass
+
+        if shared.get("mood") == "curious":
+            base = min(1.0, base + 0.1)
+        return base

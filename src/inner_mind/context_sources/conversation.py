@@ -23,6 +23,7 @@ class ConversationSource(ContextSource):
 
     name = "最近の会話"
     priority = 10
+    always_include = True  # 直近会話は常にモノローグの基盤となる
 
     def __init__(self, bot):
         super().__init__(bot)

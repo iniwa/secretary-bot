@@ -55,3 +55,13 @@ class STTSource(ContextSource):
                 lines.append(f"[{time_str}] {r['raw_text']}")
 
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """未要約の生テキスト（新しい発話）があれば高い。要約のみなら低め。"""
+        raw = data.get("raw_transcripts", []) or []
+        summaries = data.get("summaries", []) or []
+        if raw:
+            return 0.8
+        if summaries:
+            return 0.35
+        return 0.0

@@ -121,3 +121,21 @@ class ActivitySource(ContextSource):
                 lines.append(f"- {f['process_name']}: {mins}分")
 
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """現在のプレイ/作業は最重要。履歴だけなら下がる。"""
+        cg = data.get("current_game")
+        cf = data.get("current_foreground") or {}
+        cf_main = cf.get("main") if isinstance(cf, dict) else cf
+        cf_sub = cf.get("sub") if isinstance(cf, dict) else None
+
+        if cg:
+            return 0.85
+        if cf_main or cf_sub:
+            return 0.65
+
+        games = data.get("recent_games") or []
+        fg_main = data.get("recent_foreground_main") or []
+        if games or fg_main:
+            return 0.35
+        return 0.1

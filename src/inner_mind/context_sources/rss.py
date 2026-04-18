@@ -32,3 +32,29 @@ class RSSSource(ContextSource):
             cat = cat_labels.get(a["category"], a["category"])
             lines.append(f"- [{cat}] {a['title']}: {a['summary'][:100]}")
         return "\n".join(lines)
+
+    async def salience(self, data: dict, shared: dict) -> float:
+        """好奇心モードでは高く、静かなモードでは情報を遮断する。
+
+        興味トピックが記事タイトルに現れるとさらに上がる。
+        """
+        articles = data.get("articles", [])
+        if not articles:
+            return 0.0
+        mood = shared.get("mood", "")
+        base = {
+            "curious": 0.75,
+            "talkative": 0.55,
+            "calm": 0.3,
+            "concerned": 0.2,
+            "idle": 0.15,
+        }.get(mood, 0.35)
+
+        interest = (shared.get("interest_topic") or "").strip()
+        if interest:
+            for a in articles[:10]:
+                title = a.get("title", "") or ""
+                if interest in title:
+                    base = min(1.0, base + 0.2)
+                    break
+        return base
