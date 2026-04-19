@@ -3078,6 +3078,91 @@ def create_web_app(bot) -> FastAPI:
             "dropped": list(result.dropped),
         }
 
+    # --- Wildcard / Dynamic Prompts ---
+    #
+    # name は wildcard_files.name（主キー）。`__name__` 記法で参照される。
+    # クライアントは list → 必要なファイルだけキャッシュし、投入ループ内で
+    # wildcard_expander を呼び出す。サーバの /expand はプレビュー・Discord 経由
+    # 入力等、クライアント展開が通らない経路のための保険。
+
+    _wildcard_name_re = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+    _WILDCARD_MAX_BYTES = 200_000   # 1 ファイル上限 ≒ 200 KB
+
+    @app.get("/api/generation/wildcards", dependencies=[Depends(_verify)])
+    async def wildcards_list():
+        rows = await bot.database.wildcard_file_list()
+        return {"files": rows}
+
+    @app.get("/api/generation/wildcards/bulk", dependencies=[Depends(_verify)])
+    async def wildcards_bulk():
+        """クライアント展開用に全ファイル (name → content) をまとめて返す。"""
+        rows = await bot.database.wildcard_file_get_all()
+        return {"files": {r["name"]: r["content"] for r in rows}}
+
+    @app.post("/api/generation/wildcards/expand", dependencies=[Depends(_verify)])
+    async def wildcards_expand(request: Request):
+        """テンプレートをサーバ側で 1 回展開する。プレビュー・検証用。"""
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        template = body.get("template")
+        if not isinstance(template, str):
+            raise HTTPException(400, "template must be a string")
+        rng_seed = body.get("rng_seed")
+        if rng_seed is not None:
+            if isinstance(rng_seed, bool) or not isinstance(rng_seed, int):
+                raise HTTPException(400, "rng_seed must be an integer")
+        rows = await bot.database.wildcard_file_get_all()
+        files = {r["name"]: r["content"] for r in rows}
+        from src.units.image_gen.wildcard_expander import expand
+        result = expand(template, files=files, rng_seed=rng_seed)
+        return {
+            "text": result.text,
+            "choices": [
+                {"token": c.token, "kind": c.kind, "picked": c.picked, "source": c.source}
+                for c in result.choices
+            ],
+            "warnings": list(result.warnings),
+        }
+
+    @app.get("/api/generation/wildcards/{name}", dependencies=[Depends(_verify)])
+    async def wildcard_get(name: str):
+        if not _wildcard_name_re.match(name):
+            raise HTTPException(400, "invalid name")
+        row = await bot.database.wildcard_file_get(name)
+        if not row:
+            raise HTTPException(404, "wildcard not found")
+        return row
+
+    @app.put("/api/generation/wildcards/{name}", dependencies=[Depends(_verify)])
+    async def wildcard_put(name: str, request: Request):
+        if not _wildcard_name_re.match(name):
+            raise HTTPException(400, "name must match [A-Za-z0-9_.-]{1,64}")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        content = body.get("content")
+        if not isinstance(content, str):
+            raise HTTPException(400, "content must be a string")
+        if len(content.encode("utf-8")) > _WILDCARD_MAX_BYTES:
+            raise HTTPException(400, f"content too large (max {_WILDCARD_MAX_BYTES // 1024} KB)")
+        description = body.get("description")
+        if description is not None and not isinstance(description, str):
+            raise HTTPException(400, "description must be a string or null")
+        await bot.database.wildcard_file_put(
+            name=name, content=content, description=description,
+        )
+        return {"ok": True}
+
+    @app.delete("/api/generation/wildcards/{name}", dependencies=[Depends(_verify)])
+    async def wildcard_delete(name: str):
+        if not _wildcard_name_re.match(name):
+            raise HTTPException(400, "invalid name")
+        ok = await bot.database.wildcard_file_delete(name)
+        if not ok:
+            raise HTTPException(404, "wildcard not found")
+        return {"ok": True}
+
     # --- prompt_crafter セッション API ---
 
     def _get_prompt_crafter_unit():

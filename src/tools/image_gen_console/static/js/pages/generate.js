@@ -6,6 +6,7 @@ import { toast } from '../lib/toast.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import { composePromptClient } from '../lib/compose.js';
 import { esc, makeSortable, stashGet, stashClear, bindModalBackdropClose } from '../lib/common.js';
+import { expand as expandWildcards, hasWildcardToken, loadWildcardFiles } from '../lib/wildcard.js';
 
 // ============================================================
 // State
@@ -162,6 +163,17 @@ export function render() {
             ${KNOWN_SCHEDULERS.map(s => `<option value="${esc(s)}"></option>`).join('')}
           </datalist>
         </div>
+      </div>
+
+      <div class="imggen-wildcard-row" style="display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem;font-size:0.75rem;flex-wrap:wrap;">
+        <span title="Wildcard 展開方式（{a|b} / {1-3} / __name__）">🎲 Wildcard</span>
+        <select id="ig-wildcard-mode" class="form-input" style="width:auto;" title="random=毎回ランダム / tied=画像 seed と連動 / fixed=固定展開を全バッチ使い回し">
+          <option value="random">毎回ランダム</option>
+          <option value="tied">Seed 連動</option>
+          <option value="fixed">固定展開</option>
+        </select>
+        <input id="ig-wildcard-seed" class="form-input" type="number" placeholder="wc seed (空欄=乱数)" style="width:160px;" title="Wildcard seed。明示時のみ決定的。random モードでは +i ずつ加算">
+        <a href="#/wildcards" class="btn btn-sm" style="margin-left:auto;" title="Wildcard ファイル編集">📝 辞書</a>
       </div>
 
       <div class="imggen-submit-row">
@@ -942,6 +954,26 @@ function readStr(id) {
   return v || null;
 }
 
+/** positive/negative を同一 seed で展開して trace をまとめる。
+ *  サーバ側 wildcard_expander.expand と対称な JS 実装（lib/wildcard.js）を呼ぶ。
+ *  __WILDCARD_TRACE__ は params に同梱してジョブ DB に残し、再現性を担保する。
+ */
+function doExpand(positive, negative, files, rngSeed) {
+  const expP = expandWildcards(positive, { files, rngSeed });
+  const expN = expandWildcards(negative, { files, rngSeed });
+  return {
+    positive: expP.text,
+    negative: expN.text,
+    trace: {
+      template_positive: positive,
+      template_negative: negative,
+      rng_seed: rngSeed,
+      choices: [...expP.choices, ...expN.choices],
+      warnings: [...expP.warnings, ...expN.warnings],
+    },
+  };
+}
+
 async function handleSubmit() {
   const btn = $('ig-submit');
   const statusEl = $('ig-status');
@@ -965,19 +997,69 @@ async function handleSubmit() {
   if (count > 50) count = 50;
   const incrementSeed = seedSpecified !== null && seedSpecified >= 0;
 
+  // --- Wildcard 展開準備 ---
+  //   mode: random = 毎バッチ独立展開
+  //         tied   = 画像 seed に追従（未指定なら random フォールバック）
+  //         fixed  = ループ前に 1 回だけ展開して使い回す
+  const wcMode = $('ig-wildcard-mode')?.value || 'random';
+  const wcSeedBase = readNum('ig-wildcard-seed');   // null or int
+  const needsExpansion = hasWildcardToken(positive) || hasWildcardToken(negative);
+  let wcFiles = {};
+  let fixedExpansion = null;
+  if (needsExpansion) {
+    try {
+      wcFiles = await loadWildcardFiles();
+    } catch (err) {
+      console.error('wildcard bulk load failed', err);
+      toast('Wildcard 辞書の取得に失敗。展開せず投入します', 'error');
+    }
+    if (wcMode === 'fixed') {
+      const fixedSeed = wcSeedBase !== null
+        ? wcSeedBase
+        : Math.floor(Math.random() * 0x7FFFFFFF);
+      fixedExpansion = doExpand(positive, negative, wcFiles, fixedSeed);
+    }
+  }
+
   btn.disabled = true;
   const jobIds = [];
   const failures = [];
   try {
     for (let i = 0; i < count; i++) {
       const params = { ...baseParams };
-      if (incrementSeed) params.SEED = seedSpecified + i;
+      const imageSeed = incrementSeed ? seedSpecified + i : null;
+      if (imageSeed !== null) params.SEED = imageSeed;
+
+      // --- Wildcard 展開（必要なら）---
+      let iterPositive = positive;
+      let iterNegative = negative;
+      if (needsExpansion) {
+        let expansion;
+        if (wcMode === 'fixed') {
+          expansion = fixedExpansion;
+        } else {
+          let wcSeed;
+          if (wcMode === 'tied' && imageSeed !== null) {
+            wcSeed = imageSeed;
+          } else if (wcSeedBase !== null) {
+            wcSeed = wcSeedBase + i;
+          } else {
+            wcSeed = null;   // 完全ランダム
+          }
+          expansion = doExpand(positive, negative, wcFiles, wcSeed);
+        }
+        iterPositive = expansion.positive;
+        iterNegative = expansion.negative;
+        params.__WILDCARD_TRACE__ = expansion.trace;
+      }
+
       statusEl.textContent = count > 1
         ? `投入中... ${i + 1}/${count}`
         : '投入中...';
       try {
         const body = {
-          workflow_name, positive, negative, params,
+          workflow_name,
+          positive: iterPositive, negative: iterNegative, params,
           section_ids: chosen,
           user_position: $('ig-userpos')?.value || 'tail',
         };

@@ -733,6 +733,18 @@ class Database:
                     updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""",
             ],
+            31: [
+                # Wildcard / Dynamic Prompts のファイル辞書
+                # `__hair__` のようなファイル参照で引かれる。name が主キーで upsert 運用。
+                # content は改行区切りの候補行（`#` 始まり・空行はコメント扱い）
+                """CREATE TABLE IF NOT EXISTS wildcard_files (
+                    name        TEXT PRIMARY KEY,
+                    content     TEXT NOT NULL DEFAULT '',
+                    description TEXT,
+                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()
@@ -1603,6 +1615,46 @@ class Database:
     async def section_preset_delete(self, preset_id: int) -> bool:
         rowcount = await self.execute_returning_rowcount(
             "DELETE FROM prompt_section_presets WHERE id = ?", (preset_id,),
+        )
+        return rowcount == 1
+
+    # === 画像生成: wildcard_files ===
+
+    async def wildcard_file_list(self) -> list[dict]:
+        """一覧表示用。content は含めず length だけ返す（軽量）。"""
+        return await self.fetchall(
+            "SELECT name, description, updated_at, length(content) AS size "
+            "FROM wildcard_files ORDER BY name ASC",
+        )
+
+    async def wildcard_file_get(self, name: str) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM wildcard_files WHERE name = ?", (name,),
+        )
+
+    async def wildcard_file_get_all(self) -> list[dict]:
+        """expand 用: 全ファイルの (name, content) を取得。"""
+        return await self.fetchall(
+            "SELECT name, content FROM wildcard_files",
+        )
+
+    async def wildcard_file_put(
+        self, *, name: str, content: str, description: str | None = None,
+    ) -> None:
+        """UPSERT。既存なら content / description / updated_at を差し替え。"""
+        await self.execute(
+            "INSERT INTO wildcard_files (name, content, description, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET "
+            "content = excluded.content, "
+            "description = excluded.description, "
+            "updated_at = excluded.updated_at",
+            (name, content, description, jst_now(), jst_now()),
+        )
+
+    async def wildcard_file_delete(self, name: str) -> bool:
+        rowcount = await self.execute_returning_rowcount(
+            "DELETE FROM wildcard_files WHERE name = ?", (name,),
         )
         return rowcount == 1
 
