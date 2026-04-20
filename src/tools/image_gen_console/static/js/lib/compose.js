@@ -67,7 +67,7 @@ export function composePromptClient(rows, {
       order = [...buckets.map(b => ({ tags: b.tags, source: `${b.catKey}/${b.sectionName}` })), { tags: userTags, source: '__user__' }];
     }
     const seen = new Map(); // normKey -> {tag, source, weight}
-    const outTags = [];
+    const outTags = [];     // [{tag, source}]
     for (const part of order) {
       for (const t of part.tags) {
         const key = normalizeKey(t);
@@ -81,20 +81,39 @@ export function composePromptClient(rows, {
           continue;
         }
         seen.set(key, { tag: t, source: part.source });
-        outTags.push(t);
+        outTags.push({ tag: t, source: part.source });
       }
     }
     return outTags;
   }
 
-  const posTags = assemble(posBuckets, userPosTags);
-  const negTags = assemble(negBuckets, userNegTags);
+  const posOut = assemble(posBuckets, userPosTags);
+  const negOut = assemble(negBuckets, userNegTags);
 
   return {
-    positive: posTags.join(', '),
-    negative: negTags.join(', '),
+    positive: joinGroupedBySource(posOut),
+    negative: joinGroupedBySource(negOut),
     warnings,
     dropped,
-    tags: posTags,
+    tags: posOut.map(o => o.tag),
   };
+}
+
+/** 隣接タグを source（section/__user__）でグルーピングし、
+ *  グループ内は ", "、グループ間は ",\n" で結合する。
+ *  サーバ側 _join_grouped_by_section と同じ出力フォーマット。
+ */
+function joinGroupedBySource(items) {
+  if (!items.length) return '';
+  const groups = [];
+  let cur = null;
+  for (const it of items) {
+    if (cur && it.source === cur.source) {
+      cur.tags.push(it.tag);
+    } else {
+      cur = { source: it.source, tags: [it.tag] };
+      groups.push(cur);
+    }
+  }
+  return groups.map(g => g.tags.join(', ')).join(',\n');
 }

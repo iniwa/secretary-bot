@@ -404,6 +404,59 @@ html, body { height: 100vh; overflow: hidden; }
   color: var(--text-secondary);
 }
 
+/* Lightbox: prompt 表示モーダル（lightbox の上に重ねて開く） */
+.imggen-lb-prompt-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000;
+  padding: 1rem;
+}
+.imggen-lb-prompt-card {
+  background: var(--bg-surface, #1d1d1d);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: min(720px, 90vw);
+  max-height: 85vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.imggen-lb-prompt-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+.imggen-lb-prompt-body {
+  padding: 0.75rem;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.75rem;
+}
+.imggen-lb-prompt-section {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem;
+  background: var(--bg-base);
+}
+.imggen-lb-prompt-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+.imggen-lb-prompt-text {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+
 .imggen-empty {
   text-align: center;
   padding: 1.5rem;

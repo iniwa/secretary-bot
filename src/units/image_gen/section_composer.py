@@ -215,6 +215,33 @@ def compose_prompt(
         _emit_user_pos()
         _emit_user_neg()
 
-    result.positive = ", ".join(t.raw for t in result.positive_tags)
-    result.negative = ", ".join(t.raw for t in result.negative_tags)
+    result.positive = _join_grouped_by_section(result.positive_tags)
+    result.negative = _join_grouped_by_section(result.negative_tags)
     return result
+
+
+def _join_grouped_by_section(tags: list[ComposedTag]) -> str:
+    """隣接タグを (section_id, category) でグルーピングし、
+    グループ内は `, `、グループ間は `,\n` で結合する。
+
+    PNG メタデータ・DB に保存される文字列がセクション単位で改行され、
+    ギャラリーや extract ページで読みやすくなる。
+    CLIP トークナイザは改行を whitespace 扱いするため生成結果には影響しない。
+    """
+    if not tags:
+        return ""
+    groups: list[list[str]] = []
+    cur_key: tuple | None = None
+    cur: list[str] = []
+    for t in tags:
+        key = (t.source_section_id, t.source_category)
+        if cur and key == cur_key:
+            cur.append(t.raw)
+        else:
+            if cur:
+                groups.append(cur)
+            cur = [t.raw]
+            cur_key = key
+    if cur:
+        groups.append(cur)
+    return ",\n".join(", ".join(g) for g in groups)

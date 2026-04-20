@@ -67,6 +67,9 @@ export function openLightbox(item, opts = {}) {
   if (opts.onTagsEdit) {
     actions.push(`<button data-act="tags" title="タグ編集">🏷 タグ</button>`);
   }
+  if (item.positive || item.negative) {
+    actions.push(`<button data-act="prompt" title="プロンプトを表示">📝 プロンプト</button>`);
+  }
   if (opts.onReuse) {
     actions.push(`<button data-act="reuse">この設定で再現</button>`);
   }
@@ -99,6 +102,11 @@ export function openLightbox(item, opts = {}) {
       }
       return;
     }
+    if (btn?.dataset.act === 'prompt') {
+      ev.stopPropagation();
+      openPromptModal(item);
+      return;
+    }
     if (btn?.dataset.act === 'tags') {
       ev.stopPropagation();
       opts.onTagsEdit?.(item, (newTags) => {
@@ -129,6 +137,66 @@ export function openLightbox(item, opts = {}) {
   });
   document.body.appendChild(el);
   return close;
+}
+
+/** ライトボックスから開くプロンプト表示モーダル。
+ *  positive / negative は section_composer の出力フォーマット（ ",\n" でセクション境界）
+ *  を pre-wrap でそのまま表示するので、セクション毎に改行されて読みやすい。
+ */
+function openPromptModal(item) {
+  const overlay = document.createElement('div');
+  overlay.className = 'imggen-lb-prompt-overlay';
+  const pos = item.positive || '';
+  const neg = item.negative || '';
+  overlay.innerHTML = `
+    <div class="imggen-lb-prompt-card">
+      <div class="imggen-lb-prompt-head">
+        <span>📝 Prompt</span>
+        <button data-act="close" class="btn btn-sm">×</button>
+      </div>
+      <div class="imggen-lb-prompt-body">
+        <div class="imggen-lb-prompt-section">
+          <div class="imggen-lb-prompt-label">
+            <span>POSITIVE</span>
+            <button data-act="copy-pos" class="btn btn-sm">📋 コピー</button>
+          </div>
+          <pre class="imggen-lb-prompt-text">${esc(pos) || '<span class="text-muted">(empty)</span>'}</pre>
+        </div>
+        <div class="imggen-lb-prompt-section">
+          <div class="imggen-lb-prompt-label">
+            <span>NEGATIVE</span>
+            <button data-act="copy-neg" class="btn btn-sm">📋 コピー</button>
+          </div>
+          <pre class="imggen-lb-prompt-text">${esc(neg) || '<span class="text-muted">(empty)</span>'}</pre>
+        </div>
+      </div>
+    </div>
+  `;
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button');
+    if (btn?.dataset.act === 'close') return close();
+    if (btn?.dataset.act === 'copy-pos') {
+      try { await navigator.clipboard.writeText(pos); }
+      catch { /* ignore */ }
+      return;
+    }
+    if (btn?.dataset.act === 'copy-neg') {
+      try { await navigator.clipboard.writeText(neg); }
+      catch { /* ignore */ }
+      return;
+    }
+    if (ev.target === overlay) close();
+  });
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    // 親 lightbox の Esc ハンドラより先に走らせて閉じ伝播を止める
+    e.stopImmediatePropagation();
+    close();
+    document.removeEventListener('keydown', onKey, true);
+  }
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(overlay);
 }
 
 /** タグ編集の簡易プロンプト。OK で新タグ配列を返す（カンマ区切り）。Cancel で null。 */
