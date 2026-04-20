@@ -41,3 +41,10 @@
   - 2026-04-20: `zzz_characters.recommended_main_stats_json`（slot→list[str]）と `recommended_teams_json`（`[{members, note}]`）を追加。PUT API `/recommended-main-stats` と `/recommended-teams` 追加。`character_detail.js` にスロット毎チップ編集と編成編集モーダル、`characters.js` に推奨メインステ絞り込み、スワップモーダルに複数選択式メインステフィルタ（推奨値で初期選択）を実装
   - 全 48 キャラの notes 「■ ディスクメイン」セクションから `recommended_main_stats_json` を機械抽出して反映（EN 略記 `ATK%`/`EN回復`/`炎属性ダメ%` 等は JP 正式名に正規化）。編成データは UI で手動登録運用
   - 備考: notes の号位表記「4番/5番/6番」は内部 disc.slot と一致（schema の `SLOT_ALLOWED_MAIN_STATS` 基準）
+
+### power unit
+- [ ] 複数指示の対応
+  - 「メインPCとサブPCの両方起動して」というチャットに対してエラー発生
+  - LLMログにてリスト形式で出力されている
+  - このリスト形式出来た時に、両方へWoLパケットを送ることの実装
+  - 複数台に送る時、クールタイムを設ける（余裕を持って5秒ぐらいあけてもよい）
