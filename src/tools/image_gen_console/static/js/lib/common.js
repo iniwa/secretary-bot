@@ -139,15 +139,74 @@ export function openLightbox(item, opts = {}) {
   return close;
 }
 
+/** プロンプト文字列を section_composer の ",\n" 境界で断片に分割する。 */
+function splitPromptFragments(text) {
+  if (!text) return [];
+  return String(text).split(/,\s*\n/).map(s => s.trim()).filter(Boolean);
+}
+
+/** プロンプト 1 ブロック（POSITIVE か NEGATIVE）の HTML を返す。
+ *  - 既定はセクション断片カード表示（,\n 境界で分割）
+ *  - ヘッダの「📄 生データ」トグルで生 <pre> 表示に切替
+ *  - 「📋 コピー」で全文コピー
+ *
+ *  返り値: { html, bind(rootEl) } — bind で button などのイベントを接続する。
+ */
+export function buildPromptBlock(label, text) {
+  const safeText = text || '';
+  const fragments = splitPromptFragments(safeText);
+  const id = `pb-${Math.random().toString(36).slice(2, 9)}`;
+  const fragmentsHtml = fragments.length
+    ? fragments.map(f => `<div class="imggen-prompt-frag">${esc(f)}</div>`).join('')
+    : '<div class="text-muted">(empty)</div>';
+  const html = `
+    <div class="imggen-prompt-block" data-block="${id}">
+      <div class="imggen-prompt-head">
+        <span class="imggen-prompt-label">${esc(label)}</span>
+        <span class="imggen-prompt-actions">
+          <button data-act="toggle-raw" class="btn btn-sm" title="セクション断片 / 生データを切替">📄 生データ</button>
+          <button data-act="copy" class="btn btn-sm">📋 コピー</button>
+        </span>
+      </div>
+      <div class="imggen-prompt-body" data-mode="frag">
+        <div class="imggen-prompt-frags">${fragmentsHtml}</div>
+        <pre class="imggen-prompt-raw" hidden>${esc(safeText) || '<span class="text-muted">(empty)</span>'}</pre>
+      </div>
+    </div>
+  `;
+  function bind(rootEl) {
+    const block = rootEl.querySelector(`[data-block="${id}"]`);
+    if (!block) return;
+    const body = block.querySelector('.imggen-prompt-body');
+    const frags = block.querySelector('.imggen-prompt-frags');
+    const raw = block.querySelector('.imggen-prompt-raw');
+    const toggle = block.querySelector('[data-act="toggle-raw"]');
+    const copy = block.querySelector('[data-act="copy"]');
+    toggle?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const next = body.dataset.mode === 'frag' ? 'raw' : 'frag';
+      body.dataset.mode = next;
+      frags.hidden = (next === 'raw');
+      raw.hidden = (next === 'frag');
+      toggle.textContent = next === 'raw' ? '🧩 断片表示' : '📄 生データ';
+    });
+    copy?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      try { await navigator.clipboard.writeText(safeText); } catch { /* ignore */ }
+    });
+  }
+  return { html, bind };
+}
+
 /** ライトボックスから開くプロンプト表示モーダル。
  *  positive / negative は section_composer の出力フォーマット（ ",\n" でセクション境界）
- *  を pre-wrap でそのまま表示するので、セクション毎に改行されて読みやすい。
+ *  を断片カードで表示。「📄 生データ」トグルで全文 pre 表示にも切替可能。
  */
 function openPromptModal(item) {
   const overlay = document.createElement('div');
   overlay.className = 'imggen-lb-prompt-overlay';
-  const pos = item.positive || '';
-  const neg = item.negative || '';
+  const posBlock = buildPromptBlock('POSITIVE', item.positive || '');
+  const negBlock = buildPromptBlock('NEGATIVE', item.negative || '');
   overlay.innerHTML = `
     <div class="imggen-lb-prompt-card">
       <div class="imggen-lb-prompt-head">
@@ -155,37 +214,17 @@ function openPromptModal(item) {
         <button data-act="close" class="btn btn-sm">×</button>
       </div>
       <div class="imggen-lb-prompt-body">
-        <div class="imggen-lb-prompt-section">
-          <div class="imggen-lb-prompt-label">
-            <span>POSITIVE</span>
-            <button data-act="copy-pos" class="btn btn-sm">📋 コピー</button>
-          </div>
-          <pre class="imggen-lb-prompt-text">${esc(pos) || '<span class="text-muted">(empty)</span>'}</pre>
-        </div>
-        <div class="imggen-lb-prompt-section">
-          <div class="imggen-lb-prompt-label">
-            <span>NEGATIVE</span>
-            <button data-act="copy-neg" class="btn btn-sm">📋 コピー</button>
-          </div>
-          <pre class="imggen-lb-prompt-text">${esc(neg) || '<span class="text-muted">(empty)</span>'}</pre>
-        </div>
+        ${posBlock.html}
+        ${negBlock.html}
       </div>
     </div>
   `;
+  posBlock.bind(overlay);
+  negBlock.bind(overlay);
   const close = () => overlay.remove();
-  overlay.addEventListener('click', async (ev) => {
+  overlay.addEventListener('click', (ev) => {
     const btn = ev.target.closest('button');
     if (btn?.dataset.act === 'close') return close();
-    if (btn?.dataset.act === 'copy-pos') {
-      try { await navigator.clipboard.writeText(pos); }
-      catch { /* ignore */ }
-      return;
-    }
-    if (btn?.dataset.act === 'copy-neg') {
-      try { await navigator.clipboard.writeText(neg); }
-      catch { /* ignore */ }
-      return;
-    }
     if (ev.target === overlay) close();
   });
   function onKey(e) {

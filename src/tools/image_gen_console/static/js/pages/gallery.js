@@ -4,6 +4,7 @@ import { GenerationAPI } from '../lib/generation_api.js';
 import {
   esc, fmtDate, openLightbox, promptTags, stashSet,
 } from '../lib/common.js';
+import { decomposePromptClient } from '../lib/decompose.js';
 
 // ============================================================
 // State
@@ -165,19 +166,30 @@ async function handleReuse(item) {
   try {
     const jobId = item.job_id;
     if (!jobId) { toast('job_id がありません', 'error'); return; }
-    const job = await GenerationAPI.getJob(jobId);
+    const [job, secs] = await Promise.all([
+      GenerationAPI.getJob(jobId),
+      GenerationAPI.listSections(),
+    ]);
     if (!job) { toast('ジョブが見つかりません', 'error'); return; }
+    const allSections = secs?.sections || [];
+    const decomp = decomposePromptClient({
+      positive: job.positive || '',
+      negative: job.negative || '',
+      sections: allSections,
+    });
     stashSet({
       source: 'gallery',
       job_id: jobId,
       workflow_name: job.workflow_name,
-      positive: job.positive,
-      negative: job.negative,
+      positive: decomp.userPositive,
+      negative: decomp.userNegative,
+      section_ids: decomp.section_ids,
       params: job.params || {},
       modality: job.modality || 'image',
     });
     location.hash = '#/generate?prefill=gallery';
-    toast('生成フォームに取り込みました', 'info');
+    const n = decomp.section_ids.length;
+    toast(n ? `生成フォームに取り込みました（セクション ${n} 件復元）` : '生成フォームに取り込みました', 'info');
   } catch (err) {
     console.error('reuse failed', err);
     toast('取り込み失敗', 'error');

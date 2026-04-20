@@ -11,6 +11,12 @@
   - B / B+（プロジェクト CRUD + dataset drag-drop upload）は 2026-04-20 に Pi 側コード実装まで完了。実機（Pi + Main/Sub PC + NAS）での疎通確認は未実施
   - C 以降は Windows Agent 側の subprocess 管理（kohya / WD14）と SSE 連携が必要なため、実機環境がある PC（Main/Sub PC）で再開する
 
+### image_gen / プロンプト再現・表示
+- [x] ギャラリー「この設定で再現」で、可能な範囲でセクション選択状態（プロンプト断片）も復元してほしい
+  - 2026-04-20: クライアント側に `static/js/lib/decompose.js` を新設し、最終 positive/negative と DB の全セクションから「完全一致セクション」を逆算 → `chosen` に復元、部分一致や残余タグは positive/negative 入力欄に流す方針で実装。`gallery.js` の `handleReuse` で `GenerationAPI.listSections()` と `getJob` を並列フェッチして stash に `section_ids` を積み、`generate.js` の `checkStashPrefill` で `chosen` 反映。Extract ページの「🎨 この設定で生成へ」も同じ逆算ルートに統一
+- [x] プロンプト表示は最初に「セクション断片」のまとまった状態を出し、ホバー or ボタンで生データ表示にしてほしい
+  - 2026-04-20: `common.js` に共通ヘルパ `buildPromptBlock(label, text)` を export。`,\n` 境界で断片カードに分割した表示を既定とし、ヘッダの「📄 生データ」トグルで `<pre>` 全文表示に切替、「📋 コピー」で全文コピー。`openPromptModal`（lightbox 経由のプロンプト表示）と Extract ページの Positive/Negative の両方を同コンポーネントへ統一。CSS は `image_gen.css` に `.imggen-prompt-*` を追加
+
 ### zzz_disk
 - [x] 「オススメステータス･ディスク（メモ）」が妄想エンジェルの3人しか入っていないため、全キャラへ適応してほしい
   - 2026-04-20: 既存 9 キャラ + 追加 39 キャラ = 全 48 キャラで `recommended_notes` を埋めた。codex（`docs/zzz_character_codex.md`）を主ソースとし、未収載だった 3 キャラ（ビビアン・バンシー / イヴリン・シェヴァリエ / アストラ・ヤオ）は codex にも追記した（スターズ・オブ・リラ、モッキンバード 陣営を新設）

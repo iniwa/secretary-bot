@@ -907,6 +907,17 @@ async function checkStashPrefill() {
     }
     if (stash.positive != null) $('ig-positive').value = stash.positive || '';
     if (stash.negative != null) $('ig-negative').value = stash.negative || '';
+    if (Array.isArray(stash.section_ids) && stash.section_ids.length) {
+      const valid = stash.section_ids.filter(sid => sections.some(s => s.id === sid));
+      if (valid.length) {
+        chosen = valid;
+        renderSections();
+      }
+    }
+    if (stash.user_position && $('ig-userpos')) {
+      const opt = Array.from($('ig-userpos').options).find(o => o.value === stash.user_position);
+      if (opt) $('ig-userpos').value = stash.user_position;
+    }
     const p = stash.params || {};
     const map = {
       WIDTH: 'ig-width', HEIGHT: 'ig-height', STEPS: 'ig-steps', CFG: 'ig-cfg',

@@ -7,7 +7,9 @@
  *  実装は pure JS。zTXt（deflate 圧縮）は依存を増やさないため未対応。
  */
 import { toast } from '../lib/toast.js';
-import { esc, stashSet } from '../lib/common.js';
+import { esc, stashSet, buildPromptBlock } from '../lib/common.js';
+import { GenerationAPI } from '../lib/generation_api.js';
+import { decomposePromptClient } from '../lib/decompose.js';
 
 let lastResult = null;   // { source, positive, negative, params, model, raw }
 let lastFileName = '';
@@ -312,6 +314,9 @@ function renderResult() {
     return `<details class="ex-raw-item"><summary>${esc(k)} <span class="text-xs text-muted">(${v.length} chars)</span></summary><pre>${esc(short)}</pre></details>`;
   }).join('') || '<div class="text-muted">テキスト系チャンクなし</div>';
 
+  const posBlock = buildPromptBlock('Positive', r.positive || '');
+  const negBlock = buildPromptBlock('Negative', r.negative || '');
+
   el.innerHTML = `
 <div class="ex-result-grid">
   <div class="ex-thumb-col">
@@ -321,22 +326,14 @@ function renderResult() {
     ${r.model ? `<div class="ex-model">model: <strong>${esc(r.model)}</strong></div>` : ''}
   </div>
   <div class="ex-info-col">
-    <div class="ex-section">
-      <div class="ex-label">Positive</div>
-      <pre class="ex-prompt">${esc(r.positive || '(empty)')}</pre>
-    </div>
-    <div class="ex-section">
-      <div class="ex-label">Negative</div>
-      <pre class="ex-prompt">${esc(r.negative || '(empty)')}</pre>
-    </div>
+    <div class="ex-section">${posBlock.html}</div>
+    <div class="ex-section">${negBlock.html}</div>
     <div class="ex-section">
       <div class="ex-label">Parameters</div>
       <table class="ex-params"><tbody>${paramRows}</tbody></table>
     </div>
     <div class="ex-actions">
       <button id="ex-to-gen" class="btn btn-primary btn-sm">🎨 この設定で生成へ</button>
-      <button id="ex-copy-pos" class="btn btn-sm">Positive コピー</button>
-      <button id="ex-copy-neg" class="btn btn-sm">Negative コピー</button>
     </div>
     <div class="ex-section">
       <div class="ex-label">Raw text chunks</div>
@@ -346,30 +343,38 @@ function renderResult() {
 </div>
 `;
 
+  posBlock.bind(el);
+  negBlock.bind(el);
   $('ex-to-gen')?.addEventListener('click', handleToGenerate);
-  $('ex-copy-pos')?.addEventListener('click', () => copy(r.positive));
-  $('ex-copy-neg')?.addEventListener('click', () => copy(r.negative));
 }
 
-async function copy(text) {
-  try {
-    await navigator.clipboard.writeText(text || '');
-    toast('コピーしました', 'success');
-  } catch {
-    toast('コピー失敗', 'error');
-  }
-}
-
-function handleToGenerate() {
+async function handleToGenerate() {
   if (!lastResult) return;
+  const positive = lastResult.positive || '';
+  const negative = lastResult.negative || '';
+  let section_ids = [];
+  let userPositive = positive;
+  let userNegative = negative;
+  try {
+    const secs = await GenerationAPI.listSections();
+    const all = secs?.sections || [];
+    const decomp = decomposePromptClient({ positive, negative, sections: all });
+    section_ids = decomp.section_ids;
+    userPositive = decomp.userPositive;
+    userNegative = decomp.userNegative;
+  } catch (err) {
+    console.warn('decompose skipped (sections fetch failed)', err);
+  }
   stashSet({
     source: 'extract',
-    positive: lastResult.positive || '',
-    negative: lastResult.negative || '',
+    positive: userPositive,
+    negative: userNegative,
+    section_ids,
     params: lastResult.params || {},
   });
   location.hash = '#/generate?prefill=extract';
-  toast('Generate に取り込みました', 'info');
+  const n = section_ids.length;
+  toast(n ? `Generate に取り込みました（セクション ${n} 件復元）` : 'Generate に取り込みました', 'info');
 }
 
 // ============================================================
