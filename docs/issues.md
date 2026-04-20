@@ -79,8 +79,9 @@
   - 備考: notes の号位表記「4番/5番/6番」は内部 disc.slot と一致（schema の `SLOT_ALLOWED_MAIN_STATS` 基準）
 
 ### power unit
-- [ ] 複数指示の対応
+- [x] 複数指示の対応
   - 「メインPCとサブPCの両方起動して」というチャットに対してエラー発生
   - LLMログにてリスト形式で出力されている
   - このリスト形式出来た時に、両方へWoLパケットを送ることの実装
   - 複数台に送る時、クールタイムを設ける（余裕を持って5秒ぐらいあけてもよい）
+  - 2026-04-20: LLM抽出スキーマを `{"action","targets":[...]}` に拡張。`target` (単数) も後方互換で受理。`_run_sequential` で 5 秒クールタイム付き順次実行。wake/shutdown/restart/cancel/status いずれも複数対応（shutdown/restart は確認プロンプトで 1 回まとめて承認）

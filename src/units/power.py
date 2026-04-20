@@ -1,5 +1,6 @@
 """PC電源管理ユニット。起動（WoL）・シャットダウン・再起動。"""
 
+import asyncio
 import os
 import time
 
@@ -13,6 +14,11 @@ log = get_logger(__name__)
 
 _CONFIRM_YES = ("はい", "うん", "yes", "ok", "おk", "おけ", "お願い", "そう", "合ってる", "合ってます", "それで", "いいよ", "いいです", "いい", "ええ", "オッケー", "頼む", "頼みます", "よろしく")
 _CONFIRM_NO = ("いいえ", "いや", "no", "やめ", "キャンセル", "違う", "ちがう", "やめて", "違います", "だめ", "ダメ", "やっぱ", "やっぱり", "止め")
+
+# 複数対象に同じアクションを連続送出するときのクールタイム（秒）。
+# WoL パケットや shutdown リクエストが密に飛ぶとパケットロスや
+# ルータのマルチキャスト抑制に引っかかるため、余裕を持って 5 秒あける。
+_MULTI_TARGET_COOLDOWN_SEC = 5.0
 
 _EXTRACT_PROMPT = """\
 以下のユーザー入力を分析し、JSON形式で返してください。
@@ -28,9 +34,12 @@ _EXTRACT_PROMPT = """\
 {pc_list}
 
 ## 出力形式（厳守）
-{{"action": "アクション名", "target": "PC識別子"}}
+{{"action": "アクション名", "targets": ["PC識別子", ...]}}
 
-- target が不明な場合は省略してください（デフォルトで最優先のPCが使われます）。
+- 1 台のみの場合でも targets は配列にしてください（要素 1）。
+- 「両方」「全部」「両方のPC」のように複数を指す表現は targets に該当PC全てを入れてください。
+- targets が特定できない / 不要な場合は空配列 [] を返してください（デフォルトで最優先のPCが使われます）。
+- 後方互換として `target` (単数文字列) も受理しますが、基本は targets (配列) を使ってください。
 - JSON1つだけを返してください。
 
 ## ユーザー入力
@@ -109,27 +118,34 @@ class PowerUnit(BaseUnit):
 
             extracted = await self._extract_params(message, channel)
             action = extracted.get("action", "status")
-            target = extracted.get("target") or self._default_target()
+            targets = self._resolve_targets(extracted, action)
 
             if action == "wake":
-                result = await self._wake_pc(target)
+                result = await self._wake_pcs(targets)
                 self.session_done = True
             elif action in ("shutdown", "restart"):
                 # 確認プロンプトを出す
-                agent = self._pc_map.get(target)
-                name = agent["name"] if agent else target
+                names = [self._name_of(t) for t in targets]
                 action_label = "シャットダウン" if action == "shutdown" else "再起動"
                 self._pending_actions[channel] = {
                     "action": action,
-                    "target": target,
+                    "targets": list(targets),
                 }
                 self.session_done = False
-                result = f"{name}を{action_label}します。よろしいですか？"
+                joined = "・".join(names) if names else "(対象なし)"
+                if len(targets) > 1:
+                    result = f"{joined}を順番に{action_label}します（各{int(_MULTI_TARGET_COOLDOWN_SEC)}秒間隔）。よろしいですか？"
+                else:
+                    result = f"{joined}を{action_label}します。よろしいですか？"
             elif action == "cancel":
-                result = await self._cancel_shutdown(target)
+                result = await self._cancel_shutdowns(targets)
                 self.session_done = True
             else:
-                result = await self._status(target)
+                # status: targets が 1 件でも複数でも _status に任せる（空なら全件）
+                if len(targets) == 1:
+                    result = await self._status(targets[0])
+                else:
+                    result = await self._status_multi(targets)
                 self.session_done = True
 
             result = await self.personalize(result, message, flow_id)
@@ -161,6 +177,43 @@ class PowerUnit(BaseUnit):
             return self._agents[0]["id"]
         return ""
 
+    def _resolve_targets(self, extracted: dict, action: str) -> list[str]:
+        """LLM 抽出結果から有効な PC ID リストを構築する。
+
+        - `targets` (配列) を優先、なければ `target` (単数) を 1 要素配列に。
+        - status アクションで対象未指定のときは空リストを返し、`_status_multi`
+          / `_status` 側が全件扱いにする（既存挙動と整合）。
+        - wake/shutdown/restart/cancel で対象未指定のときはデフォルト（最優先 PC）
+          1 件を返す（既存挙動と整合）。
+        - 未知の PC ID や重複は除去する。
+        """
+        raw: list[str] = []
+        val = extracted.get("targets")
+        if isinstance(val, list):
+            raw.extend(str(v) for v in val if v)
+        single = extracted.get("target")
+        if single and str(single) not in raw:
+            raw.append(str(single))
+
+        known = {a["id"] for a in self._agents}
+        seen: set[str] = set()
+        resolved: list[str] = []
+        for t in raw:
+            if t in known and t not in seen:
+                seen.add(t)
+                resolved.append(t)
+
+        if resolved:
+            return resolved
+        if action == "status":
+            return []  # 全件表示
+        default = self._default_target()
+        return [default] if default else []
+
+    def _name_of(self, target: str) -> str:
+        agent = self._pc_map.get(target)
+        return agent["name"] if agent else target
+
     # --- 確認フロー ---
 
     def _check_confirmation(self, message: str) -> bool | None:
@@ -186,17 +239,66 @@ class PowerUnit(BaseUnit):
             return "キャンセルしました。"
 
         action = pending["action"]
-        target = pending["target"]
+        # 互換: 旧 pending に target (単数) が入っていた場合もケア
+        targets = list(pending.get("targets") or [])
+        if not targets and pending.get("target"):
+            targets = [pending["target"]]
 
-        if action == "shutdown":
-            result = await self._shutdown_pc(target)
-        else:
-            result = await self._restart_pc(target)
+        runner = self._shutdown_pc if action == "shutdown" else self._restart_pc
+        results = await self._run_sequential(runner, targets)
 
         self.session_done = True
-        return result
+        return "\n".join(results)
 
-    # --- アクション実装 ---
+    # --- アクション実装（複数対象ラッパー） ---
+
+    async def _run_sequential(self, runner, targets: list[str]) -> list[str]:
+        """対象 PC ごとに runner を順次呼び出し、各結果文字列を返す。
+
+        対象が 2 件以上のときは各呼び出しの間に ``_MULTI_TARGET_COOLDOWN_SEC``
+        秒のクールタイムを挟む（WoL パケットのバースト送信や同時 shutdown で
+        起きうる副作用を避けるため）。
+        """
+        results: list[str] = []
+        for i, target in enumerate(targets):
+            if i > 0:
+                await asyncio.sleep(_MULTI_TARGET_COOLDOWN_SEC)
+            try:
+                results.append(await runner(target))
+            except Exception as e:
+                log.error("power unit runner failed for %s: %s", target, e)
+                results.append(f"{self._name_of(target)}: エラー ({e})")
+        return results
+
+    async def _wake_pcs(self, targets: list[str]) -> str:
+        if not targets:
+            return "対象PCが見つかりません。"
+        results = await self._run_sequential(self._wake_pc, targets)
+        return "\n".join(results)
+
+    async def _cancel_shutdowns(self, targets: list[str]) -> str:
+        if not targets:
+            return "対象PCが見つかりません。"
+        results = await self._run_sequential(self._cancel_shutdown, targets)
+        return "\n".join(results)
+
+    async def _status_multi(self, targets: list[str]) -> str:
+        """対象 PC リストの状態を 1 メッセージにまとめる。targets が空なら全件。"""
+        agents: list[dict]
+        if targets:
+            agents = [self._pc_map[t] for t in targets if t in self._pc_map]
+        else:
+            agents = list(self._agents)
+        if not agents:
+            return "対象PCが見つかりません。"
+        lines = ["🖥️ PC状態一覧", "━━━━━━━━━━━━━━━━━━━━"]
+        for agent in agents:
+            alive = await self._is_agent_alive(agent)
+            icon = "🟢" if alive else "🔴"
+            lines.append(f"  {icon} {agent['name']} ({agent['id']})")
+        return "\n".join(lines)
+
+    # --- アクション実装（単一対象） ---
 
     async def _wake_pc(self, target: str) -> str:
         agent = self._pc_map.get(target)
