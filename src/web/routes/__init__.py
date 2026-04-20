@@ -14,6 +14,7 @@ from src.web.routes import (
     image_gen,
     inner_mind,
     input_relay,
+    lora_train,
     memory,
     obs,
     rss,
@@ -39,3 +40,4 @@ def register_all_routes(app: FastAPI, ctx: WebContext) -> None:
     rss.register(app, ctx)
     docker_monitor.register(app, ctx)
     image_gen.register(app, ctx)
+    lora_train.register(app, ctx)

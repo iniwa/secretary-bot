@@ -373,15 +373,38 @@ LLM への system prompt は ChenkinNoob-XL 系の好む記法（Danbooru タグ
 
 ### LoRA 学習
 
+**Phase 4 確定設計（2026-04-20）**:
+
 ```
-1. WebGUI: プロジェクト作成 → NAS に datasets/{project_name}/ を確保
-2. 画像配置後「タグ付け実行」→ WD14 tagger ワークフロー（ComfyUI）を MainPC で起動
-3. 結果を lora_dataset_items に保存、WebGUI でキャプション編集
-4. 「学習設定生成」→ LLM が枚数・目的からテンプレート TOML を提案、手動調整
-5. 「学習開始」→ POST /lora/train/start (MainPC固定)
-6. 進捗監視: stdout stream + サンプル画像 + TB メトリクス
-7. 完了: .safetensors を NAS の loras/ へ配置 → 次回生成で選択可
+1. WebGUI: プロジェクト作成（name = トリガーワード）→ NAS lora_datasets/<name>/ を Pi が確保
+2. WebGUI 上で画像を drag-drop → Pi が multipart 受け取り → NAS lora_datasets/<name>/<basename>.png に保存
+   → lora_dataset_items に image_path 登録
+3. 「タグ付け実行」→ Agent POST /lora/dataset/tag
+   → Agent が venv-kohya で kohya 同梱 tag_images_by_wd14_tagger.py を実行
+   → 結果 (各画像の tag リスト) を Pi に返却 → lora_dataset_items.tags へ保存
+4. WebGUI でタグ編集 → caption = "<trigger>, <tags>" を自動構築
+5. 「学習設定生成」→ Pi 側固定 TOML テンプレ（SDXL: dim=8 / alpha=4 / lr=1e-4 / 8ep / batch=1）を WebGUI に表示
+   → ユーザーが手動編集
+6. 「学習開始」→
+   a. Pi が NAS lora_datasets/<name>/<basename>.txt に caption を書き出し
+   b. Pi が NAS lora_work/<name>/sample_prompts.txt を書き出し（プロジェクトに登録された 3-5 行のテストプロンプト）
+   c. Agent POST /lora/dataset/sync で NAS → ローカル SSD にコピー
+   d. Agent POST /lora/train/start で sdxl_train_network.py をサブプロセス起動
+   e. capability.busy=true を立て、同 PC の生成ジョブ受付を停止
+7. 進捗監視: SSE で log/loss/epoch/sample/done を Pi に転送
+   → WebGUI でリアルタイム表示（loss グラフ + sample 画像）
+8. 完了: lora_work/<name>/checkpoints/ に複数の .safetensors（epoch 毎）が並ぶ
+9. 手動昇格: WebGUI でユーザーがチェックポイントを選択 → 承認
+   → Pi が NAS lora_work/.../checkpoints/<file> → models/loras/<name>/<file> にコピー
+   → 次回生成で選択可（model_sync の既存ウォームアップで各 PC に配布）
 ```
+
+**設計判断のメモ**:
+
+- WD14 タグ付けを ComfyUI ノード化せず kohya 同梱スクリプトを直接呼ぶ理由: 学習側 venv (`venv-kohya`) で完結し、ComfyUI custom_nodes の依存を増やさない
+- TOML を LLM 生成ではなく固定テンプレで始める理由: Phase 4 の MVP 範囲を絞るため。LLM 補助は Phase 4.1 で検討
+- 昇格を手動にする理由: LoRA は試行錯誤が多く、自動採用は事故の元（古いチェックポイントを誤って正本扱い）
+- データセットを NAS → ローカル SSD コピーする理由: 学習中の per-step ファイル読み出しが NAS 直読みだと SMB レイテンシで遅くなる
 
 ---
 

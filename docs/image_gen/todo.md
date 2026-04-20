@@ -55,15 +55,32 @@
 
 ## Phase 4（LoRA 学習）
 
-- [ ] **`src/units/lora_train.py` 新規** — LoRA プロジェクト管理・タグ付け・学習オーケストレーション
-- [ ] **`windows-agent/tools/image_gen/kohya_manager.py` 新規** — kohya_ss プロセス管理
-- [ ] **WebGUI `/api/lora/projects/*` + 専用ページ**
+> 設計確定日: 2026-04-20
+> - **タグ付け**: kohya 同梱 `tag_images_by_wd14_tagger.py` を Agent から直接呼ぶ（ComfyUI ノード化はしない）
+> - **TOML テンプレ**: SDXL LoRA の固定テンプレ 1 種（`network_dim=8` / `network_alpha=4` / `lr=1e-4` / 8 epochs / batch=1）。WebGUI から手動編集可
+> - **データセット投入**: WebGUI の drag-drop 複数ファイル upload → Pi → NAS → Agent が学習開始時に NAS → ローカル SSD コピー
+> - **`sample_prompts`**: Pi が `<NAS>/ai-image/lora_work/<project>/sample_prompts.txt` を生成、TOML の `sample_prompts` でそのパスを参照
+> - **トリガーワード**: プロジェクト名 = トリガーワード。各 caption 先頭に必ずトリガーを自動付与（kohya 学習の定石）
+> - **昇格**: 学習完了後、ユーザーが WebGUI で承認したチェックポイントのみ `lora_work/<project>/checkpoints/` → `models/loras/<project>/` へ移動
+
+### 実装ブレークダウン
+
+| # | スコープ | 状態 |
+|---|---|---|
+| **A** | DB schema (`lora_projects` / `lora_dataset_items` / `lora_train_jobs`) + `LoRAMixin` | [x] 既存 (`src/database/_base.py`, `src/database/lora.py`) |
+| **B** | `src/units/lora_train` ユニット骨格 + project CRUD API + WebGUI 一覧/作成画面 | [ ] |
+| **B+** | WebGUI dataset drag-drop upload → Pi multipart → NAS 配置 → `lora_dataset_items` 登録 | [ ] |
+| **C** | Agent `POST /lora/dataset/tag` (WD14) + Pi 連携 | [ ] |
+| **D** | WebGUI タグ/キャプション編集 UI（grid + reviewed_at 管理） | [ ] |
+| **E** | TOML テンプレ生成 + `sample_prompts.txt` 書き出し + Agent `POST /lora/dataset/sync` | [ ] |
+| **F** | Agent `kohya_manager.py` + `/lora/train/{start,status,stream,cancel}` SSE | [ ] |
+| **G** | WebGUI 学習監視ページ（進捗・loss グラフ・sample 画像・cancel・ログ tail） | [ ] |
+| **H** | 学習結果の手動昇格 API + WebGUI ボタン | [ ] |
 
 ## ドキュメント側の未確定事項（実運用で詰める）
 
-- `api.md` §12
+- `api.md` §12（残り）
   - Preview イベント送出頻度
   - `/system/logs follow=true` バッファ上限
-  - kohya sample_prompts 埋め込み方法
   - NAS 並行読み出し本数
   - `/image/generate` タイムアウト既定値

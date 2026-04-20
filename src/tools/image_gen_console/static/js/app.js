@@ -16,6 +16,7 @@ import * as gallery from './pages/gallery.js';
 import * as prompts from './pages/prompts.js';
 import * as extract from './pages/extract.js';
 import * as wildcards from './pages/wildcards.js';
+import * as lora from './pages/lora.js';
 import { toast } from './lib/toast.js';
 
 const routes = [
@@ -25,6 +26,7 @@ const routes = [
   { hash: '#/prompts',   module: prompts,   nav: 'prompts',   title: 'Prompts' },
   { hash: '#/extract',   module: extract,   nav: 'extract',   title: 'Extract' },
   { hash: '#/wildcards', module: wildcards, nav: 'wildcards', title: 'Wildcards' },
+  { hash: '#/lora',      module: lora,      nav: 'lora',      title: 'LoRA' },
 ];
 
 const DEFAULT_HASH = '#/generate';

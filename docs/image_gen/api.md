@@ -686,6 +686,10 @@ curl -N -H "X-Agent-Token: $TOKEN" http://main-pc:7777/image/jobs/img_01H.../str
 
 - `preview` イベント送出頻度（ComfyUI の PreviewImage ノード設定に依存）
 - `/system/logs` の `follow=true` 時のバッファサイズ上限
-- kohya の `sample_prompts` 埋め込み方法（TOML 側で参照する仕様に寄せるか Agent が差し込むか）
+- ~~kohya の `sample_prompts` 埋め込み方法~~ → **確定 (2026-04-20)**: Pi が `<NAS>/ai-image/lora_work/<project>/sample_prompts.txt` を事前生成し、TOML の `sample_prompts` でそのパスを参照する。Agent は TOML をそのまま渡すだけ。
 - `cache/sync` の NAS 並行読み出し本数（1GbE 上限を踏まえた自動スロットリング）
 - `image/generate` の `timeout_sec` 未指定時の最終決定（ワークフロー `default_timeout_sec` を Pi 側で必ず埋めるか、Agent が既定値を持つか）
+
+## 13. Phase 4 (LoRA 学習) で追加するエンドポイント
+
+`POST /lora/dataset/tag` と `POST /lora/dataset/sync` は §6/§7 から派生する Phase 4 新設 API。仕様確定は実装時に本書に追記する（暫定方針は `docs/image_gen/todo.md` Phase 4 を参照）。

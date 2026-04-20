@@ -1,0 +1,211 @@
+/** LoRA page — LoRA 学習プロジェクト管理。
+ *
+ *  プロジェクト名は kohya 学習時のトリガーワードを兼ねるため、英小文字＋
+ *  数字＋ `_` で 2〜32 文字に制限される（サーバ側 nas_io.validate_project_name
+ *  がソース。下の正規表現は UX 用の事前チェック）。
+ */
+import { api } from '../api.js';
+import { toast } from '../lib/toast.js';
+import { esc, fmtTime } from '../lib/common.js';
+
+let projects = [];
+let activeId = null;
+
+function $(id) { return document.getElementById(id); }
+
+export function render() {
+  return `
+<div class="pc-grid">
+  <div class="pc-card">
+    <h3>🎯 LoRA プロジェクト</h3>
+    <div class="pc-btn-row">
+      <button id="lora-new" class="btn btn-primary">＋ 新規</button>
+      <button id="lora-reload" class="btn">再読み込み</button>
+    </div>
+    <div id="lora-list-body" style="margin-top:0.6rem;"></div>
+  </div>
+
+  <div class="pc-card">
+    <h3 id="lora-editor-title">📝 詳細</h3>
+    <div class="pc-label">プロジェクト名（= トリガーワード, 英小文字・数字・<code>_</code>、2〜32 文字）</div>
+    <input id="lora-name" class="pc-input" type="text" placeholder="例: my_character_v1">
+    <div class="pc-label">説明（任意）</div>
+    <input id="lora-desc" class="pc-input" type="text" placeholder="例: オリキャラ A の v1（線画寄り）">
+    <div class="pc-label">ベースモデル（任意・空欄でデフォルト）</div>
+    <input id="lora-base" class="pc-input" type="text" placeholder="例: ChenkinNoob-XL-V0.5.safetensors">
+    <div class="pc-label">ステータス</div>
+    <select id="lora-status" class="pc-input" disabled>
+      <option value="draft">draft</option>
+      <option value="ready">ready</option>
+      <option value="training">training</option>
+      <option value="done">done</option>
+      <option value="failed">failed</option>
+    </select>
+    <div class="pc-btn-row">
+      <button id="lora-save" class="btn btn-primary">保存</button>
+      <button id="lora-delete" class="btn btn-danger">削除</button>
+      <button id="lora-clear" class="btn">新規に戻す</button>
+    </div>
+    <div id="lora-note" class="pc-note"></div>
+    <div id="lora-paths" style="margin-top:0.6rem;font-size:0.78rem;color:var(--text-muted);"></div>
+  </div>
+</div>
+`;
+}
+
+// ============================================================
+// List
+// ============================================================
+function renderList() {
+  const el = $('lora-list-body');
+  if (!el) return;
+  if (!projects.length) {
+    el.innerHTML = '<div class="pc-empty">プロジェクトがありません。「＋ 新規」から作成してください。</div>';
+    return;
+  }
+  el.innerHTML = projects.map((p) => {
+    const sel = p.id === activeId ? ' style="background:var(--bg-hover,#2a2a2a);"' : '';
+    const desc = p.description ? esc(p.description) : '<span class="text-muted">（説明なし）</span>';
+    const status = esc(p.status || 'draft');
+    return `
+      <div class="pc-session-row" data-id="${p.id}"${sel}>
+        <div class="pc-session-text" style="cursor:pointer;">
+          <div class="pc-session-positive"><code>${esc(p.name)}</code> · <span class="badge">${status}</span> · ${desc}</div>
+          <div class="pc-session-meta">id=${p.id} · ${fmtTime(p.updated_at || p.created_at)}</div>
+        </div>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('[data-id]').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = Number(row.dataset.id);
+      const p = projects.find(x => x.id === id);
+      if (p) selectProject(p);
+    });
+  });
+}
+
+async function loadList() {
+  try {
+    const res = await api('/api/lora/projects');
+    projects = res?.items || [];
+  } catch (err) {
+    console.error('lora list failed', err);
+    projects = [];
+    toast(`一覧取得失敗: ${err.message || err}`, 'error');
+  }
+  renderList();
+}
+
+// ============================================================
+// Editor
+// ============================================================
+function setEditor({ project = null } = {}) {
+  if (project) {
+    activeId = project.id;
+    $('lora-name').value = project.name || '';
+    $('lora-desc').value = project.description || '';
+    $('lora-base').value = project.base_model || '';
+    $('lora-status').value = project.status || 'draft';
+    $('lora-name').disabled = true;
+    $('lora-status').disabled = false;
+    $('lora-editor-title').textContent = `📝 編集: ${project.name}`;
+    const paths = [];
+    if (project.dataset_path) paths.push(`<div>dataset: <code>${esc(project.dataset_path)}</code></div>`);
+    if (project.output_path) paths.push(`<div>output: <code>${esc(project.output_path)}</code></div>`);
+    $('lora-paths').innerHTML = paths.join('');
+  } else {
+    activeId = null;
+    $('lora-name').value = '';
+    $('lora-desc').value = '';
+    $('lora-base').value = '';
+    $('lora-status').value = 'draft';
+    $('lora-name').disabled = false;
+    $('lora-status').disabled = true;
+    $('lora-editor-title').textContent = '📝 新規作成';
+    $('lora-paths').innerHTML = '';
+  }
+  $('lora-note').textContent = '';
+  renderList();
+}
+
+function selectProject(project) {
+  setEditor({ project });
+}
+
+async function handleSave() {
+  const name = $('lora-name').value.trim();
+  const description = $('lora-desc').value.trim();
+  const baseModel = $('lora-base').value.trim();
+  const status = $('lora-status').value;
+  $('lora-save').disabled = true;
+  try {
+    if (activeId) {
+      const updated = await api(`/api/lora/projects/${activeId}`, {
+        method: 'PATCH',
+        body: {
+          description: description || null,
+          base_model: baseModel || null,
+          status: status || null,
+        },
+      });
+      $('lora-note').textContent = `更新しました: ${updated.name}`;
+      toast('更新', 'success');
+      await loadList();
+      const refreshed = projects.find(p => p.id === activeId);
+      if (refreshed) setEditor({ project: refreshed });
+    } else {
+      if (!name) { toast('プロジェクト名が必要です', 'error'); return; }
+      if (!/^[a-z0-9][a-z0-9_]{1,31}$/.test(name)) {
+        toast('英小文字・数字・_ のみ、2〜32 文字', 'error');
+        return;
+      }
+      const created = await api('/api/lora/projects', {
+        method: 'POST',
+        body: {
+          name,
+          description: description || null,
+          base_model: baseModel || null,
+        },
+      });
+      $('lora-note').textContent = `作成しました: ${created.name}`;
+      toast('作成', 'success');
+      await loadList();
+      const refreshed = projects.find(p => p.id === created.id);
+      if (refreshed) setEditor({ project: refreshed });
+    }
+  } catch (err) {
+    console.error('lora save failed', err);
+    $('lora-note').textContent = `エラー: ${err.message || err}`;
+    toast('保存失敗', 'error');
+  } finally {
+    $('lora-save').disabled = false;
+  }
+}
+
+async function handleDelete() {
+  if (!activeId) { toast('新規作成中は削除できません', 'info'); return; }
+  const cur = projects.find(p => p.id === activeId);
+  const label = cur ? cur.name : `id=${activeId}`;
+  if (!confirm(`${label} を削除しますか？\nNAS の dataset/work ディレクトリも削除されます。`)) return;
+  try {
+    await api(`/api/lora/projects/${activeId}?purge_files=true`, { method: 'DELETE' });
+    toast('削除', 'success');
+    setEditor();
+    await loadList();
+  } catch (err) {
+    console.error('lora delete failed', err);
+    toast(`削除失敗: ${err.message || err}`, 'error');
+  }
+}
+
+// ============================================================
+// Mount
+// ============================================================
+export async function mount() {
+  $('lora-new')?.addEventListener('click', () => setEditor());
+  $('lora-reload')?.addEventListener('click', loadList);
+  $('lora-save')?.addEventListener('click', handleSave);
+  $('lora-delete')?.addEventListener('click', handleDelete);
+  $('lora-clear')?.addEventListener('click', () => setEditor());
+  await loadList();
+}
