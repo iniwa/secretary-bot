@@ -1,8 +1,4 @@
-## 未実装項目サマリ
-
-（現在なし）
-
-## 完了済み
+## リリースノート / 主要変更履歴
 
 ### Image Gen Console: Wildcard / Dynamic Prompts
 
