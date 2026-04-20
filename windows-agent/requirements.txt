@@ -24,3 +24,9 @@ websockets>=12.0
 # input-relay sender (Main PC): pynput for kbd/mouse hooks, pygame for gamepad
 pynput>=1.7
 pygame>=2.5
+# clip_pipeline tool: Whisper / 音声分析 / 音源分離 / Ollama ハイライト判定
+faster-whisper>=1.0
+librosa>=0.10
+demucs>=4.0
+funasr>=1.0
+requests>=2.31

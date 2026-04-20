@@ -10,6 +10,8 @@ from activity.game_detector import get_activity as get_game_activity
 from activity.game_detector import reload_process_map
 from activity.obs_manager import OBSManager, create_obs_manager
 from fastapi import FastAPI, HTTPException, Request
+from tools.clip_pipeline import init_clip_pipeline
+from tools.clip_pipeline import router as clip_pipeline_router
 from tools.image_gen import init_image_gen
 from tools.image_gen import router as image_gen_router
 from tools.tool_manager import ToolManager, create_tool_manager
@@ -132,6 +134,11 @@ async def lifespan(app: FastAPI):
         init_image_gen(role, config, os.path.dirname(__file__))
     except Exception as e:
         print(f"[Agent] image_gen init failed: {e}")
+    # clip_pipeline: 設定初期化（Whisper キャッシュ / NAS パス解決のみ、重処理は遅延）
+    try:
+        init_clip_pipeline(role, config, os.path.dirname(__file__))
+    except Exception as e:
+        print(f"[Agent] clip_pipeline init failed: {e}")
     # Sub PC: OBS監視 + ファイル整理を開始
     if role == "sub":
         _obs_manager = create_obs_manager(config)
@@ -185,6 +192,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Windows Agent", lifespan=lifespan)
 app.include_router(zzz_disc_router, prefix="/tools/zzz-disc")
 app.include_router(image_gen_router)  # API 仕様書に合わせ prefix なし（/image/*, /cache/*, /capability, /comfyui/*）
+app.include_router(clip_pipeline_router)  # /clip-pipeline/* prefix 付き
 
 
 def _verify_token(request: Request):
