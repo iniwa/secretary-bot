@@ -1,5 +1,8 @@
 ## 改善案
 
+<!-- 2026-04-20: Claude Code 長時間セッション中（power unit / auto-kirinuki Phase C-D-F を自動進行） -->
+
+
 ### リモート開発環境
 - [ ] Remote PC → Sub PC の VS Code Remote-SSH 接続（Claude Code を Sub PC 側で動作させる構成）
   - 手順・残作業は `docs/guides/remote_pc_subpc_vscode_access.md` を参照
