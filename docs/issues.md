@@ -21,10 +21,13 @@
   - [ ] 誤って `cloudflared service install` 済みなら `cloudflared.exe service uninstall` で削除（Pi 経由構成では Sub PC に不要）
 
   **Pi 側の残作業**
-  - [ ] Cloudflare ダッシュボード (`https://one.dash.cloudflare.com/` → Networks → Tunnels → Pi の既存 Tunnel) の **Public Hostnames** に追加:
+  - [x] Cloudflare ダッシュボード (`https://one.dash.cloudflare.com/` → Networks → Tunnels → Pi の既存 Tunnel) の **Public Hostnames** に追加:
     - Subdomain: `subpcssh` / Domain: `iniwach.com` / Service: `SSH` / URL: `192.168.1.211:22`
-  - [ ] Pi の cloudflared が **config.yml モード**の場合のみ、`/etc/cloudflared/config.yml` の `ingress:` に同等エントリを追記し `sudo systemctl restart cloudflared`（トークン起動モードなら Pi 側作業不要）
+    - 2026-04-20: Pi の cloudflared running config に `subpcssh.iniwach.com` エントリが反映済（19:49:48 JST 更新）。**重複エントリあり**（`ssh://192.168.1.211:22` と `tcp://192.168.1.211:22` の2件）→ 片方をダッシュボードから削除推奨。`cloudflared access ssh --hostname` 経由では `ssh://` 型で十分なので、`tcp://` 側を削除するのが無難
+  - [x] Pi の cloudflared が **config.yml モード**の場合のみ、`/etc/cloudflared/config.yml` の `ingress:` に同等エントリを追記し `sudo systemctl restart cloudflared`（トークン起動モードなら Pi 側作業不要）
+    - 2026-04-20: 確認結果、Pi は**トークン起動モード**（`ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token ...`・`/etc/cloudflared/` 不在）→ 本作業は不要
   - [ ] Pi → Sub PC の LAN 疎通確認: `ssh iniwapi "nc -zv 192.168.1.211 22"`
+    - 2026-04-20: Main PC (192.168.1.210:22) は到達 OK・Sub PC (192.168.1.211:22) は **タイムアウト**。Sub PC sshd が未起動（`scripts\setup_subpc_ssh.ps1` の Sub PC 実行待ち）。Sub PC sshd 起動後に再テストすれば OK になる見込み
 
   **Remote PC 側の残作業**
   - [ ] `~/.ssh/config` の `subpcssh` エントリの **`User` を `iniwa` に修正**（旧ドキュメントの `iniwaminipc` から）。参考設定:
