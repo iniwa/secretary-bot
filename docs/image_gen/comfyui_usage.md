@@ -151,7 +151,7 @@ queued → warming_cache → dispatching → running → done
 
 1. ComfyUI で直接 Workflow を組む
 2. `Save (API Format)` で JSON をダウンロード
-3. Secretary-bot の Workflow 登録機能に取り込む（詳細は `docs/design/image_gen_api.md`）
+3. Secretary-bot の Workflow 登録機能に取り込む（詳細は `docs/image_gen/api.md`）
 4. 登録後、`/image-gen/` の Workflow プルダウンに現れる
 
 **API 形式** でなければ Secretary-bot からは叩けない点に注意。
@@ -193,7 +193,7 @@ Secretary-bot 側は「確定したワークフローを日常的に叩く」用
 
 - NAS マウント（`N:\` / `/mnt/nas/...`）が外れていないか
 - 該当モデルが NAS に存在するか
-- `docs/setup/image_gen_verify.md` のチェックリストを実施
+- `docs/image_gen/setup/verify.md` のチェックリストを実施
 
 ### 「開く」リンクが 502 になる
 
@@ -210,9 +210,9 @@ Secretary-bot 側は「確定したワークフローを日常的に叩く」用
 
 ## 関連ドキュメント
 
-- `docs/design/image_gen_design.md` — 画像生成基盤全体の設計
-- `docs/design/image_gen_api.md` — Pi ↔ Windows Agent の API 仕様
-- `docs/design/image_gen_nas_setup.md` — NAS 配置・命名規則
-- `docs/setup/image_gen_setup.md` — 初期セットアップ手順
-- `docs/setup/image_gen_mainpc.md` / `image_gen_subpc.md` / `image_gen_pi.md` — 各 PC ごとのセットアップ
-- `docs/setup/image_gen_verify.md` — 動作確認チェックリスト
+- `docs/image_gen/design.md` — 画像生成基盤全体の設計
+- `docs/image_gen/api.md` — Pi ↔ Windows Agent の API 仕様
+- `docs/image_gen/nas_setup.md` — NAS 配置・命名規則
+- `docs/image_gen/setup/README.md` — 初期セットアップ手順
+- `docs/image_gen/setup/mainpc.md` / `subpc.md` / `pi.md` — 各 PC ごとのセットアップ
+- `docs/image_gen/setup/verify.md` — 動作確認チェックリスト

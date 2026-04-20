@@ -1,6 +1,6 @@
 """image_gen FastAPI router — /capability, /image/generate, /cache/sync, /comfyui/status。
 
-API 仕様: docs/design/image_gen_api.md
+API 仕様: docs/image_gen/api.md
 """
 from __future__ import annotations
 

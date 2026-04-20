@@ -1,7 +1,7 @@
 # 画像生成 Windows Agent API 仕様書
 
 > 対象: `windows-agent/agent.py`（FastAPI, `:7777`）の画像生成関連エンドポイント
-> 関連: [`image_gen_design.md`](image_gen_design.md)
+> 関連: [`design.md`](design.md)
 > 版: 2026-04-15（初版）
 
 ---

@@ -1,7 +1,7 @@
 # image_gen 残タスク管理
 
 > 調査日: 2026-04-16
-> 参照: `docs/design/image_gen_design.md`, `docs/design/image_gen_api.md`
+> 参照: `docs/image_gen/design.md`, `docs/image_gen/api.md`
 
 実装を終えた項目は `[x]` にし、該当節の末尾に「実装日: YYYY-MM-DD」と実装ファイル/コミットメモを残す。
 
@@ -29,7 +29,7 @@
   - [x] `GET /setup` で task 一覧
   - config の `image_gen.setup.{comfyui_repo, comfyui_ref, kohya_repo, kohya_ref, cuda_index_url}` で既定値上書き可
 - [x] **SubPC 動作検証の手順整備** — 実機作業のためドキュメントのみ整備（2026-04-16）
-  - `docs/setup/image_gen_verify.md` 付録 C にセットアップ系 API の手順を追記
+  - `docs/image_gen/setup/verify.md` 付録 C にセットアップ系 API の手順を追記
   - 実機疎通は §1「E2E 正常系チェックリスト」をユーザー側で実施
 
 ## Phase 3（プロンプト / Discord 連携）
@@ -61,7 +61,7 @@
 
 ## ドキュメント側の未確定事項（実運用で詰める）
 
-- `image_gen_api.md` §12
+- `api.md` §12
   - Preview イベント送出頻度
   - `/system/logs follow=true` バッファ上限
   - kohya sample_prompts 埋め込み方法

@@ -1,6 +1,6 @@
 # NAS 共有ディレクトリ 初期化・運用手順書
 
-secretary-bot の AI 画像生成機能（`docs/design/image_gen_design.md`）で使う NAS 共有 `ai-image/` の初期化および運用手順。モデル・生成画像・LoRA データセットの**正本**置き場として扱う。
+secretary-bot の AI 画像生成機能（`docs/image_gen/design.md`）で使う NAS 共有 `ai-image/` の初期化および運用手順。モデル・生成画像・LoRA データセットの**正本**置き場として扱う。
 
 ---
 
@@ -380,6 +380,6 @@ rm /mnt/ai-image/workflows/_cross_test.txt
 
 ## 付録: 関連設計
 
-- 全体像: `docs/design/image_gen_design.md`
-- API 仕様（予定）: `docs/design/image_gen_api.md`
+- 全体像: `docs/image_gen/design.md`
+- API 仕様（予定）: `docs/image_gen/api.md`
 - `.env` 追加項目: `SECRETARY_BOT_ROOT`, `SECRETARY_BOT_CACHE`, `NAS_HOST` ほか

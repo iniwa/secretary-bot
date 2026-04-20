@@ -14,10 +14,10 @@ secretary-bot の画像生成機能（`image_gen` / `lora_train` / `prompt_sessi
 - **コマンド**: bash 前提
 
 ## 関連ドキュメント
-- 設計: `docs/design/image_gen_design.md`
-- NAS 初期化: `docs/design/image_gen_nas_setup.md`（**NAS 側と Pi マウント詳細はこちらを必ず読む**）
-- WebGUI API: `docs/design/image_gen_api.md`
-- 最終確認: `docs/setup/image_gen_verify.md`（次ステップ）
+- 設計: `docs/image_gen/design.md`
+- NAS 初期化: `docs/image_gen/nas_setup.md`（**NAS 側と Pi マウント詳細はこちらを必ず読む**）
+- WebGUI API: `docs/image_gen/api.md`
+- 最終確認: `docs/image_gen/setup/verify.md`（次ステップ）
 
 ---
 
@@ -60,13 +60,13 @@ curl -sS -m 3 http://192.168.1.102:7777/health
 dpkg -s cifs-utils 2>/dev/null | grep -E '^Status:' || echo "NOT INSTALLED"
 ```
 
-未インストールなら次章で入れる。詳細手順は `docs/design/image_gen_nas_setup.md` §4.1 参照。
+未インストールなら次章で入れる。詳細手順は `docs/image_gen/nas_setup.md` §4.1 参照。
 
 ---
 
 ## 2. NAS SMB マウント（Pi 側）
 
-詳細は `docs/design/image_gen_nas_setup.md` §3〜§4.1 を参照。ここでは要点のみ。
+詳細は `docs/image_gen/nas_setup.md` §3〜§4.1 を参照。ここでは要点のみ。
 
 ### 2.1 必要パッケージ
 ```bash
@@ -381,7 +381,7 @@ dmesg | tail -40 | grep -i cifs
 ```
 - ネットワーク断後に復活しないなら `/etc/fstab` の `x-systemd.automount,nofail` を再確認
 - 認証エラーは `/etc/cifs-credentials-ai-image` を疑う
-- 詳細は `docs/design/image_gen_nas_setup.md` §8
+- 詳細は `docs/image_gen/nas_setup.md` §8
 
 ### 8.3 Dispatcher が queued から動かない
 考えられる原因:
@@ -434,7 +434,7 @@ docker logs --since 5m secretary-bot 2>&1 | grep -iE 'dispatch|agent|capability'
 
 ## 10. 次ステップ
 
-- **E2E 最終確認**: `docs/setup/image_gen_verify.md` を実行
+- **E2E 最終確認**: `docs/image_gen/setup/verify.md` を実行
   - ComfyUI 側ワークフローが想定通り動くか
   - LoRA 学習パイプライン（`lora_train`）のスモークテスト
   - プロンプトセッション（`prompt_session`）の対話経由起動
