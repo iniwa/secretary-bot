@@ -6,7 +6,10 @@ pytest でもそのまま走る。
 import unittest
 
 from src.units.image_gen.section_composer import (
-    ComposedTag, ComposeResult, SectionInput, compose_prompt,
+    ComposedTag,
+    ComposeResult,
+    SectionInput,
+    compose_prompt,
 )
 
 

@@ -68,7 +68,7 @@ class GpuMemoryMonitor:
                 *[self._fetch_one(self._url_to_instance[u]) for u in urls],
                 return_exceptions=True,
             )
-            for url, result in zip(urls, results):
+            for url, result in zip(urls, results, strict=False):
                 if isinstance(result, Exception):
                     # 取得失敗時は古い値を保持せず削除（フェイルセーフ＝許可）
                     self._used_bytes.pop(url, None)

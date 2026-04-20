@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
@@ -26,10 +25,10 @@ def _verify(request: Request) -> None:
 async def _do_capture(
     backend: str,
     monitor: int,
-    crop: Optional[dict],
-    obs_host: Optional[str],
-    obs_port: Optional[int],
-    obs_source: Optional[str],
+    crop: dict | None,
+    obs_host: str | None,
+    obs_port: int | None,
+    obs_source: str | None,
 ) -> bytes:
     if backend == "mss":
         return await run_in_threadpool(capture_mss, monitor, crop)
@@ -69,7 +68,7 @@ async def capture_endpoint(request: Request):
 async def extract_endpoint(
     request: Request,
     file: UploadFile = File(...),
-    model: Optional[str] = None,
+    model: str | None = None,
 ):
     """multipart で画像受信 → VLM 抽出結果を返す。
 

@@ -83,7 +83,7 @@ class ContextSourceRegistry:
         )
 
         collected: list[dict] = []
-        for source, result in zip(active_sources, raw_results):
+        for source, result in zip(active_sources, raw_results, strict=False):
             if isinstance(result, Exception):
                 log.warning("ContextSource %s raised: %s", source.name, result)
             elif result is not None:
@@ -97,7 +97,7 @@ class ContextSourceRegistry:
             *[self._score_one(r["source"], r["data"], shared) for r in collected],
             return_exceptions=True,
         )
-        for r, sc in zip(collected, scores):
+        for r, sc in zip(collected, scores, strict=False):
             r["salience"] = sc if isinstance(sc, float) else 0.5
 
         # always_include 分離

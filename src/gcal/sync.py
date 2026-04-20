@@ -7,7 +7,7 @@ calendar_events テーブルにキャッシュする。is_private=1 のソース
 
 import asyncio
 import functools
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from googleapiclient.errors import HttpError
 
@@ -69,7 +69,7 @@ async def _sync_one(
     lookahead_days: int,
 ) -> int:
     """1つのカレンダーを同期。取得件数を返す。"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     end = now + timedelta(days=lookahead_days)
 
     loop = asyncio.get_event_loop()

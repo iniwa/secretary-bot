@@ -38,9 +38,10 @@ def register(app: FastAPI, bot) -> None:
     @app.get("/tools/image-gen/")
     @app.get("/tools/image-gen")
     async def _image_gen_index():
-        from fastapi.responses import HTMLResponse
-        import hashlib
         import glob as _glob
+        import hashlib
+
+        from fastapi.responses import HTMLResponse
         index_path = os.path.join(_STATIC_DIR, "index.html")
         if not os.path.exists(index_path):
             return {"error": "index.html not found", "static_dir": _STATIC_DIR}

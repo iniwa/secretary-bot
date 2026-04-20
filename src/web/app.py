@@ -839,7 +839,7 @@ def create_web_app(bot) -> FastAPI:
     async def get_loaded_units():
         """現在ロードされているユニット一覧を返す。"""
         units = []
-        for name, unit in bot.unit_manager.units.items():
+        for unit in bot.unit_manager.units.values():
             actual = getattr(unit, "unit", unit)
             units.append({
                 "name": actual.UNIT_NAME,
@@ -887,9 +887,6 @@ def create_web_app(bot) -> FastAPI:
             raise HTTPException(400, f"unknown collection: {collection}")
         if not q.strip():
             raise HTTPException(400, "query parameter 'q' is required")
-        results = bot.chroma.search(collection, q.strip(), n_results=n)
-        # Add id from ChromaDB (search doesn't return ids by default)
-        # Re-fetch with query to include ids
         col = bot.chroma.get_collection(collection)
         try:
             raw = col.query(query_texts=[q.strip()], n_results=n, include=["documents", "metadatas", "distances"])
@@ -1031,8 +1028,9 @@ def create_web_app(bot) -> FastAPI:
     @app.post("/api/stt/resummarize", dependencies=[Depends(_verify)])
     async def stt_resummarize(request: Request):
         """指定した stt_summaries 行を現在のプロンプトで作り直す。ids=[...] または all_non_japanese=true。"""
-        from src.stt.processor import STTProcessor
         import re
+
+        from src.stt.processor import STTProcessor
         body = await request.json()
         processor = STTProcessor(bot)
 
@@ -1318,7 +1316,7 @@ def create_web_app(bot) -> FastAPI:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=30)
                         yield f"data: {json.dumps(event)}\n\n"
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield ": keepalive\n\n"
             except asyncio.CancelledError:
                 pass
@@ -1877,7 +1875,9 @@ def create_web_app(bot) -> FastAPI:
     def _activity_cutoff(days: int) -> str | None:
         """days=0 は全期間（None）。それ以外は「今日を含む直近 days 日」の起点 00:00（JST）。
         例: days=7 かつ今日=2026-04-15 → '2026-04-09 00:00:00'。"""
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
         if days <= 0:
             return None
         _JST = _tz(_td(hours=9))
@@ -1890,7 +1890,8 @@ def create_web_app(bot) -> FastAPI:
         """期間指定を where 断片とパラメータに変換。
         start/end (YYYY-MM-DD) が与えられたら優先。end は排他的終端として翌日00:00を使う。
         """
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
+        from datetime import timedelta as _td
         parts: list[str] = []
         params: list = []
         meta: dict = {}
@@ -2516,7 +2517,7 @@ def create_web_app(bot) -> FastAPI:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=30)
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield ": keepalive\n\n"
             except asyncio.CancelledError:
                 pass
@@ -2670,7 +2671,7 @@ def create_web_app(bot) -> FastAPI:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=30)
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield ": keepalive\n\n"
             except asyncio.CancelledError:
                 pass
@@ -2715,7 +2716,7 @@ def create_web_app(bot) -> FastAPI:
             kinds = r.get("result_kinds") or []
             if len(kinds) != len(paths):
                 kinds = ["image"] * len(paths)
-            for p, kind in zip(paths, kinds):
+            for p, kind in zip(paths, kinds, strict=False):
                 items.append({
                     "job_id": r.get("job_id"),
                     "path": p,
@@ -3384,6 +3385,7 @@ def create_web_app(bot) -> FastAPI:
     async def image_file(path: str):
         """NAS 配下の画像ファイルを配信（path traversal ガード付き）。"""
         from pathlib import Path
+
         from fastapi.responses import FileResponse
 
         if not path:
@@ -3476,7 +3478,8 @@ def create_web_app(bot) -> FastAPI:
             with open(html_path, encoding="utf-8") as f:
                 html = f.read()
             # Cache busting: append version query to JS/CSS references
-            import hashlib, glob as _glob
+            import glob as _glob
+            import hashlib
             static_dir_path = os.path.join(os.path.dirname(__file__), "static")
             h = hashlib.md5()
             for p in sorted(_glob.glob(os.path.join(static_dir_path, "**", "*.js"), recursive=True)):

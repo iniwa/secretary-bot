@@ -103,7 +103,7 @@ class WhisperEngine:
             self._model_name,
             torch_dtype=torch_dtype,
         ).to(self._device)
-        print(f"[WhisperEngine] Model loaded.")
+        print("[WhisperEngine] Model loaded.")
 
     def _reset_unload_timer(self) -> None:
         if self._unload_timer:

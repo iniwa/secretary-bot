@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any
-
 
 # ジョブ状態の定数（文字列）
 STATUS_QUEUED = "queued"

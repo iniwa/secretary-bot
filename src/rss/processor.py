@@ -65,7 +65,7 @@ class RSSProcessor:
         summaries = [first_summary, *rest_summaries]
 
         count = 0
-        for article, summary in zip(articles, summaries):
+        for article, summary in zip(articles, summaries, strict=False):
             if isinstance(summary, Exception):
                 log.warning("RSS summary failed for article %d: %s", article["id"], summary)
                 continue

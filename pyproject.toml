@@ -1,0 +1,49 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "temp",
+    ".playwright-mcp",
+    "windows-agent/tools/input-relay",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+]
+ignore = [
+    "E501",  # line too long（既存コードに長行が多いため初回は無効化）
+    "B008",  # function call in default arg（FastAPI Depends で頻出）
+    "B904",  # raise ... from err（既存に多数）
+    "E701",  # multiple statements on one line (colon) - 簡潔な分岐で許容
+    "E702",  # multiple statements on one line (semicolon) - SQL SET 構築等で許容
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "F811"]
+"src/tools/zzz_disc/models.py" = ["E741"]  # マスターデータ定義で短縮変数が多い
+# activity/collector.py の restore_open_sessions 内 async クロージャは
+# 同一イテレーション内で即 await するため、B023 は誤検知
+"src/activity/collector.py" = ["B023"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

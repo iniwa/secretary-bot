@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
 from src.errors import (
-    AgentCommunicationError, ComfyUIError, OOMError,
-    CacheSyncError, ResourceUnavailableError, TransientError,
-    ValidationError, WorkflowValidationError,
+    AgentCommunicationError,
+    CacheSyncError,
+    ComfyUIError,
+    OOMError,
+    ResourceUnavailableError,
+    TransientError,
+    ValidationError,
+    WorkflowValidationError,
 )
 from src.logger import get_logger, get_trace_id
 

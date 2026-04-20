@@ -1,12 +1,13 @@
 """ネット検索ユニット。SearXNG で検索し、各ページ本文を取得してLLM で要約する。"""
 
 import asyncio
+
 import httpx
 
 from src.fetch_utils import fetch_page_text
 from src.flow_tracker import get_flow_tracker
-from src.units.base_unit import BaseUnit
 from src.logger import get_logger
+from src.units.base_unit import BaseUnit
 
 log = get_logger(__name__)
 

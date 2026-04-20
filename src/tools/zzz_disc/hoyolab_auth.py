@@ -12,6 +12,7 @@ Pi のような headless 環境では captcha 突破のためのブラウザ UI 
 from __future__ import annotations
 
 from src.logger import get_logger
+
 from . import models
 
 log = get_logger(__name__)

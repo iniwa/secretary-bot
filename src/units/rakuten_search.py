@@ -8,8 +8,8 @@ import urllib.parse
 import httpx
 
 from src.flow_tracker import get_flow_tracker
-from src.units.base_unit import BaseUnit
 from src.logger import get_logger
+from src.units.base_unit import BaseUnit
 
 log = get_logger(__name__)
 
@@ -101,8 +101,6 @@ def _extract_item_from_card(card_html: str) -> dict | None:
         m = re.search(rf'{name}="([^"]*)"', card_html)
         return m.group(1) if m else ""
 
-    item_id = _attr("data-id")
-    shop_id = _attr("data-shop-id")
     raw_price = _attr("data-track-price")
     card_type = _attr("data-card-type")
 

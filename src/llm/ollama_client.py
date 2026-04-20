@@ -73,7 +73,7 @@ class OllamaClient:
             return_exceptions=True,
         )
         self._available_urls = []
-        for url, result in zip(self.urls, results):
+        for url, result in zip(self.urls, results, strict=False):
             if isinstance(result, dict):
                 self._available_urls.append(url)
                 self._instance_models[url] = result["models"]

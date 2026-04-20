@@ -4,16 +4,17 @@ import asyncio
 import os
 import socket
 import subprocess
-import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
-
-from activity.game_detector import get_activity as get_game_activity, reload_process_map
+from activity.game_detector import get_activity as get_game_activity
+from activity.game_detector import reload_process_map
 from activity.obs_manager import OBSManager, create_obs_manager
+from fastapi import FastAPI, HTTPException, Request
+from tools.image_gen import init_image_gen
+from tools.image_gen import router as image_gen_router
 from tools.tool_manager import ToolManager, create_tool_manager
+
 from tools.zzz_disc import router as zzz_disc_router
-from tools.image_gen import router as image_gen_router, init_image_gen
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _tool_manager: ToolManager | None = None
@@ -141,9 +142,9 @@ async def lifespan(app: FastAPI):
     if stt_cfg.get("enabled", False):
         if role == "sub":
             # Sub PC: ローカルパイプライン（キャプチャ + Whisper推論）
+            from stt.local_pipeline import LocalSTTPipeline
             from stt.mic_capture import MicCapture
             from stt.whisper_engine import WhisperEngine
-            from stt.local_pipeline import LocalSTTPipeline
             _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
             _stt_capture = MicCapture(stt_cfg.get("capture", {}))
             _stt_pipeline = LocalSTTPipeline(_stt_capture, _whisper_engine, stt_cfg.get("pipeline", {}))
@@ -259,8 +260,8 @@ def _fetch_input_relay_status() -> dict | None:
     （呼び出し側は従来動作へフォールバック）。
     """
     try:
-        import urllib.request
         import json as _json
+        import urllib.request
         with urllib.request.urlopen("http://127.0.0.1:8082/api/status", timeout=0.5) as r:
             if r.status == 200:
                 return _json.loads(r.read())
@@ -457,8 +458,8 @@ async def stt_control(request: Request):
 
         if _agent_role == "sub":
             # Sub PC: ローカルパイプライン
-            from stt.whisper_engine import WhisperEngine
             from stt.local_pipeline import LocalSTTPipeline
+            from stt.whisper_engine import WhisperEngine
             if not _whisper_engine:
                 stt_cfg = _agent_config.get("stt", {})
                 _whisper_engine = WhisperEngine(stt_cfg.get("model", {}))
@@ -613,8 +614,8 @@ async def obs_logs(request: Request, lines: int = 100):
             obs_keywords = {"obs", "moved", "recording", "replay", "screenshot",
                             "sweep", "compress", "cleanup", "stray", "pngquant"}
             obs_lines = [
-                l.rstrip() for l in all_lines
-                if any(kw in l.lower() for kw in obs_keywords)
+                line.rstrip() for line in all_lines
+                if any(kw in line.lower() for kw in obs_keywords)
             ]
             log_entries = obs_lines[-lines:]
     except Exception:
@@ -657,6 +658,7 @@ async def cancel_shutdown(request: Request):
 
 if __name__ == "__main__":
     import logging
+
     import uvicorn
 
     log_dir = os.path.join(os.path.dirname(__file__), "logs")

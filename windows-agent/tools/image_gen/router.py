@@ -10,7 +10,6 @@ import json
 import os
 import time
 import uuid
-from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -18,7 +17,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .cache_manager import (
     SyncProgress,
-    cache_models_root,
     cache_usage_gb,
     copy_with_progress,
     iter_cache_entries,
@@ -31,13 +29,16 @@ from .comfyui_manager import ComfyUIManager
 from .nas_mount import ensure_mounted
 from .setup_manager import (
     get_task as _setup_get_task,
+)
+from .setup_manager import (
     list_tasks as _setup_list_tasks,
+)
+from .setup_manager import (
     run_comfyui_setup,
     run_comfyui_update,
     run_kohya_setup,
 )
 from .workflow_runner import ImageJob, WorkflowRunner, substitute_placeholders
-
 
 router = APIRouter()
 
@@ -50,8 +51,8 @@ class _Ctx:
     agent_id: str = "unknown"
     image_gen_cfg: dict = {}
     agent_dir: str = ""
-    comfy: Optional[ComfyUIManager] = None
-    nas_drive: Optional[str] = None
+    comfy: ComfyUIManager | None = None
+    nas_drive: str | None = None
     jobs: dict[str, ImageJob] = {}
     syncs: dict[str, SyncProgress] = {}
     # sync 用非同期イベント配信: sync_id -> list[Queue]
@@ -107,7 +108,7 @@ def _trace_id(request: Request) -> str:
     return request.headers.get("X-Trace-Id") or f"agent_{uuid.uuid4().hex[:12]}"
 
 
-def _error_response(status: int, error_class: str, message: str, retryable: bool, detail: Optional[dict] = None, trace_id: str = "") -> JSONResponse:
+def _error_response(status: int, error_class: str, message: str, retryable: bool, detail: dict | None = None, trace_id: str = "") -> JSONResponse:
     body = {
         "error_class": error_class,
         "message": message,
@@ -118,7 +119,7 @@ def _error_response(status: int, error_class: str, message: str, retryable: bool
     return JSONResponse(status_code=status, content=body, headers=headers)
 
 
-def _require_enabled(trace_id: str) -> Optional[JSONResponse]:
+def _require_enabled(trace_id: str) -> JSONResponse | None:
     if not _ctx.image_gen_cfg.get("enabled", False):
         return _error_response(503, "ResourceUnavailableError", "image_gen disabled on this agent", True, trace_id=trace_id)
     return None
@@ -442,7 +443,7 @@ def _nas_base_fallback() -> str:
     return f"{drive}\\{subpath}" if subpath else drive
 
 
-def _decide_source_path(cache_root: str, type_: str, filename: str, nas_path: Optional[str]) -> str:
+def _decide_source_path(cache_root: str, type_: str, filename: str, nas_path: str | None) -> str:
     """NAS の絶対 SMB パス or image_gen.nas.mount_drive ベースで解決。"""
     if nas_path:
         # `//nas/share/path` → Windows UNC `\\nas\share\path` に変換
@@ -609,7 +610,7 @@ async def cache_sync_stream(sync_id: str, request: Request):
             while True:
                 try:
                     evt = await asyncio.wait_for(q.get(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if time.time() - last_keepalive > 15:
                         yield ": keepalive\n\n"
                         last_keepalive = time.time()
@@ -651,7 +652,7 @@ def _build_output_dir() -> str:
     return os.path.join(base + os.sep, rel)
 
 
-async def _ensure_comfyui_started() -> Optional[dict]:
+async def _ensure_comfyui_started() -> dict | None:
     """起動保証。エラーがあれば error 辞書を返す、成功なら None。"""
     if _ctx.comfy is None:
         return {"error_class": "ResourceUnavailableError", "message": "comfyui manager not initialized", "retryable": False}
@@ -814,7 +815,7 @@ async def image_job_stream(job_id: str, request: Request):
         while True:
             try:
                 evt = await asyncio.wait_for(job.events.get(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if time.time() - last_keepalive > 15:
                     yield ": keepalive\n\n"
                     last_keepalive = time.time()

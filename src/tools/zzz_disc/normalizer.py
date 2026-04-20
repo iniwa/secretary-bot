@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 try:
-    from rapidfuzz import process, fuzz  # type: ignore
+    from rapidfuzz import fuzz, process  # type: ignore
     _HAS_RAPIDFUZZ = True
 except Exception:
     _HAS_RAPIDFUZZ = False

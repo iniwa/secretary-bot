@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Optional
 
 
-def _find_existing_mapping(unc: str) -> Optional[str]:
+def _find_existing_mapping(unc: str) -> str | None:
     """net use 出力から UNC が既にマップされているドライブレターを探す。
 
     管理者/ユーザー両セッションの混在や、同 UNC への二重マップを避けるため、
@@ -124,7 +123,7 @@ def mount_image_gen_nas(image_gen_cfg: dict, agent_dir: str) -> dict:
         return {"ok": False, "drive": drive, "unc": unc, "base": base, "message": f"exception: {e}"}
 
 
-def ensure_mounted(image_gen_cfg: dict, agent_dir: str) -> Optional[str]:
+def ensure_mounted(image_gen_cfg: dict, agent_dir: str) -> str | None:
     """マウント済み or 新規マウント成功なら実効ベースパス（drive[\\subpath]）を返す。失敗時 None。"""
     result = mount_image_gen_nas(image_gen_cfg, agent_dir)
     if result["ok"]:

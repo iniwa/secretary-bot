@@ -6,8 +6,9 @@ Agent 選定は bot.unit_manager.agent_pool.select_agent(preferred="windows") �
 
 from __future__ import annotations
 
-import os
 import base64
+import os
+
 import httpx
 
 

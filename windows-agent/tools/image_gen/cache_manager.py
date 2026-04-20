@@ -8,9 +8,8 @@ import hashlib
 import os
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
-
 
 # models サブディレクトリ許可リスト（API 仕様 §3.2 files[].type）
 _ALLOWED_TYPES = {
@@ -24,7 +23,7 @@ class CacheEntry:
     type: str
     filename: str
     size: int
-    sha256: Optional[str]
+    sha256: str | None
     mtime: float
     path: str
 
@@ -54,7 +53,7 @@ def sha256_of_file(path: str, block: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
-def sidecar_sha256(path: str) -> Optional[str]:
+def sidecar_sha256(path: str) -> str | None:
     side = path + ".sha256"
     if not os.path.exists(side):
         return None
@@ -108,9 +107,9 @@ class SyncProgress:
     status: str = "queued"   # queued / running / done / failed / cancelled
     total_bytes: int = 0
     bytes_done: int = 0
-    current_file: Optional[str] = None
+    current_file: str | None = None
     mbps: float = 0.0
-    error: Optional[dict] = None
+    error: dict | None = None
     file_results: list[dict] = field(default_factory=list)
     cancelled: bool = False
 

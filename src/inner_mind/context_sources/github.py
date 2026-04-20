@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -57,7 +57,7 @@ class GitHubSource(ContextSource):
                 log.warning("GitHubSource fetch failed: %s", e)
                 return
             self._cache = self._filter_and_format(events)
-            self._cache_at = datetime.now(timezone.utc)
+            self._cache_at = datetime.now(UTC)
 
     async def _fetch_events(self) -> list[dict]:
         token = self._token()
@@ -77,7 +77,7 @@ class GitHubSource(ContextSource):
         cfg = self._cfg()
         lookback = int(cfg.get("lookback_hours", 24))
         max_items = int(cfg.get("max_items", 8))
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback)
+        cutoff = datetime.now(UTC) - timedelta(hours=lookback)
 
         out: list[dict] = []
         for ev in events:
@@ -163,7 +163,7 @@ class GitHubSource(ContextSource):
         # 1時間以内のイベントがあれば高める
         try:
             latest = datetime.fromisoformat(events[0]["at"])
-            age_hours = (datetime.now(timezone.utc) - latest).total_seconds() / 3600
+            age_hours = (datetime.now(UTC) - latest).total_seconds() / 3600
             if age_hours <= 1:
                 base = min(1.0, base + 0.35)
             elif age_hours <= 6:

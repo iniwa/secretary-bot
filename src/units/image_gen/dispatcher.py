@@ -19,16 +19,25 @@ import random
 import re
 import time
 from datetime import datetime, timedelta, timezone
+
 from src.database import jst_now
 from src.errors import (
-    ImageGenError, OOMError, AgentCommunicationError,
-    ValidationError, is_retryable,
+    AgentCommunicationError,
+    ImageGenError,
+    OOMError,
+    ValidationError,
+    is_retryable,
 )
 from src.logger import get_logger, new_trace_id
 from src.units.image_gen.agent_client import AgentClient
 from src.units.image_gen.models import (
-    STATUS_QUEUED, STATUS_DISPATCHING, STATUS_WARMING_CACHE, STATUS_RUNNING,
-    STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, TransitionEvent,
+    STATUS_DISPATCHING,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_WARMING_CACHE,
+    TransitionEvent,
 )
 
 log = get_logger(__name__)
@@ -133,7 +142,7 @@ class Dispatcher:
                 await asyncio.wait_for(
                     self._wake_event.wait(), timeout=_POLL_INTERVAL_SEC,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._wake_event.clear()
 
@@ -614,7 +623,7 @@ class Dispatcher:
                     self._wake_event.wait(),
                     timeout=_STUCK_REAPER_INTERVAL_SEC,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def _handle_timeout(self, job: dict) -> None:

@@ -16,7 +16,7 @@ import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -102,15 +102,15 @@ class ImageJob:
     job_id: str
     status: str = "queued"     # queued / running / done / failed / cancelled
     progress: int = 0
-    comfyui_prompt_id: Optional[str] = None
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
+    comfyui_prompt_id: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
     result_paths: list[str] = field(default_factory=list)
     result_kinds: list[str] = field(default_factory=list)
-    last_error: Optional[dict] = None
+    last_error: dict | None = None
     events: asyncio.Queue = field(default_factory=asyncio.Queue)
     cancelled: bool = False
-    trace_id: Optional[str] = None
+    trace_id: str | None = None
 
     async def put(self, event: str, data: dict) -> None:
         await self.events.put({"event": event, "data": data})
@@ -131,7 +131,7 @@ class WorkflowRunner:
     async def queue_prompt(
         self,
         workflow: dict,
-        client_id: Optional[str] = None,
+        client_id: str | None = None,
     ) -> dict:
         cid = client_id or self._client_id
         payload = {"prompt": workflow, "client_id": cid}
@@ -230,7 +230,7 @@ class WorkflowRunner:
                             return
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             continue
                         if isinstance(msg, bytes):
                             # preview PNG バイナリ（8byte ヘッダ + PNG）。

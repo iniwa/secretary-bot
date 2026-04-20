@@ -16,9 +16,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
-
 
 # `(tag:weight)` 記法: `tag` と `weight` を抽出、weight は任意
 _WEIGHTED_RE = re.compile(r"^\((?P<tag>.+?)\s*(?::\s*(?P<w>[-+]?\d*\.?\d+))?\)$")
@@ -121,7 +120,7 @@ class SectionInput:
     negative: str | None
 
     @classmethod
-    def from_row(cls, row: dict) -> "SectionInput":
+    def from_row(cls, row: dict) -> SectionInput:
         return cls(
             id=row.get("id"),
             category_key=row.get("category_key"),

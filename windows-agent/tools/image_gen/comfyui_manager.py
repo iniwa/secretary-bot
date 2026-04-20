@@ -10,24 +10,22 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
-import shutil
 import subprocess
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
 
 import httpx
 
 
 @dataclass
 class ComfyUIState:
-    pid: Optional[int] = None
-    started_at: Optional[float] = None
-    last_health_at: Optional[float] = None
-    last_error: Optional[str] = None
+    pid: int | None = None
+    started_at: float | None = None
+    last_health_at: float | None = None
+    last_error: str | None = None
     restart_count: int = 0
     available: bool = False
     log_tail: deque = field(default_factory=lambda: deque(maxlen=500))
@@ -51,15 +49,15 @@ class ComfyUIManager:
         self.health_check_interval_seconds = int(health_check_interval_seconds)
         self.crash_restart_max_retries = int(crash_restart_max_retries)
         self.state = ComfyUIState()
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._monitor_stop = threading.Event()
         self._logger = logger
         # Windows で stdout を PIPE にすると tqdm の stderr.flush で EINVAL を踏むため
         # real file にリダイレクトする。state.log_tail 用に別スレッドで tail する。
         self._log_fh = None
-        self._log_path: Optional[str] = None
+        self._log_path: str | None = None
         self._log_tail_stop = threading.Event()
 
     @property
@@ -86,7 +84,7 @@ class ComfyUIManager:
         else:
             print(line, flush=True)
 
-    def _resolve_entry(self) -> Optional[list[str]]:
+    def _resolve_entry(self) -> list[str] | None:
         """ComfyUI の起動コマンドを組み立てる。
 
         優先順:
@@ -128,7 +126,7 @@ class ComfyUIManager:
         except Exception:
             return False
 
-    async def wait_until_ready(self, timeout: Optional[int] = None) -> bool:
+    async def wait_until_ready(self, timeout: int | None = None) -> bool:
         # 採用済み（外部プロセスを adopt）時は自前の Popen が無いので
         # is_running() が False になる。既に available なら即 True を返す。
         if self.state.available and self._proc is None:
@@ -231,7 +229,7 @@ class ComfyUIManager:
         if not self._log_path:
             return
         try:
-            f = open(self._log_path, "r", encoding="utf-8", errors="replace")
+            f = open(self._log_path, encoding="utf-8", errors="replace")
         except OSError:
             return
         try:

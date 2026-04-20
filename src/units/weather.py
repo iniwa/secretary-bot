@@ -1,10 +1,10 @@
 """天気予報ユニット — Open-Meteo API を使った天気予報取得・毎朝通知。"""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import httpx
 
-from src.database import JST, jst_now
+from src.database import JST
 from src.flow_tracker import get_flow_tracker
 from src.memory.people_memory import PeopleMemory
 from src.units.base_unit import BaseUnit

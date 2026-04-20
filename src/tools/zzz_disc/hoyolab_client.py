@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from src.logger import get_logger
+
 from . import models
 
 log = get_logger(__name__)

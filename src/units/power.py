@@ -6,8 +6,8 @@ import time
 import httpx
 
 from src.flow_tracker import get_flow_tracker
-from src.units.base_unit import BaseUnit
 from src.logger import get_logger
+from src.units.base_unit import BaseUnit
 
 log = get_logger(__name__)
 

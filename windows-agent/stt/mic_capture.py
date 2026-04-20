@@ -4,7 +4,7 @@ import io
 import threading
 import wave
 from collections import deque
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 

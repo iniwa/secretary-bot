@@ -92,7 +92,6 @@ class UnitLLM:
     ) -> "UnitLLM":
         """config.yaml のユニット設定 + グローバル設定からインスタンス生成。"""
         unit_llm_cfg = unit_config.get("llm", {})
-        global_llm_cfg = global_config.get("llm", {})
         character_cfg = global_config.get("character", {})
 
         # ユニット別上書きがある場合のみ設定。Noneならルーターのグローバルモデルを使用

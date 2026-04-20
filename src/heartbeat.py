@@ -56,7 +56,7 @@ class Heartbeat:
     async def _tick(self) -> None:
         try:
             await asyncio.wait_for(self._tick_inner(), timeout=self._TICK_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.error("Heartbeat tick timed out after %ds", self._TICK_TIMEOUT)
         except Exception as e:
             log.error("Heartbeat tick unexpected error: %s", e)
@@ -108,7 +108,7 @@ class Heartbeat:
                     return {"name": name, "ok": False, "error": str(e)}
 
             # 全タスクを並列実行（ユニット群 + STT + RSS + コンテキスト圧縮）
-            tasks = [_safe_heartbeat(u, n) for u, n in zip(units, unit_names)]
+            tasks = [_safe_heartbeat(u, n) for u, n in zip(units, unit_names, strict=False)]
             tasks.append(self._run_stt())
             tasks.append(self._run_rss())
             tasks.append(self._check_compact())
@@ -339,8 +339,9 @@ class Heartbeat:
         if now.hour == digest_hour and self._rss_digest_sent_today != today_str:
             try:
                 import os
-                from src.rss.recommender import RSSRecommender
+
                 from src.rss.notify import RSSNotifier
+                from src.rss.recommender import RSSRecommender
                 admin_user_id = os.environ.get("WEBGUI_USER_ID", "")
                 recommender = RSSRecommender(self.bot)
                 digest = await recommender.get_digest(admin_user_id)

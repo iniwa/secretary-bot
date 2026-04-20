@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -72,7 +72,7 @@ class TavilyNewsSource(ContextSource):
                 return_exceptions=True,
             )
             aggregated: list[dict] = []
-            for q, res in zip(queries, results):
+            for q, res in zip(queries, results, strict=False):
                 if isinstance(res, Exception):
                     log.warning("TavilyNewsSource query '%s' failed: %s", q, res)
                     continue
@@ -88,7 +88,7 @@ class TavilyNewsSource(ContextSource):
                     seen.add(url)
                     deduped.append(item)
             self._cache = deduped
-            self._cache_at = datetime.now(timezone.utc)
+            self._cache_at = datetime.now(UTC)
 
     async def _search_one(self, query: str, max_results: int, days: int, topic: str) -> list[dict]:
         payload = {

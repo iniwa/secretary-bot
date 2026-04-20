@@ -1,8 +1,8 @@
 """ZZZ Disc Manager: リクエスト/レスポンスDTO（Pydantic）。ビルド中心モデル。"""
 
-from pydantic import BaseModel, Field, model_validator
 from typing import Any
 
+from pydantic import BaseModel, Field, model_validator
 
 # ---------- Discs ----------
 

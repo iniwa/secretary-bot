@@ -387,7 +387,7 @@ class DockerLogMonitorUnit(BaseUnit):
 
         if not valid_frames and raw:
             text = raw.decode("utf-8", errors="replace")
-            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            lines = [line.strip() for line in text.split("\n") if line.strip()]
 
         return lines
 

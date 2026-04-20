@@ -3,7 +3,7 @@
 import threading
 import time
 from collections import Counter, deque
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from stt.mic_capture import MicCapture
 from stt.whisper_engine import WhisperEngine

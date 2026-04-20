@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import time
+from datetime import UTC
 
 import discord
 import yaml
@@ -122,8 +123,8 @@ class SecretaryBot(commands.Bot):
         self, message: discord.Message, minutes: int, limit: int,
     ) -> list[dict]:
         """Discordチャンネルから直近のメッセージ履歴を取得する。"""
-        from datetime import datetime, timedelta, timezone
-        after = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        from datetime import datetime, timedelta
+        after = datetime.now(UTC) - timedelta(minutes=minutes)
         history: list[dict] = []
         try:
             async for msg in message.channel.history(limit=limit + 1, after=after, oldest_first=True):

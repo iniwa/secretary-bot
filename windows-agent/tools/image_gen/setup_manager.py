@@ -14,7 +14,6 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -23,8 +22,8 @@ class SetupTask:
     kind: str                # "comfyui_setup" / "comfyui_update" / "kohya_setup"
     status: str = "running"  # running / done / failed
     started_at: float = field(default_factory=time.time)
-    finished_at: Optional[float] = None
-    error: Optional[str] = None
+    finished_at: float | None = None
+    error: str | None = None
     current_step: str = ""
     log_tail: deque = field(default_factory=lambda: deque(maxlen=400))
 
@@ -44,7 +43,7 @@ class SetupTask:
 _tasks: dict[str, SetupTask] = {}
 
 
-def get_task(task_id: str) -> Optional[SetupTask]:
+def get_task(task_id: str) -> SetupTask | None:
     return _tasks.get(task_id)
 
 
@@ -60,8 +59,8 @@ def _append(task: SetupTask, line: str) -> None:
 
 
 async def _run_cmd(
-    task: SetupTask, cmd: list[str], cwd: Optional[str] = None,
-    env: Optional[dict] = None, timeout: int = 1800,
+    task: SetupTask, cmd: list[str], cwd: str | None = None,
+    env: dict | None = None, timeout: int = 1800,
 ) -> int:
     """サブプロセスを走らせて stdout/stderr を task.log_tail に流す。"""
     task.current_step = " ".join(cmd[:3]) + (" ..." if len(cmd) > 3 else "")
@@ -90,7 +89,7 @@ async def _run_cmd(
         await asyncio.wait_for(
             asyncio.gather(_reader(), proc.wait()), timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _append(task, f"ERR: timeout after {timeout}s")
         try:
             proc.kill()

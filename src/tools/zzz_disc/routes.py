@@ -16,18 +16,30 @@ import json
 import os
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import models
 from .schema import (
-    DiscIn, BuildMetaIn, BuildSavePresetIn, BuildSlotAssignIn,
-    DiscPinIn,
-    HoyolabAccountIn, HoyolabCredentialsIn, HoyolabAutoLoginIn,
-    JobConfirmIn, JobCaptureIn,
-    TeamIn, TeamUpdateIn, TeamSlotIn, TeamGroupIn, TeamGroupUpdateIn,
+    RARITY_LEVEL_MAX,
+    SLOT_ALLOWED_MAIN_STATS,
+    SLOT_FIXED_MAIN_STAT,
+    BuildMetaIn,
+    BuildSavePresetIn,
+    BuildSlotAssignIn,
     CharacterSkillsIn,
-    SLOT_FIXED_MAIN_STAT, SLOT_ALLOWED_MAIN_STATS, RARITY_LEVEL_MAX,
+    DiscIn,
+    DiscPinIn,
+    HoyolabAccountIn,
+    HoyolabAutoLoginIn,
+    HoyolabCredentialsIn,
+    JobCaptureIn,
+    JobConfirmIn,
+    TeamGroupIn,
+    TeamGroupUpdateIn,
+    TeamIn,
+    TeamSlotIn,
+    TeamUpdateIn,
 )
 
 
@@ -408,7 +420,10 @@ def build_router(bot, config: dict) -> APIRouter:
         """
         try:
             from .hoyolab_auth import (
-                auto_login, HoyolabLoginError, InvalidCredentials, CaptchaRequired,
+                CaptchaRequired,
+                HoyolabLoginError,
+                InvalidCredentials,
+                auto_login,
             )
         except ImportError as e:
             raise HTTPException(503, f"hoyolab auth unavailable: {e}")
@@ -466,8 +481,10 @@ def build_router(bot, config: dict) -> APIRouter:
         """保存済み email/password で cookies を再取得。"""
         try:
             from .hoyolab_auth import (
+                CaptchaRequired,
+                HoyolabLoginError,
+                InvalidCredentials,
                 refresh_account_cookies,
-                HoyolabLoginError, InvalidCredentials, CaptchaRequired,
             )
         except ImportError as e:
             raise HTTPException(503, f"hoyolab auth unavailable: {e}")
@@ -604,7 +621,7 @@ def build_router(bot, config: dict) -> APIRouter:
                     try:
                         ev = await asyncio.wait_for(queue.get(), timeout=15.0)
                         yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield ": keepalive\n\n"
             finally:
                 jq.unsubscribe(queue)

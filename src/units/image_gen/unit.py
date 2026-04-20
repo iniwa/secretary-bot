@@ -8,7 +8,6 @@ Discord 連携は execute() + Discord 向け完了通知タスク。
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import os
 from typing import Any
@@ -21,8 +20,13 @@ from src.logger import get_logger
 from src.units.base_unit import BaseUnit
 from src.units.image_gen.dispatcher import Dispatcher
 from src.units.image_gen.models import (
-    JobStatus, TransitionEvent, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED,
-    PLATFORM_DISCORD, DEFAULT_PARAMS,
+    DEFAULT_PARAMS,
+    PLATFORM_DISCORD,
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    JobStatus,
+    TransitionEvent,
 )
 from src.units.image_gen.section_mgr import SectionManager
 from src.units.image_gen.workflow_mgr import WorkflowManager
@@ -303,7 +307,7 @@ class ImageGenUnit(BaseUnit):
             # image のみ添付、video/audio はリンクテキストのみ
             files: list[discord.File] = []
             linked: list[str] = []
-            for p, kind in list(zip(result_paths, result_kinds))[:4]:
+            for p, kind in list(zip(result_paths, result_kinds, strict=False))[:4]:
                 if kind != "image":
                     linked.append(f"[{kind}] {p}")
                     continue

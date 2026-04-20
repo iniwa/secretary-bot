@@ -70,7 +70,6 @@ class ActivityCollector:
         per_pc = {"main": main_data, "sub": sub_data}
 
         # Main の情報は戻り値サマリに入れる（既存互換）
-        any_alive = False
         for pc in _PCS:
             agent = main_agent if pc == "main" else sub_agent
             if not agent:
@@ -100,7 +99,6 @@ class ActivityCollector:
                 )
             self._consecutive_failures[pc] = 0
             self._last_alive_ts[pc] = ts
-            any_alive = True
             if pc == "main":
                 result["alive"] = True
 
@@ -225,7 +223,7 @@ class ActivityCollector:
         if self._poll_task:
             try:
                 await asyncio.wait_for(self._poll_task, timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._poll_task.cancel()
             self._poll_task = None
 
@@ -237,7 +235,7 @@ class ActivityCollector:
                 log.warning("activity poll loop error: %s", e)
             try:
                 await asyncio.wait_for(self._poll_stop.wait(), timeout=self._poll_interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def cleanup_old_samples(self) -> int:

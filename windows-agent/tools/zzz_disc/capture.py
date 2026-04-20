@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import base64
 import io
-from typing import Optional
 
 
-def capture_mss(monitor: int = 1, crop: Optional[dict] = None) -> bytes:
+def capture_mss(monitor: int = 1, crop: dict | None = None) -> bytes:
     """指定モニタをスクショして PNG bytes で返す。
 
     Args:
@@ -36,7 +35,8 @@ def capture_mss(monitor: int = 1, crop: Optional[dict] = None) -> bytes:
 
 def capture_obs(host: str, port: int, password: str, source_name: str) -> bytes:
     """OBS WebSocket でソース画面を取得して PNG bytes で返す。"""
-    from obswebsocket import obsws, requests as obsreq  # type: ignore
+    from obswebsocket import obsws  # type: ignore
+    from obswebsocket import requests as obsreq
 
     ws = obsws(host, port, password)
     ws.connect()

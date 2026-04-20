@@ -9,7 +9,7 @@ from typing import Any
 
 from src.errors import ValidationError
 from src.logger import get_logger
-from src.units.image_gen.models import WorkflowRequirements, DEFAULT_PARAMS
+from src.units.image_gen.models import DEFAULT_PARAMS, WorkflowRequirements
 
 log = get_logger(__name__)
 

@@ -11,13 +11,12 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from typing import Any
 
 from src.logger import get_logger
-from . import models
-from . import normalizer
+
+from . import models, normalizer
 from .capture_client import capture_screenshot
-from .extractor import extract_from_image, capture_and_extract
+from .extractor import capture_and_extract, extract_from_image
 
 log = get_logger(__name__)
 

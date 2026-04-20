@@ -11,7 +11,7 @@
 - `{1-5}` / `{5-1}`       — 整数ランダム（inclusive・両端どちら先でも可）
 - `__name__`              — wildcard_files(name) の内容から 1 行ランダム選択
                              行頭 `#` と空行はコメント扱いで無視
-- エスケープ: `\{` `\|` `\}` `\:` `\\` `\_` 等、任意の 1 文字をリテラル化
+- エスケープ: `\\{` `\\|` `\\}` `\\:` `\\` `\\_` 等、任意の 1 文字をリテラル化
 
 ## 方針
 
@@ -24,9 +24,8 @@ from __future__ import annotations
 
 import random
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
-
 
 # `__name__`（name は英数 / `_` `.` `-`）
 _FILE_RE = re.compile(r"__([A-Za-z0-9_.\-]+)__")

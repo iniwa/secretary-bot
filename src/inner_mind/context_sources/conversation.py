@@ -4,7 +4,6 @@ import asyncio
 import re
 from datetime import datetime
 
-from src.database import JST
 from src.fetch_utils import fetch_page_text
 from src.inner_mind.context_sources.base import ContextSource
 from src.inner_mind.prompts import CONVERSATION_SUMMARY_PROMPT, CONVERSATION_SUMMARY_SYSTEM
@@ -96,7 +95,7 @@ class ConversationSource(ContextSource):
             return {}
         tasks = [fetch_page_text(u, max_chars=_MAX_CHARS_PER_URL) for u in urls]
         results = await asyncio.gather(*tasks)
-        return {u: t for u, t in zip(urls, results) if t}
+        return {u: t for u, t in zip(urls, results, strict=False) if t}
 
     @staticmethod
     def _attach_url_details(messages: list[dict], url_contents: dict):

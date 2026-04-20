@@ -3,7 +3,7 @@
 import asyncio
 import calendar
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from html import unescape
 
@@ -141,7 +141,7 @@ class RSSFetcher:
             if tp:
                 try:
                     epoch = calendar.timegm(tp)
-                    dt = datetime.fromtimestamp(epoch, tz=timezone.utc).astimezone(JST)
+                    dt = datetime.fromtimestamp(epoch, tz=UTC).astimezone(JST)
                     return dt.strftime("%Y-%m-%d %H:%M:%S")
                 except Exception:
                     pass
@@ -150,7 +150,7 @@ class RSSFetcher:
             try:
                 dt = parsedate_to_datetime(raw)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 return dt.astimezone(JST).strftime("%Y-%m-%d %H:%M:%S")
             except Exception:
                 pass

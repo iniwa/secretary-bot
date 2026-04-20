@@ -10,13 +10,13 @@ import json
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
 
 from src.logger import get_logger
 from src.web.cache_headers import NO_CACHE_HEADERS, NoCacheStaticFiles
+
 from . import models
-from .routes import build_router
 from .job_queue import ZzzDiscJobQueue
+from .routes import build_router
 
 log = get_logger(__name__)
 
@@ -115,8 +115,10 @@ def register(app: FastAPI, bot) -> None:
     @app.get("/tools/zzz-disc/")
     @app.get("/tools/zzz-disc")
     async def _zzz_disc_index():
+        import glob as _glob
+        import hashlib
+
         from fastapi.responses import HTMLResponse
-        import hashlib, glob as _glob
         index_path = os.path.join(_STATIC_DIR, "index.html")
         if not os.path.exists(index_path):
             return {"error": "index.html not found", "static_dir": _STATIC_DIR}
