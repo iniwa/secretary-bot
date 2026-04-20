@@ -129,3 +129,69 @@ def remove_dataset_file(path: str) -> None:
         os.remove(txt)
     except FileNotFoundError:
         pass
+
+
+# === LoRA 昇格 (models/loras への配置) ===
+
+_CHECKPOINT_NAME_RE = re.compile(r"^[A-Za-z0-9._\-]+\.safetensors$")
+
+
+def checkpoints_dir(nas_base: str, work_subdir: str, name: str) -> str:
+    return os.path.join(work_dir(nas_base, work_subdir, name), "checkpoints")
+
+
+def loras_dir(nas_base: str, loras_subdir: str, name: str) -> str:
+    return os.path.join(nas_base, loras_subdir, name)
+
+
+def list_checkpoints(nas_base: str, work_subdir: str, name: str) -> list[dict]:
+    """`<NAS>/lora_work/<name>/checkpoints/` の .safetensors 一覧を返す。"""
+    root = checkpoints_dir(nas_base, work_subdir, name)
+    out: list[dict] = []
+    if not os.path.isdir(root):
+        return out
+    for entry in os.scandir(root):
+        if not entry.is_file():
+            continue
+        if not entry.name.lower().endswith(".safetensors"):
+            continue
+        try:
+            st = entry.stat()
+        except OSError:
+            continue
+        out.append({
+            "filename": entry.name,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "path": entry.path,
+        })
+    out.sort(key=lambda e: e["mtime"], reverse=True)
+    return out
+
+
+def promote_checkpoint(
+    nas_base: str, work_subdir: str, loras_subdir: str,
+    name: str, *, checkpoint_filename: str,
+    target_filename: str | None = None,
+) -> str:
+    """`lora_work/<name>/checkpoints/<file>` → `<loras_subdir>/<name>/<file>` へコピー。"""
+    if not _CHECKPOINT_NAME_RE.match(checkpoint_filename):
+        raise ValidationError(
+            f"invalid checkpoint filename: {checkpoint_filename!r}",
+        )
+    src = os.path.join(
+        checkpoints_dir(nas_base, work_subdir, name), checkpoint_filename,
+    )
+    if not os.path.isfile(src):
+        raise ValidationError(f"checkpoint not found: {src}")
+
+    dst_name = target_filename or checkpoint_filename
+    if not _CHECKPOINT_NAME_RE.match(dst_name):
+        raise ValidationError(
+            f"invalid target filename: {dst_name!r}",
+        )
+    dst_dir = loras_dir(nas_base, loras_subdir, name)
+    os.makedirs(dst_dir, exist_ok=True)
+    dst = os.path.join(dst_dir, dst_name)
+    shutil.copy2(src, dst)
+    return dst

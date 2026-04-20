@@ -70,12 +70,12 @@
 | **A** | DB schema (`lora_projects` / `lora_dataset_items` / `lora_train_jobs`) + `LoRAMixin` | [x] 既存 (`src/database/_base.py`, `src/database/lora.py`) |
 | **B** | `src/units/lora_train` ユニット骨格 + project CRUD API + WebGUI 一覧/作成画面 | [x] 2026-04-20 |
 | **B+** | WebGUI dataset drag-drop upload → Pi multipart → NAS 配置 → `lora_dataset_items` 登録 | [x] 2026-04-20 |
-| **C** | Agent `POST /lora/dataset/tag` (WD14) + Pi 連携 | [ ] |
-| **D** | WebGUI タグ/キャプション編集 UI（grid + reviewed_at 管理） | [ ] |
-| **E** | TOML テンプレ生成 + `sample_prompts.txt` 書き出し + Agent `POST /lora/dataset/sync` | [ ] |
-| **F** | Agent `kohya_manager.py` + `/lora/train/{start,status,stream,cancel}` SSE | [ ] |
-| **G** | WebGUI 学習監視ページ（進捗・loss グラフ・sample 画像・cancel・ログ tail） | [ ] |
-| **H** | 学習結果の手動昇格 API + WebGUI ボタン | [ ] |
+| **C** | Agent `POST /lora/dataset/tag` (WD14) + Pi 連携 | [x] 2026-04-20 |
+| **D** | WebGUI タグ/キャプション編集 UI（grid + reviewed_at 管理） | [x] 2026-04-20 |
+| **E** | TOML テンプレ生成 + `sample_prompts.txt` 書き出し + Agent `POST /lora/dataset/sync` | [x] 2026-04-20 |
+| **F** | Agent `kohya_manager.py` + `/lora/train/{start,status,stream,cancel}` SSE | [x] 2026-04-20 |
+| **G** | WebGUI 学習監視ページ（進捗・loss グラフ・sample 画像・cancel・ログ tail） | [x] 2026-04-20 |
+| **H** | 学習結果の手動昇格 API + WebGUI ボタン | [x] 2026-04-20 |
 
 ### 直近の進捗 (2026-04-20)
 

@@ -38,6 +38,16 @@ from .setup_manager import (
     run_comfyui_update,
     run_kohya_setup,
 )
+from .kohya_train import (
+    cancel_train as _lora_train_cancel,
+    get_train_task as _lora_train_get,
+    list_train_tasks as _lora_train_list,
+    log_stream as _lora_train_log_stream,
+    run_kohya_train,
+)
+from .lora_sync import local_project_dirs as _lora_local_dirs
+from .lora_sync import run_lora_sync
+from .wd14_tagger import run_wd14_tagging
 from .workflow_runner import ImageJob, WorkflowRunner, substitute_placeholders
 
 router = APIRouter()
@@ -852,3 +862,304 @@ async def image_job_cancel(job_id: str, request: Request):
         except Exception:
             pass
     return JSONResponse({"ok": True, "status": "cancelled"}, headers={"X-Trace-Id": trace_id})
+
+
+# --- /lora/dataset/tag : WD14 自動タグ付け ---
+def _lora_nas_base() -> str:
+    """NAS の実効ベースパス（lora_datasets / lora_work の親）。"""
+    return (_ctx.nas_drive or _nas_base_fallback()).rstrip("\\")
+
+
+def _lora_subdir_cfg() -> dict:
+    """image_gen.nas.{lora_datasets_subdir,lora_work_subdir} を辞書で返す。"""
+    nas_cfg = (_ctx.image_gen_cfg.get("nas") or {}) if _ctx.image_gen_cfg else {}
+    return {
+        "datasets": (nas_cfg.get("lora_datasets_subdir") or "lora_datasets").strip("\\/"),
+        "work": (nas_cfg.get("lora_work_subdir") or "lora_work").strip("\\/"),
+    }
+
+
+@router.post("/lora/dataset/tag")
+async def lora_dataset_tag(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    kohya_cfg = _ctx.image_gen_cfg.get("kohya") or {}
+    if not kohya_cfg.get("enabled", False):
+        return _error_response(
+            503, "ResourceUnavailableError",
+            "kohya disabled on this agent", True, trace_id=trace_id,
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return _error_response(
+            400, "ValidationError", "body must be an object", False, trace_id=trace_id,
+        )
+    project_name = (body.get("project_name") or "").strip()
+    if not project_name:
+        return _error_response(
+            400, "ValidationError", "project_name is required", False, trace_id=trace_id,
+        )
+    threshold = float(body.get("threshold") or 0.35)
+    repo_id = (body.get("repo_id") or "").strip() or None
+    trigger_word = body.get("trigger_word")
+    if trigger_word is not None:
+        trigger_word = str(trigger_word).strip() or None
+
+    subdirs = _lora_subdir_cfg()
+    base = _lora_nas_base()
+    dataset_dir = os.path.join(base + os.sep, subdirs["datasets"], project_name)
+    if not os.path.isdir(dataset_dir):
+        return _error_response(
+            404, "ValidationError",
+            f"dataset dir not found: {dataset_dir}", False, trace_id=trace_id,
+        )
+
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    kwargs = {"dataset_dir": dataset_dir, "threshold": threshold}
+    if repo_id:
+        kwargs["repo_id"] = repo_id
+    if trigger_word:
+        kwargs["trigger_word"] = trigger_word
+    task = await run_wd14_tagging(root, **kwargs)
+    return JSONResponse(
+        {
+            "task_id": task.task_id, "status": task.status, "kind": task.kind,
+            "dataset_dir": dataset_dir,
+            "progress_url": f"/tools/image-gen/lora/tag/{task.task_id}",
+        },
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.get("/lora/tag/{task_id}")
+async def lora_tag_status(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _setup_get_task(task_id)
+    if task is None or task.kind != "wd14_tagging":
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    return JSONResponse(task.snapshot(), headers={"X-Trace-Id": trace_id})
+
+
+@router.post("/lora/dataset/sync")
+async def lora_dataset_sync(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return _error_response(
+            400, "ValidationError", "body must be an object", False, trace_id=trace_id,
+        )
+    project_name = (body.get("project_name") or "").strip()
+    if not project_name:
+        return _error_response(
+            400, "ValidationError", "project_name is required", False, trace_id=trace_id,
+        )
+
+    subdirs = _lora_subdir_cfg()
+    base = _lora_nas_base()
+    nas_dataset_dir = os.path.join(base + os.sep, subdirs["datasets"], project_name)
+    nas_work_dir = os.path.join(base + os.sep, subdirs["work"], project_name)
+    if not os.path.isdir(nas_dataset_dir):
+        return _error_response(
+            404, "ValidationError",
+            f"nas dataset dir not found: {nas_dataset_dir}", False, trace_id=trace_id,
+        )
+    if not os.path.isdir(nas_work_dir):
+        return _error_response(
+            404, "ValidationError",
+            f"nas work dir not found: {nas_work_dir}", False, trace_id=trace_id,
+        )
+
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    task = await run_lora_sync(
+        root,
+        project_name=project_name,
+        nas_dataset_dir=nas_dataset_dir,
+        nas_work_dir=nas_work_dir,
+    )
+    local = _lora_local_dirs(root, project_name)
+    return JSONResponse(
+        {
+            "task_id": task.task_id, "status": task.status, "kind": task.kind,
+            "local_dirs": local,
+            "progress_url": f"/tools/image-gen/lora/sync/{task.task_id}",
+        },
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.get("/lora/sync/{task_id}")
+async def lora_sync_status(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _setup_get_task(task_id)
+    if task is None or task.kind != "lora_sync":
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    return JSONResponse(task.snapshot(), headers={"X-Trace-Id": trace_id})
+
+
+# --- /lora/train/* : SDXL LoRA 学習 ---
+
+@router.post("/lora/train/start")
+async def lora_train_start(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return _error_response(
+            400, "ValidationError",
+            "body must be an object", False, trace_id=trace_id,
+        )
+    project_name = (body.get("project_name") or "").strip()
+    if not project_name:
+        return _error_response(
+            400, "ValidationError",
+            "project_name is required", False, trace_id=trace_id,
+        )
+
+    root = _ctx.image_gen_cfg.get("root") or "C:/secretary-bot"
+    local = _lora_local_dirs(root, project_name)
+    work = local["work"]
+    cfg = os.path.join(work, "config.local.toml")
+    ds = os.path.join(work, "dataset.local.toml")
+    if not os.path.isfile(cfg):
+        return _error_response(
+            404, "ValidationError",
+            f"config.local.toml not found: {cfg} (sync first)",
+            False, trace_id=trace_id,
+        )
+    if not os.path.isfile(ds):
+        return _error_response(
+            404, "ValidationError",
+            f"dataset.local.toml not found: {ds} (sync first)",
+            False, trace_id=trace_id,
+        )
+
+    task = await run_kohya_train(
+        root,
+        project_name=project_name,
+        config_file=cfg, dataset_config=ds,
+    )
+    return JSONResponse(
+        {
+            "task_id": task.task_id, "status": task.status, "kind": task.kind,
+            "progress_url": f"/tools/image-gen/lora/train/{task.task_id}",
+            "stream_url": f"/tools/image-gen/lora/train/{task.task_id}/stream",
+        },
+        status_code=202,
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.get("/lora/train/{task_id}")
+async def lora_train_status(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _lora_train_get(task_id)
+    if task is None:
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    return JSONResponse(task.snapshot(), headers={"X-Trace-Id": trace_id})
+
+
+@router.get("/lora/train")
+async def lora_train_list(request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    return JSONResponse(
+        {"items": _lora_train_list()}, headers={"X-Trace-Id": trace_id},
+    )
+
+
+@router.get("/lora/train/{task_id}/stream")
+async def lora_train_stream(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _lora_train_get(task_id)
+    if task is None:
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    try:
+        after_seq = int(request.query_params.get("after_seq") or 0)
+    except ValueError:
+        after_seq = 0
+
+    async def _gen():
+        # initial snapshot
+        snap = task.snapshot()
+        snap.pop("log_tail", None)
+        yield f"event: status\ndata: {json.dumps(snap)}\n\n"
+        try:
+            async for entry in _lora_train_log_stream(
+                task_id, after_seq=after_seq,
+            ):
+                yield f"event: log\ndata: {json.dumps(entry)}\n\n"
+                # periodic status updates piggy-back on every ~10 log lines
+                if entry.get("seq", 0) % 10 == 0:
+                    s2 = task.snapshot()
+                    s2.pop("log_tail", None)
+                    yield f"event: status\ndata: {json.dumps(s2)}\n\n"
+        except asyncio.CancelledError:
+            return
+        final = task.snapshot()
+        final.pop("log_tail", None)
+        yield f"event: status\ndata: {json.dumps(final)}\n\n"
+        yield "event: end\ndata: {}\n\n"
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "X-Trace-Id": trace_id,
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/lora/train/{task_id}/cancel")
+async def lora_train_cancel(task_id: str, request: Request):
+    _verify(request)
+    trace_id = _trace_id(request)
+    task = _lora_train_get(task_id)
+    if task is None:
+        return _error_response(
+            404, "ValidationError",
+            f"task_id not found: {task_id}", False, trace_id=trace_id,
+        )
+    ok = await _lora_train_cancel(task_id)
+    return JSONResponse(
+        {"ok": ok, "status": task.status},
+        headers={"X-Trace-Id": trace_id},
+    )
