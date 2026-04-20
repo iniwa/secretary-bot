@@ -4,8 +4,11 @@ import { toast } from '../app.js';
 
 let sse = null;
 let jobs = [];
-let capability = null;
+let capability = null;     // array of {agent_id, ok, capability, error?}
 let pollTimer = null;
+let inputsCache = { base: '', files: [] };
+let selectedFullPath = '';  // video_path に使う絶対パス
+let manualMode = false;
 
 function $(id) { return document.getElementById(id); }
 
@@ -16,15 +19,28 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-function fmtTime(iso) {
-  if (!iso) return '---';
-  const d = new Date(iso);
+function fmtTime(v) {
+  if (v === null || v === undefined || v === '') return '---';
+  // epoch 秒（int 又は数値文字列）を ms に換算。ISO 文字列はそのまま。
+  let d;
+  if (typeof v === 'number' || /^\d+$/.test(String(v))) {
+    const n = Number(v);
+    d = new Date(n < 1e12 ? n * 1000 : n);
+  } else {
+    d = new Date(v);
+  }
   if (isNaN(d.getTime())) return '---';
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   const hh = String(d.getHours()).padStart(2, '0');
   const mi = String(d.getMinutes()).padStart(2, '0');
   return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+function fmtBytes(size) {
+  const n = Number(size);
+  if (!Number.isFinite(n) || n <= 0) return '-';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function statusBadge(status) {
@@ -39,6 +55,32 @@ function statusBadge(status) {
   };
   const color = colorMap[status] || '#aaa';
   return `<span class="cp-badge" style="background:${color}">${esc(status)}</span>`;
+}
+
+/** NAS の出力ディレクトリを基底パス + basename(ステム) で合成。 */
+function computeOutputDir(fullPath, outputsBase) {
+  if (!fullPath || !outputsBase) return '';
+  const stem = fullPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  const sep = outputsBase.includes('\\') || /^[A-Z]:/i.test(outputsBase) ? '\\' : '/';
+  return outputsBase.replace(/[\\/]+$/, '') + sep + stem;
+}
+
+/** capability 配列から、入力/出力 NAS パスが分かる最初の Agent を選ぶ。 */
+function pickNasAgent() {
+  if (!Array.isArray(capability)) return null;
+  for (const a of capability) {
+    if (a.ok && a.capability && a.capability.nas_inputs_base) return a;
+  }
+  return null;
+}
+
+/** 現在のドロップダウン選択 Agent の capability を取得。 */
+function currentAgentCap() {
+  const sel = $('cp-agent');
+  if (!sel || !Array.isArray(capability)) return null;
+  const agentId = sel.value;
+  const hit = capability.find(a => a.ok && (a.capability?.agent_id || a.agent_id) === agentId);
+  return hit ? (hit.capability || {}) : null;
 }
 
 export function render() {
@@ -84,17 +126,71 @@ export function render() {
                   color: var(--text); cursor: pointer; }
   .cp-btn-small:hover { background: var(--bg-raised); }
   .cp-err { color: #c44; font-size: 0.75rem; }
+  .cp-nas-paths { display: flex; flex-direction: column; gap: 0.3rem;
+                  margin-bottom: 0.8rem; padding: 0.5rem 0.6rem;
+                  background: var(--bg-body); border: 1px dashed var(--border);
+                  border-radius: 0.3rem; }
+  .cp-nas-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+  .cp-nas-row .cp-nas-label { color: var(--text-secondary); min-width: 3.2em; }
+  .cp-nas-row .cp-nas-val { font-family: monospace; flex: 1;
+                            word-break: break-all; color: var(--text); }
+  .cp-copy-chip { padding: 2px 8px; font-size: 0.72rem; border-radius: 999px;
+                  border: 1px solid var(--border); background: var(--bg-raised);
+                  color: var(--text); cursor: pointer; }
+  .cp-copy-chip:hover { background: var(--bg-body); }
+  .cp-preview { font-family: monospace; font-size: 0.78rem;
+                padding: 0.3rem 0.45rem; border-radius: 0.3rem;
+                background: var(--bg-body); border: 1px solid var(--border);
+                word-break: break-all; min-height: 1.2em; }
+  .cp-preview-row { display: flex; align-items: stretch; gap: 0.3rem; }
+  .cp-preview-row .cp-preview { flex: 1; }
+  .cp-file-info { font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem; }
+  .cp-toggle-row { display: flex; align-items: center; gap: 0.4rem;
+                   margin-bottom: 0.6rem; font-size: 0.78rem;
+                   color: var(--text-secondary); }
 </style>
 
 <div class="cp-grid">
   <div class="cp-card">
     <h3>新規ジョブ</h3>
+
+    <div class="cp-nas-paths" id="cp-nas-paths">
+      <div style="color:var(--text-secondary);font-size:0.78rem">NAS パス読み込み中...</div>
+    </div>
+
     <form id="cp-form">
-      <div class="cp-form-row">
-        <label for="cp-video-path">video_path (Agent から見える絶対パス / NAS UNC)</label>
-        <input id="cp-video-path" type="text" required
+      <div class="cp-toggle-row">
+        <label><input id="cp-manual-toggle" type="checkbox"> 手入力に切替</label>
+        <span style="flex:1"></span>
+        <button type="button" id="cp-inputs-refresh" class="cp-btn-small">inputs 再取得</button>
+      </div>
+
+      <div class="cp-form-grid">
+        <div class="cp-form-row" id="cp-agent-row">
+          <label for="cp-agent">Agent</label>
+          <select id="cp-agent"></select>
+        </div>
+        <div class="cp-form-row" id="cp-video-select-row">
+          <label for="cp-video-select">video (inputs フォルダから選択)</label>
+          <select id="cp-video-select"></select>
+        </div>
+      </div>
+
+      <div class="cp-form-row" id="cp-manual-row" style="display:none">
+        <label for="cp-video-path-manual">video_path (Agent から見える絶対パス / NAS UNC)</label>
+        <input id="cp-video-path-manual" type="text"
                placeholder="N:\\auto-kirinuki\\inputs\\stream_20260419.mkv">
       </div>
+
+      <div class="cp-form-row" id="cp-video-preview-row">
+        <label>video_path</label>
+        <div class="cp-preview-row">
+          <div class="cp-preview" id="cp-video-preview">-</div>
+          <button type="button" class="cp-copy-chip" data-copy-target="cp-video-preview">copy</button>
+        </div>
+        <div class="cp-file-info" id="cp-video-info"></div>
+      </div>
+
       <div class="cp-form-grid">
         <div class="cp-form-row">
           <label for="cp-mode">mode</label>
@@ -111,7 +207,14 @@ export function render() {
           <label for="cp-ollama">ollama_model</label>
           <input id="cp-ollama" type="text" placeholder="qwen3:14b">
         </div>
-        <div class="cp-form-row">
+        <div class="cp-form-row" id="cp-output-preview-row">
+          <label>output_dir (空なら自動)</label>
+          <div class="cp-preview-row">
+            <div class="cp-preview" id="cp-output-preview">(自動)</div>
+            <button type="button" class="cp-copy-chip" data-copy-target="cp-output-preview">copy</button>
+          </div>
+        </div>
+        <div class="cp-form-row" id="cp-output-manual-row" style="display:none">
           <label for="cp-output-dir">output_dir (空なら自動)</label>
           <input id="cp-output-dir" type="text" placeholder="(自動)">
         </div>
@@ -176,10 +279,31 @@ export function render() {
 
 export async function mount() {
   $('cp-form').addEventListener('submit', onSubmit);
-  $('cp-cap-refresh').addEventListener('click', loadCapability);
+  $('cp-cap-refresh').addEventListener('click', async () => {
+    await loadCapability();
+    await loadInputsForSelected();
+  });
   $('cp-jobs-refresh').addEventListener('click', loadJobs);
+  $('cp-inputs-refresh').addEventListener('click', loadInputsForSelected);
+  $('cp-manual-toggle').addEventListener('change', onToggleManual);
+  $('cp-agent').addEventListener('change', loadInputsForSelected);
+  $('cp-video-select').addEventListener('change', onVideoSelect);
+  $('cp-video-path-manual').addEventListener('input', syncManualVideo);
+  $('cp-output-dir').addEventListener('input', () => { /* manual output is read on submit */ });
+
+  // Copy chip handlers (delegated)
+  document.querySelectorAll('[data-copy-target]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const el = document.getElementById(btn.dataset.copyTarget);
+      if (!el) return;
+      const text = el.textContent.trim();
+      if (!text || text === '-' || text === '(自動)') return;
+      copyToClipboard(text);
+    });
+  });
 
   await Promise.all([loadCapability(), loadJobs()]);
+  await loadInputsForSelected();
   connectSSE();
   // Also periodic refresh in case SSE misses
   pollTimer = setInterval(loadJobs, 15000);
@@ -190,16 +314,183 @@ export function unmount() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('コピーしました', 'success');
+  } catch (err) {
+    toast(`コピー失敗: ${err.message}`, 'error');
+  }
+}
+
+function onToggleManual() {
+  manualMode = $('cp-manual-toggle').checked;
+  $('cp-agent-row').style.display = manualMode ? 'none' : '';
+  $('cp-video-select-row').style.display = manualMode ? 'none' : '';
+  $('cp-manual-row').style.display = manualMode ? '' : 'none';
+  $('cp-output-preview-row').style.display = manualMode ? 'none' : '';
+  $('cp-output-manual-row').style.display = manualMode ? '' : 'none';
+  // Reset selection when turning toggle off
+  if (!manualMode) {
+    $('cp-video-path-manual').value = '';
+  } else {
+    selectedFullPath = '';
+    $('cp-video-preview').textContent = '-';
+    $('cp-output-preview').textContent = '(自動)';
+    $('cp-video-info').textContent = '';
+  }
+  syncManualVideo();
+}
+
+function syncManualVideo() {
+  if (!manualMode) return;
+  // manual モードでは preview を input の値と同期（表示のため）
+  const v = $('cp-video-path-manual').value.trim();
+  $('cp-video-preview').textContent = v || '-';
+}
+
+function onVideoSelect() {
+  const sel = $('cp-video-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.dataset.fullPath) {
+    selectedFullPath = '';
+    $('cp-video-preview').textContent = '-';
+    $('cp-output-preview').textContent = '(自動)';
+    $('cp-video-info').textContent = '';
+    return;
+  }
+  selectedFullPath = opt.dataset.fullPath;
+  $('cp-video-preview').textContent = selectedFullPath;
+
+  const cap = currentAgentCap();
+  const outBase = cap?.nas_outputs_base || '';
+  const outDir = computeOutputDir(selectedFullPath, outBase);
+  $('cp-output-preview').textContent = outDir || '(自動)';
+
+  const size = opt.dataset.size ? fmtBytes(opt.dataset.size) : '-';
+  const mtime = opt.dataset.mtime ? fmtTime(opt.dataset.mtime) : '-';
+  $('cp-video-info').textContent = `サイズ: ${size} / 更新: ${mtime}`;
+}
+
+function renderNasPaths() {
+  const box = $('cp-nas-paths');
+  if (!box) return;
+  const a = pickNasAgent();
+  if (!a) {
+    box.innerHTML = '<div style="color:var(--text-secondary);font-size:0.78rem">Agent 未応答 / NAS パス未設定</div>';
+    return;
+  }
+  const c = a.capability || {};
+  const inBase = c.nas_inputs_base || '';
+  const outBase = c.nas_outputs_base || '';
+  box.innerHTML = `
+    <div class="cp-nas-row">
+      <span class="cp-nas-label">入力:</span>
+      <span class="cp-nas-val" id="cp-nas-in">${esc(inBase || '-')}</span>
+      <button type="button" class="cp-copy-chip" data-nas="in">copy</button>
+    </div>
+    <div class="cp-nas-row">
+      <span class="cp-nas-label">出力:</span>
+      <span class="cp-nas-val" id="cp-nas-out">${esc(outBase || '-')}</span>
+      <button type="button" class="cp-copy-chip" data-nas="out">copy</button>
+    </div>`;
+  box.querySelectorAll('[data-nas]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.dataset.nas === 'in' ? inBase : outBase;
+      if (v) copyToClipboard(v);
+    });
+  });
+}
+
+function renderAgentSelect() {
+  const sel = $('cp-agent');
+  if (!sel) return;
+  const oldVal = sel.value;
+  const okAgents = (capability || []).filter(a => a.ok);
+  if (okAgents.length === 0) {
+    sel.innerHTML = '<option value="">(利用可能な Agent なし)</option>';
+    return;
+  }
+  sel.innerHTML = okAgents.map(a => {
+    const id = a.capability?.agent_id || a.agent_id || '?';
+    return `<option value="${esc(id)}">${esc(id)}</option>`;
+  }).join('');
+  // Preserve prior selection if still present
+  if (oldVal && okAgents.some(a => (a.capability?.agent_id || a.agent_id) === oldVal)) {
+    sel.value = oldVal;
+  }
+}
+
+async function loadInputsForSelected() {
+  const sel = $('cp-agent');
+  const vs = $('cp-video-select');
+  const agentId = sel ? sel.value : '';
+  if (!agentId) {
+    if (vs) vs.innerHTML = '<option value="">(Agent なし)</option>';
+    inputsCache = { base: '', files: [] };
+    return;
+  }
+  vs.innerHTML = '<option value="">読み込み中...</option>';
+  inputsCache = await loadInputs(agentId);
+  renderVideoSelect();
+  onVideoSelect();  // update preview based on current selection
+}
+
+async function loadInputs(agentId) {
+  if (!agentId) return { files: [], base: '' };
+  try {
+    const res = await api('/api/clip-pipeline/inputs', { params: { agent_id: agentId } });
+    return { base: res.base || '', files: res.files || [] };
+  } catch (err) {
+    toast(`inputs 取得失敗: ${err.message}`, 'error');
+    return { files: [], base: '' };
+  }
+}
+
+function renderVideoSelect() {
+  const vs = $('cp-video-select');
+  if (!vs) return;
+  const files = inputsCache.files || [];
+  const opts = ['<option value="">-- ファイルを選択 --</option>'];
+  for (const f of files) {
+    const label = `${f.name} (${fmtBytes(f.size)}, ${fmtTime(f.mtime)})`;
+    opts.push(
+      `<option value="${esc(f.full_path)}"` +
+      ` data-full-path="${esc(f.full_path)}"` +
+      ` data-size="${esc(f.size ?? '')}"` +
+      ` data-mtime="${esc(f.mtime ?? '')}"` +
+      `>${esc(label)}</option>`
+    );
+  }
+  vs.innerHTML = opts.join('');
+  selectedFullPath = '';
+  $('cp-video-preview').textContent = '-';
+  $('cp-output-preview').textContent = '(自動)';
+  $('cp-video-info').textContent = '';
+}
+
 async function onSubmit(e) {
   e.preventDefault();
-  const videoPath = $('cp-video-path').value.trim();
-  if (!videoPath) return;
+  let videoPath = '';
+  let outputDir = null;
+  if (manualMode) {
+    videoPath = $('cp-video-path-manual').value.trim();
+    outputDir = $('cp-output-dir').value.trim() || null;
+  } else {
+    videoPath = selectedFullPath;
+    const outPrev = $('cp-output-preview').textContent.trim();
+    outputDir = (outPrev && outPrev !== '(自動)') ? outPrev : null;
+  }
+  if (!videoPath) {
+    alert('video_path が選択されていません');
+    return;
+  }
   const body = {
     video_path: videoPath,
     mode: $('cp-mode').value,
     whisper_model: $('cp-whisper').value.trim(),
     ollama_model: $('cp-ollama').value.trim(),
-    output_dir: $('cp-output-dir').value.trim() || null,
+    output_dir: outputDir,
     params: {
       top_n: Number($('cp-top-n').value) || 0,
       min_clip_sec: Number($('cp-min-clip').value) || 30,
@@ -226,11 +517,16 @@ async function loadCapability() {
     capability = res.agents || [];
     if (capability.length === 0) {
       box.innerHTML = '<div style="color:var(--text-secondary)">登録 Agent なし</div>';
-      return;
+    } else {
+      box.innerHTML = capability.map(renderAgent).join('');
     }
-    box.innerHTML = capability.map(renderAgent).join('');
+    renderNasPaths();
+    renderAgentSelect();
   } catch (err) {
     box.innerHTML = `<div class="cp-err">エラー: ${esc(err.message)}</div>`;
+    capability = [];
+    renderNasPaths();
+    renderAgentSelect();
   }
 }
 

@@ -28,6 +28,10 @@ router = APIRouter()
 
 _SECRET_TOKEN = os.environ.get("AGENT_SECRET_TOKEN", "")
 _PREFIX = "/clip-pipeline"
+_API_VERSION = 2
+
+# GET /clip-pipeline/inputs で列挙する動画拡張子（小文字で比較）
+_VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".ts", ".m2ts", ".webm", ".flv")
 
 
 class _Ctx:
@@ -72,6 +76,30 @@ def _nas_whisper_base() -> str:
     subpath = nas.get("subpath") or "auto-kirinuki"
     whisper_sub = nas.get("whisper_subdir") or "models/whisper"
     return os.path.join(drive.rstrip("\\") + os.sep, subpath, whisper_sub).replace("/", os.sep)
+
+
+def _nas_inputs_base() -> str:
+    """NAS 上の動画入力フォルダ（例: `N:\\auto-kirinuki\\inputs`）。"""
+    nas = _ctx.cfg.get("nas") or {}
+    base = nas.get("inputs_base")
+    if base:
+        return _normalize_path(base)
+    drive = nas.get("mount_drive") or "N:"
+    subpath = nas.get("subpath") or "auto-kirinuki"
+    inputs_sub = nas.get("inputs_subdir") or "inputs"
+    return os.path.join(drive.rstrip("\\") + os.sep, subpath, inputs_sub).replace("/", os.sep)
+
+
+def _nas_outputs_base() -> str:
+    """NAS 上の成果物出力フォルダ（例: `N:\\auto-kirinuki\\outputs`）。"""
+    nas = _ctx.cfg.get("nas") or {}
+    base = nas.get("outputs_base")
+    if base:
+        return _normalize_path(base)
+    drive = nas.get("mount_drive") or "N:"
+    subpath = nas.get("subpath") or "auto-kirinuki"
+    outputs_sub = nas.get("outputs_subdir") or "outputs"
+    return os.path.join(drive.rstrip("\\") + os.sep, subpath, outputs_sub).replace("/", os.sep)
 
 
 def _normalize_path(p: str) -> str:
@@ -154,6 +182,14 @@ async def capability(request: Request):
     trace_id = _trace_id(request)
     cache_root = _cache_root()
     nas_base = _nas_whisper_base()
+    try:
+        inputs_base = _nas_inputs_base()
+    except Exception:
+        inputs_base = ""
+    try:
+        outputs_base = _nas_outputs_base()
+    except Exception:
+        outputs_base = ""
     body = {
         "agent_id": _ctx.agent_id,
         "role": _ctx.role,
@@ -165,8 +201,76 @@ async def capability(request: Request):
         "whisper_models_nas": list_nas_models(nas_base),
         "cache_root": cache_root,
         "nas_whisper_base": nas_base,
+        "nas_inputs_base": inputs_base,
+        "nas_outputs_base": outputs_base,
+        "api_version": _API_VERSION,
     }
     return JSONResponse(body, headers={"X-Trace-Id": trace_id})
+
+
+# --- /inputs ---
+@router.get(f"{_PREFIX}/inputs")
+async def inputs_list(request: Request):
+    """NAS inputs フォルダ直下の動画ファイル一覧を返す（再帰なし）。"""
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+
+    try:
+        base = _nas_inputs_base()
+    except Exception as e:
+        return JSONResponse(
+            {"base": "", "files": [], "error": f"failed to resolve inputs base: {e}"},
+            headers={"X-Trace-Id": trace_id},
+        )
+
+    if not base or not os.path.isdir(base):
+        return JSONResponse(
+            {"base": base, "files": [], "error": f"inputs base not found or not a directory: {base}"},
+            headers={"X-Trace-Id": trace_id},
+        )
+
+    files: list[dict] = []
+    try:
+        with os.scandir(base) as it:
+            for entry in it:
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                name = entry.name
+                _, ext = os.path.splitext(name)
+                if ext.lower() not in _VIDEO_EXTS:
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                    size = int(st.st_size)
+                    mtime = int(st.st_mtime)
+                except OSError:
+                    size = 0
+                    mtime = 0
+                full_path = os.path.join(base, name)
+                files.append({
+                    "name": name,
+                    "full_path": full_path,
+                    "size": size,
+                    "mtime": mtime,
+                })
+    except OSError as e:
+        return JSONResponse(
+            {"base": base, "files": [], "error": f"failed to scan inputs base: {e}"},
+            headers={"X-Trace-Id": trace_id},
+        )
+
+    files.sort(key=lambda f: f["name"])
+
+    return JSONResponse(
+        {"base": base, "files": files},
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 # --- /whisper/cache-sync ---

@@ -449,16 +449,20 @@ class ClipPipelineUnit(BaseUnit):
         return (self.bot.config.get("units") or {}).get("clip_pipeline") or {}
 
     def _default_output_dir_for(self, video_path: str) -> str:
-        """NAS outputs/<video_basename>/ を組み立てる。
+        """video_path から output_dir を自動算出する。
 
-        Pi 上で動く Dispatcher 目線での絶対パス（例: `/mnt/secretary-bot/auto-kirinuki/outputs/stream_01/`）。
-        Windows パスが来た場合はベース名だけ抜き出す。
+        Agent 視点 Windows パス (`N:\\auto-kirinuki\\outputs\\<stem>`) を優先し、
+        `nas.agent_outputs_base` / `nas.agent_base_path` の順で解決する。
+        どちらも未設定の場合のみ Pi-POSIX 互換
+        (`/mnt/secretary-bot/auto-kirinuki/outputs/<stem>`) にフォールバック。
+
+        Agent 側は `os.path.exists(output_dir)` を NAS マウントの Windows パス
+        で行うため、Pi-POSIX パスを渡すと必ず失敗する点に注意。
         """
         cfg = self._clip_cfg().get("nas") or {}
-        base = cfg.get("base_path", "/mnt/secretary-bot/auto-kirinuki")
         outputs_sub = cfg.get("outputs_subdir", "outputs")
 
-        # video_path が Windows 形式か Posix 形式か判定
+        # basename（拡張子抜き）を抽出
         if "\\" in video_path or (len(video_path) > 1 and video_path[1] == ":"):
             stem = PureWindowsPath(video_path).stem
         else:
@@ -466,8 +470,34 @@ class ClipPipelineUnit(BaseUnit):
         if not stem:
             stem = "unknown"
 
-        joined = base.rstrip("/\\") + "/" + outputs_sub.strip("/\\") + "/" + stem
-        return joined
+        def _join(base: str, *parts: str) -> str:
+            """base の形式（Windows / Posix）に合わせて区切り統一で結合。"""
+            # Windows 形式判定: ドライブレター or UNC(\\) or 既存 \
+            is_windows = (
+                (len(base) > 1 and base[1] == ":")
+                or base.startswith("\\\\")
+                or "\\" in base
+            )
+            sep = "\\" if is_windows else "/"
+            if is_windows:
+                base = base.replace("/", "\\")
+            pieces = [base.rstrip("/\\")]
+            pieces.extend(p.strip("/\\").replace("/" if is_windows else "\\", sep) for p in parts if p)
+            return sep.join(pieces)
+
+        # 優先度1: agent_outputs_base 直指定
+        agent_out = cfg.get("agent_outputs_base")
+        if agent_out:
+            return _join(agent_out, stem)
+
+        # 優先度2: agent_base_path + outputs_subdir
+        agent_base = cfg.get("agent_base_path")
+        if agent_base:
+            return _join(agent_base, outputs_sub, stem)
+
+        # 優先度3: 旧 Pi-POSIX フォールバック（互換）
+        base = cfg.get("base_path", "/mnt/secretary-bot/auto-kirinuki")
+        return _join(base, outputs_sub, stem)
 
     def _row_to_dict(self, row: dict) -> dict:
         params: dict[str, Any] = {}

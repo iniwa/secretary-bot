@@ -119,6 +119,20 @@ class AgentClient:
             raise _map_error_response(resp.status_code, _safe_json(resp))
         return resp.json()
 
+    async def inputs(self) -> dict:
+        """GET /clip-pipeline/inputs。{base: str, files: list[dict]} を返す。"""
+        try:
+            resp = await self._get_client().get(
+                f"{_PREFIX}/inputs", headers=self._headers(),
+            )
+        except httpx.HTTPError as e:
+            raise AgentCommunicationError(
+                f"clip_pipeline inputs request failed: {e}"
+            ) from e
+        if resp.status_code != 200:
+            raise _map_error_response(resp.status_code, _safe_json(resp))
+        return resp.json()
+
     # --- whisper cache sync ---
 
     async def whisper_cache_sync(

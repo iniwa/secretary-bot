@@ -138,3 +138,25 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 *[_probe(a) for a in agents], return_exceptions=False,
             )
         return {"agents": results}
+
+    @app.get("/api/clip-pipeline/inputs", dependencies=[Depends(ctx.verify)])
+    async def cp_inputs(agent_id: str):
+        """指定 Agent の /clip-pipeline/inputs をプロキシする。"""
+        from src.units.clip_pipeline.agent_client import AgentClient
+
+        unit = _get_unit()
+        agents = list(
+            getattr(unit.bot.unit_manager.agent_pool, "_agents", []) or []
+        )
+        target = next((a for a in agents if a.get("id") == agent_id), None)
+        if not target:
+            raise HTTPException(404, f"agent not found: {agent_id}")
+        client = AgentClient(target)
+        try:
+            return await client.inputs()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"agent inputs failed: {e}")
+        finally:
+            await client.close()

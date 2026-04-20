@@ -94,3 +94,6 @@ clip_pipeline:
     share: "secretary-bot"                  # image_gen と同じ共有を再利用
     subpath: "auto-kirinuki"
     mount_drive: "N:"                       # 同 UNC なら image_gen の N: を自動再利用
+    inputs_subdir: "inputs"                 # 動画入力フォルダ
+    outputs_subdir: "outputs"               # 成果物出力フォルダ
+    whisper_subdir: "models/whisper"        # Whisper モデル置き場

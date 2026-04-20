@@ -59,12 +59,59 @@ Agent の能力スナップショット。Dispatcher が Whisper モデルキャ
   "whisper_models_local": ["large-v3", "base"],
   "whisper_models_nas": ["large-v3", "large-v3-turbo", "base"],
   "cache_root": "C:\\secretary-bot-cache\\whisper",
-  "nas_whisper_base": "N:\\auto-kirinuki\\models\\whisper"
+  "nas_whisper_base": "N:\\auto-kirinuki\\models\\whisper",
+  "nas_inputs_base": "N:\\auto-kirinuki\\inputs",
+  "nas_outputs_base": "N:\\auto-kirinuki\\outputs",
+  "api_version": 2
 }
 ```
 
 `whisper_models_local[]` は `<cache_root>/<name>/model.bin` が存在するモデルのみ。
 `whisper_models_nas[]` は NAS 上に同ディレクトリ構造で置かれているモデル。
+
+`nas_inputs_base` / `nas_outputs_base` は Agent 視点の Windows 絶対パス（UNC もしくはマウントドライブ）。
+解決不能な場合は `""`。`api_version` は今回 `2`。旧 Agent で未定義の場合は `1` として扱う。
+
+## GET `/clip-pipeline/inputs`
+
+NAS `inputs/` 直下の動画ファイル一覧を返す。WebGUI の動画選択 UI から呼ばれる。
+
+- 対象拡張子（大小無視）: `.mp4 .mkv .mov .avi .ts .m2ts .webm .flv`
+- **トップレベルのみ列挙**（再帰なし）
+- ファイル名の昇順でソート
+- base が存在しない／読めない場合でも 200 を返し、`error` に理由を載せる（409 等にはしない）
+
+**レスポンス 200**:
+
+```json
+{
+  "base": "N:\\auto-kirinuki\\inputs",
+  "files": [
+    {
+      "name": "stream_20260419.mkv",
+      "full_path": "N:\\auto-kirinuki\\inputs\\stream_20260419.mkv",
+      "size": 12345678,
+      "mtime": 1713654321
+    }
+  ]
+}
+```
+
+**レスポンス 200（base 未マウント等）**:
+
+```json
+{
+  "base": "N:\\auto-kirinuki\\inputs",
+  "files": [],
+  "error": "inputs base not found or not a directory: N:\\auto-kirinuki\\inputs"
+}
+```
+
+- `size`: バイト数（int）
+- `mtime`: epoch 秒（int）
+- `full_path`: Agent 視点の絶対パス。そのまま `/jobs/start` の `video_path` に渡せる。
+
+**503**: `clip_pipeline` が無効な Agent で呼ぶと `ResourceUnavailableError` を返す。
 
 ## POST `/clip-pipeline/whisper/cache-sync`
 

@@ -190,6 +190,11 @@ units:
       progress_debounce_seconds: 2
     nas:
       base_path: "/mnt/secretary-bot/auto-kirinuki"
+      # Agent 視点パス（Windows 形式）: output_dir 自動算出と WebGUI 表示で使う
+      # 設定しない場合は Pi-POSIX の base_path を使うが、Agent 側で os.path.exists が失敗する
+      agent_base_path: "N:/auto-kirinuki"
+      # 特定サブの override（agent_base_path + outputs_subdir で十分なら不要）
+      # agent_outputs_base: "N:/auto-kirinuki/outputs"
       outputs_subdir: "outputs"
       whisper_models_subdir: "models/whisper"
       inputs_subdir: "inputs"
