@@ -91,6 +91,11 @@ class LoRAMixin:
         )
         return int(cur.lastrowid or 0)
 
+    async def lora_dataset_item_get(self, item_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM lora_dataset_items WHERE id = ?", (item_id,),
+        )
+
     async def lora_dataset_item_list(
         self, project_id: int, *, reviewed_only: bool = False,
     ) -> list[dict]:

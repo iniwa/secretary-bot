@@ -10,6 +10,7 @@ import { esc, fmtTime } from '../lib/common.js';
 
 let projects = [];
 let activeId = null;
+let datasetItems = [];
 
 function $(id) { return document.getElementById(id); }
 
@@ -49,6 +50,17 @@ export function render() {
     <div id="lora-note" class="pc-note"></div>
     <div id="lora-paths" style="margin-top:0.6rem;font-size:0.78rem;color:var(--text-muted);"></div>
   </div>
+</div>
+
+<div class="pc-card" id="lora-dataset-card" style="margin-top:1rem;display:none;">
+  <h3>📦 データセット <span id="lora-ds-count" class="badge"></span></h3>
+  <div id="lora-ds-drop" class="lora-ds-drop">
+    画像をここにドラッグ＆ドロップ（png / jpg / jpeg / webp、1 枚 16 MiB まで）<br>
+    <small>または <a href="#" id="lora-ds-browse">ファイル選択</a></small>
+    <input id="lora-ds-input" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display:none;">
+  </div>
+  <div id="lora-ds-progress" style="margin-top:0.4rem;font-size:0.8rem;color:var(--text-muted);"></div>
+  <div id="lora-ds-grid" class="lora-ds-grid" style="margin-top:0.6rem;"></div>
 </div>
 `;
 }
@@ -113,6 +125,8 @@ function setEditor({ project = null } = {}) {
     if (project.dataset_path) paths.push(`<div>dataset: <code>${esc(project.dataset_path)}</code></div>`);
     if (project.output_path) paths.push(`<div>output: <code>${esc(project.output_path)}</code></div>`);
     $('lora-paths').innerHTML = paths.join('');
+    $('lora-dataset-card').style.display = '';
+    loadDataset().catch((err) => toast(`dataset 取得失敗: ${err.message || err}`, 'error'));
   } else {
     activeId = null;
     $('lora-name').value = '';
@@ -123,6 +137,8 @@ function setEditor({ project = null } = {}) {
     $('lora-status').disabled = true;
     $('lora-editor-title').textContent = '📝 新規作成';
     $('lora-paths').innerHTML = '';
+    $('lora-dataset-card').style.display = 'none';
+    datasetItems = [];
   }
   $('lora-note').textContent = '';
   renderList();
@@ -199,6 +215,113 @@ async function handleDelete() {
 }
 
 // ============================================================
+// Dataset
+// ============================================================
+async function loadDataset() {
+  if (!activeId) { datasetItems = []; renderDataset(); return; }
+  const res = await api(`/api/lora/projects/${activeId}/dataset`);
+  datasetItems = res?.items || [];
+  renderDataset();
+}
+
+function renderDataset() {
+  const grid = $('lora-ds-grid');
+  const count = $('lora-ds-count');
+  if (!grid || !count) return;
+  count.textContent = `${datasetItems.length} 枚`;
+  if (!datasetItems.length) {
+    grid.innerHTML = '<div class="pc-empty">画像未投入</div>';
+    return;
+  }
+  grid.innerHTML = datasetItems.map((it) => {
+    const url = `/api/lora/projects/${activeId}/dataset/${it.id}/image`;
+    const tags = it.tags ? esc(it.tags) : '<span class="text-muted">no tags</span>';
+    return `
+      <div class="lora-ds-cell" data-id="${it.id}">
+        <img src="${url}" loading="lazy" alt="">
+        <div class="lora-ds-meta">${tags}</div>
+        <button class="lora-ds-del" data-act="del" title="削除">×</button>
+      </div>`;
+  }).join('');
+  grid.querySelectorAll('[data-id]').forEach((cell) => {
+    cell.querySelector('[data-act="del"]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const id = Number(cell.dataset.id);
+      handleDatasetDelete(id);
+    });
+  });
+}
+
+async function handleDatasetDelete(itemId) {
+  if (!confirm('この画像を削除しますか？')) return;
+  try {
+    await api(`/api/lora/projects/${activeId}/dataset/${itemId}`, { method: 'DELETE' });
+    await loadDataset();
+    toast('削除', 'success');
+  } catch (err) {
+    toast(`削除失敗: ${err.message || err}`, 'error');
+  }
+}
+
+async function handleDatasetUpload(fileList) {
+  if (!activeId) { toast('プロジェクトを選択してください', 'error'); return; }
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const allowed = /\.(png|jpe?g|webp)$/i;
+  const accepted = files.filter(f => allowed.test(f.name));
+  const rejected = files.length - accepted.length;
+  if (!accepted.length) { toast('対応形式の画像がありません', 'error'); return; }
+  const fd = new FormData();
+  accepted.forEach((f) => fd.append('files', f, f.name));
+  const prog = $('lora-ds-progress');
+  prog.textContent = `アップロード中… (${accepted.length} 枚${rejected ? `, ${rejected} 枚スキップ` : ''})`;
+  try {
+    const res = await fetch(`/api/lora/projects/${activeId}/dataset`, {
+      method: 'POST', body: fd,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`${res.status}: ${text.slice(0, 200)}`);
+    }
+    prog.textContent = '';
+    await loadDataset();
+    toast(`${accepted.length} 枚アップロード`, 'success');
+  } catch (err) {
+    prog.textContent = `エラー: ${err.message || err}`;
+    toast('アップロード失敗', 'error');
+  }
+}
+
+function bindDropZone() {
+  const drop = $('lora-ds-drop');
+  const input = $('lora-ds-input');
+  if (!drop || !input) return;
+  $('lora-ds-browse')?.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    input.click();
+  });
+  input.addEventListener('change', () => {
+    handleDatasetUpload(input.files);
+    input.value = '';
+  });
+  ['dragenter', 'dragover'].forEach((ev) => {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      drop.classList.add('drag-over');
+    });
+  });
+  ['dragleave', 'drop'].forEach((ev) => {
+    drop.addEventListener(ev, (e) => {
+      e.preventDefault();
+      drop.classList.remove('drag-over');
+    });
+  });
+  drop.addEventListener('drop', (e) => {
+    handleDatasetUpload(e.dataTransfer?.files);
+  });
+}
+
+// ============================================================
 // Mount
 // ============================================================
 export async function mount() {
@@ -207,5 +330,6 @@ export async function mount() {
   $('lora-save')?.addEventListener('click', handleSave);
   $('lora-delete')?.addEventListener('click', handleDelete);
   $('lora-clear')?.addEventListener('click', () => setEditor());
+  bindDropZone();
   await loadList();
 }

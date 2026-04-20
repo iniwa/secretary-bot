@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
 from src.errors import ValidationError
 from src.web._context import WebContext
@@ -72,3 +73,70 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except ValidationError as e:
             raise HTTPException(404, str(e))
         return {"ok": True}
+
+    @app.get(
+        "/api/lora/projects/{project_id}/dataset",
+        dependencies=[Depends(ctx.verify)],
+    )
+    async def lora_dataset_list(project_id: int, reviewed_only: bool = False):
+        unit = _get_unit()
+        items = await unit.list_dataset_items(
+            project_id, reviewed_only=reviewed_only,
+        )
+        return {"items": items}
+
+    @app.post(
+        "/api/lora/projects/{project_id}/dataset",
+        dependencies=[Depends(ctx.verify)],
+    )
+    async def lora_dataset_upload(
+        project_id: int, files: list[UploadFile] = File(...),
+    ):
+        if not files:
+            raise HTTPException(400, "no files")
+        unit = _get_unit()
+        try:
+            _, target_dir = await unit.open_dataset_dir(project_id)
+        except ValidationError as e:
+            raise HTTPException(404, str(e))
+        items: list[dict] = []
+        for f in files:
+            content = await f.read()
+            try:
+                row = await unit.add_dataset_item(
+                    project_id, target_dir,
+                    filename=f.filename, content=content,
+                )
+            except ValidationError as e:
+                raise HTTPException(400, str(e))
+            finally:
+                del content
+            if row:
+                items.append(row)
+        return {"items": items}
+
+    @app.delete(
+        "/api/lora/projects/{project_id}/dataset/{item_id}",
+        dependencies=[Depends(ctx.verify)],
+    )
+    async def lora_dataset_delete(project_id: int, item_id: int):
+        unit = _get_unit()
+        try:
+            await unit.delete_dataset_item(item_id)
+        except ValidationError as e:
+            raise HTTPException(404, str(e))
+        return {"ok": True}
+
+    @app.get(
+        "/api/lora/projects/{project_id}/dataset/{item_id}/image",
+        dependencies=[Depends(ctx.verify)],
+    )
+    async def lora_dataset_image(project_id: int, item_id: int):
+        unit = _get_unit()
+        row = await unit.get_dataset_item(item_id)
+        if not row or row["project_id"] != project_id:
+            raise HTTPException(404, "item not found")
+        path = row["image_path"]
+        if not unit.is_dataset_path_safe(path):
+            raise HTTPException(403, "forbidden path")
+        return FileResponse(path)

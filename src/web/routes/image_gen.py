@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
+from src.units.lora_train.nas_io import ALLOWED_IMAGE_EXTS as _IMG_ALLOWED_EXTS
 from src.web._context import WebContext
 
 
@@ -31,8 +32,6 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         nas_cfg = bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
         # prompt 指示は mount_point、実 config は base_path。両対応 + 既定値
         return nas_cfg.get("mount_point") or nas_cfg.get("base_path") or "/mnt/ai-image"
-
-    _IMG_ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
     @app.post("/api/image/generate", dependencies=[Depends(ctx.verify)])
     async def image_generate(request: Request):

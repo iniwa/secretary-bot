@@ -921,3 +921,38 @@ html, body { height: 100vh; overflow: hidden; }
   font-size: 0.7rem; max-height: 240px; overflow: auto;
   white-space: pre-wrap; word-break: break-all;
 }
+
+/* === LoRA dataset === */
+.lora-ds-drop {
+  border: 2px dashed var(--border); border-radius: 6px;
+  padding: 1.2rem; text-align: center; color: var(--text-muted);
+  font-size: 0.85rem; background: var(--bg-overlay, #1a1a1a);
+  transition: background 0.15s, border-color 0.15s;
+}
+.lora-ds-drop.drag-over {
+  border-color: var(--accent-primary, #4a90e2);
+  background: rgba(74, 144, 226, 0.08);
+}
+.lora-ds-grid {
+  display: grid; gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.lora-ds-cell {
+  position: relative; border: 1px solid var(--border); border-radius: 4px;
+  overflow: hidden; background: var(--bg-overlay, #1a1a1a);
+}
+.lora-ds-cell img {
+  width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block;
+}
+.lora-ds-meta {
+  padding: 0.25rem 0.4rem; font-size: 0.7rem;
+  color: var(--text-muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lora-ds-del {
+  position: absolute; top: 0.2rem; right: 0.2rem;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: none; background: rgba(0, 0, 0, 0.6); color: #fff;
+  cursor: pointer; font-size: 0.9rem; line-height: 1;
+}
+.lora-ds-del:hover { background: var(--accent-danger, #d44); }

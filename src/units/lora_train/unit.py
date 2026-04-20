@@ -5,6 +5,8 @@ WebGUI のルートが直接公開メソッドを呼ぶ構造（image_gen と同
 
 from __future__ import annotations
 
+import asyncio
+
 from src.errors import ValidationError
 from src.logger import get_logger
 from src.units.base_unit import BaseUnit
@@ -95,3 +97,54 @@ class LoRATrainUnit(BaseUnit):
             )
         await self.bot.database.lora_project_delete(project_id)
         log.info("lora project deleted: id=%s name=%s", project_id, existing["name"])
+
+    async def open_dataset_dir(self, project_id: int) -> tuple[dict, str]:
+        """バッチ追加の前準備：プロジェクト存在確認＋ NAS dir 確保（1回だけ呼ぶ）。"""
+        project = await self.bot.database.lora_project_get(project_id)
+        if not project:
+            raise ValidationError(f"project {project_id} not found")
+        target_dir = await asyncio.to_thread(
+            nas_io.ensure_dataset_dir,
+            self._nas_base, self._datasets_subdir, project["name"],
+        )
+        return project, target_dir
+
+    async def add_dataset_item(
+        self, project_id: int, target_dir: str,
+        *, filename: str | None, content: bytes,
+    ) -> dict | None:
+        """画像 1 枚を NAS へ書き出し、`lora_dataset_items` 行を作る。
+
+        ループ呼び出し前提で `target_dir` を引数化（NAS への makedirs を1回に抑える）。
+        ファイル書き込みは `asyncio.to_thread` でイベントループから外す。
+        """
+        ext = nas_io.normalize_image_ext(filename)
+        path = await asyncio.to_thread(
+            nas_io.write_dataset_image, target_dir, ext, content,
+        )
+        item_id = await self.bot.database.lora_dataset_item_insert(
+            project_id=project_id, image_path=path,
+        )
+        return await self.bot.database.lora_dataset_item_get(item_id)
+
+    async def list_dataset_items(
+        self, project_id: int, *, reviewed_only: bool = False,
+    ) -> list[dict]:
+        return await self.bot.database.lora_dataset_item_list(
+            project_id, reviewed_only=reviewed_only,
+        )
+
+    async def get_dataset_item(self, item_id: int) -> dict | None:
+        return await self.bot.database.lora_dataset_item_get(item_id)
+
+    async def delete_dataset_item(self, item_id: int) -> None:
+        row = await self.bot.database.lora_dataset_item_get(item_id)
+        if not row:
+            raise ValidationError(f"dataset item {item_id} not found")
+        await asyncio.to_thread(nas_io.remove_dataset_file, row["image_path"])
+        await self.bot.database.lora_dataset_item_delete(item_id)
+
+    def is_dataset_path_safe(self, path: str) -> bool:
+        return nas_io.is_inside_dataset_dir(
+            path, self._nas_base, self._datasets_subdir,
+        )
