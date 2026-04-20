@@ -151,11 +151,13 @@ function renderBody() {
   el.innerHTML = `
     <div id="rec-editors-area"></div>
     <div id="rec-notes-area"></div>
+    <div id="rec-team-notes-area"></div>
     <div id="skills-area"></div>
     <div id="builds-area"></div>
   `;
   renderRecEditorsSection();
   renderRecNotesSection();
+  renderRecTeamNotesSection();
   renderSkillsSection();
   renderBuildsSection();
 }
@@ -205,6 +207,57 @@ function openRecNotesEditor() {
       close();
       toast('保存しました', 'success');
       renderRecNotesSection();
+    } catch (err) {
+      toast(err.message || String(err), 'error');
+    }
+  });
+}
+
+function renderRecTeamNotesSection() {
+  const el = document.getElementById('rec-team-notes-area');
+  if (!el) return;
+  const notes = state.character?.recommended_team_notes || '';
+  el.innerHTML = `
+    <div class="skills-block">
+      <div class="skills-head">
+        <h3 class="mb-1">🧩 オススメ編成（メモ）</h3>
+        <button class="btn btn-sm" id="rec-team-notes-edit-btn">編集</button>
+      </div>
+      ${notes
+        ? `<div class="skill-summary">${escapeHtml(notes)}</div>`
+        : '<div class="text-muted text-sm">オススメ編成やシナジーをフリーテキストで残せます。（未設定）</div>'}
+    </div>
+  `;
+  document.getElementById('rec-team-notes-edit-btn').addEventListener('click', openRecTeamNotesEditor);
+}
+
+function openRecTeamNotesEditor() {
+  const ch = state.character;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="text-muted text-sm mb-1">
+      オススメ編成・シナジー・カウンター例などを自由に記入。<br>
+      「オススメステータス（メモ）」と同じくフリーテキストの表示専用。
+    </div>
+    <textarea id="rec-team-notes-text" rows="6" style="width:100%;"
+      placeholder="例: 妄想エンジェル編成（千夏 / アリア / 南宮羽）&#10;代替: 強攻編成（千夏 / 葉瞬光 / ダイアリン）など">${escapeHtml(ch?.recommended_team_notes || '')}</textarea>
+  `;
+  const { footerEl, close } = openModal({ title: 'オススメ編成（メモ）編集', body: wrap });
+  footerEl.innerHTML = `
+    <button class="btn" data-act="cancel">キャンセル</button>
+    <button class="btn btn-primary" data-act="ok">保存</button>
+  `;
+  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
+    const notes = wrap.querySelector('#rec-team-notes-text').value;
+    try {
+      const res = await api(`/characters/${ch.id}/recommended-team-notes`, {
+        method: 'PUT', body: { notes: notes || null },
+      });
+      state.character = res.character || state.character;
+      close();
+      toast('保存しました', 'success');
+      renderRecTeamNotesSection();
     } catch (err) {
       toast(err.message || String(err), 'error');
     }

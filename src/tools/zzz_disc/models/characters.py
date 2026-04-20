@@ -15,6 +15,7 @@ __all__ = [
     "update_character_recommended_disc_sets",
     "update_character_skills",
     "update_character_recommended_notes",
+    "update_character_recommended_team_notes",
     "list_characters_with_build_stats",
     "get_character",
     "get_character_by_slug",
@@ -143,7 +144,7 @@ def _decode_char_row(row: dict) -> dict:
 _CHAR_COLS = (
     "id, slug, name_ja, element, faction, icon_url, display_order, "
     "hoyolab_agent_id, recommended_substats_json, recommended_disc_sets_json, "
-    "skills_json, skill_summary, recommended_notes"
+    "skills_json, skill_summary, recommended_notes, recommended_team_notes"
 )
 
 
@@ -185,6 +186,14 @@ async def update_character_recommended_notes(db, character_id: int,
                                              notes: str | None) -> int:
     return await db.execute_returning_rowcount(
         "UPDATE zzz_characters SET recommended_notes = ? WHERE id = ?",
+        (notes, character_id),
+    )
+
+
+async def update_character_recommended_team_notes(db, character_id: int,
+                                                  notes: str | None) -> int:
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET recommended_team_notes = ? WHERE id = ?",
         (notes, character_id),
     )
 

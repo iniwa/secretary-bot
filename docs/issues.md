@@ -15,7 +15,7 @@
 - [x] 「オススメステータス･ディスク（メモ）」が妄想エンジェルの3人しか入っていないため、全キャラへ適応してほしい
   - 2026-04-20: 既存 9 キャラ + 追加 39 キャラ = 全 48 キャラで `recommended_notes` を埋めた。codex（`docs/zzz_character_codex.md`）を主ソースとし、未収載だった 3 キャラ（ビビアン・バンシー / イヴリン・シェヴァリエ / アストラ・ヤオ）は codex にも追記した（スターズ・オブ・リラ、モッキンバード 陣営を新設）
 - [x] 「推奨サブステ･ディスク」（フィルタリングに使用している方）が未記入のキャラに関して、ネットから取得･要約したデータを元に記入してほしい
-  - 2026-04-20: 既存 notes を持つ 9 キャラについて、notes テキストから「サブ優先」「ディスクセット」を機械抽出し `recommended_substats_json` / `recommended_disc_sets_json` を埋め直し（古い文字化けデータも修正）。残り 39 キャラは notes 追加と同時期に埋めるのが効率的だが、現時点ではフィルタ用 JSON には反映していない（次イテレーション扱い）
+  - 2026-04-20: 全 48 キャラの notes から「サブ優先」「ディスクセット」を機械抽出し `recommended_substats_json` / `recommended_disc_sets_json` を埋め直し（古い文字化けデータも修正）。併せて notes 中に残っていた EN 音動機名/機構用語を公式JP or カタカナ音写へ統一（codex line 25 の 別表記「スターオブリリム」も除去）
 - [x] 「オススメ編成（メモ）」というセクションを追加してほしい
   - このセクションは自由記入欄。「オススメステータス（メモ）と同じようなイメージ
   - 2026-04-20: `zzz_characters.recommended_team_notes` カラム追加＋ PUT API `/api/characters/{id}/recommended-team-notes` 追加＋ `character_detail.js` に「🧩 オススメ編成（メモ）」セクションを追加。Pi 側は BOT 再起動で schema migration が走って有効化される

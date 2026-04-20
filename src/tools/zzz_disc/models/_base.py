@@ -159,6 +159,8 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_characters", "skill_summary", "TEXT")
     # ネットから取得したオススメステータス・ディスクのフリーテキスト
     await _maybe_add_column(db, "zzz_characters", "recommended_notes", "TEXT")
+    # オススメ編成（メモ）: 編成例・シナジーをフリーテキストで残す
+    await _maybe_add_column(db, "zzz_characters", "recommended_team_notes", "TEXT")
     # 音動機（W-Engine）情報を build に保存
     await _maybe_add_column(db, "zzz_builds", "w_engine_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）
