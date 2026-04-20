@@ -25,6 +25,7 @@ _UNIT_MODULES = {
     "model_sync": "src.units.model_sync",
     "prompt_crafter": "src.units.prompt_crafter",
     "lora_train": "src.units.lora_train",
+    "clip_pipeline": "src.units.clip_pipeline",
 }
 
 
