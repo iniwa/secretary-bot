@@ -9,11 +9,11 @@
 |---|---|---|
 | A. NAS再編（設定/ドキュメント） | 完了 | 実機適用は運用時 |
 | B. DB / 共通基盤 | 完了 | migration v32 + ClipPipelineMixin + errors |
-| C. Pi 側ユニット | 未着手 | **次に着手する Phase** |
-| D. Windows Agent 側 | 未着手 | 実機疎通は Main/Sub PC で |
+| C. Pi 側ユニット | 完了 | models / agent_client / dispatcher / unit / __init__ + UnitManager 登録 |
+| D. Windows Agent 側 | 完了 | router / runner / whisper_cache + 旧コード移植。実機疎通は Main/Sub PC で |
 | E. WebGUI | 未着手 | |
-| F. 設定 / ドキュメント | 部分着手 | design.md / implementation_plan.md / nas_migration.md 作成済み。api.md / README.md 未 |
-| G. クリーンアップ | 未着手 | |
+| F. 設定 / ドキュメント | 完了 | design / implementation_plan / nas_migration / api / README + issues.md |
+| G. クリーンアップ | 未着手 | 実機疎通前提（Main/Sub PC で再開） |
 
 最終更新: 2026-04-20 / 担当: Claude Code + iniwa
 
@@ -65,80 +65,33 @@
 
 ## C. Pi 側ユニット（`src/units/clip_pipeline/`）
 
-- [ ] C1: `models.py`
-  - [ ] `JobStatus` dataclass（to_dict 付き）
-  - [ ] `TransitionEvent` dataclass
-  - [ ] ステータス定数（STATUS_QUEUED, DISPATCHING, WARMING_CACHE, RUNNING, DONE, FAILED, CANCELLED）
-  - [ ] ステップ定数（STEP_PREPROCESS, TRANSCRIBE, ANALYZE, EMOTION, HIGHLIGHT, EDL, CLIPS）
-  - [ ] プラットフォーム定数（PLATFORM_DISCORD, PLATFORM_WEBGUI）
-- [ ] C2: `agent_client.py`
-  - [ ] `AgentClient` クラス（httpx wrapper）
-  - [ ] `capability()` / `whisper_cache_sync()` / `whisper_cache_sync_stream()`
-  - [ ] `job_start()` / `job_get()` / `job_stream()` / `job_cancel()`
-  - [ ] エラーマッピング（Agent レスポンス → 例外）
-- [ ] C3: `dispatcher.py`
-  - [ ] `Dispatcher` クラス（image_gen パターン）
-  - [ ] `_job_dispatcher_worker`（queued→dispatching→running 駆動）
-  - [ ] `_warming_cache_monitor`（SSE 購読）
-  - [ ] `_running_monitor`（SSE 購読、step/progress/log 転送）
-  - [ ] `_stuck_reaper_worker`
-  - [ ] キャンセル / リトライ / バックオフ
-- [ ] C4: `unit.py`
-  - [ ] `ClipPipelineUnit(BaseUnit)` 基本構造
-  - [ ] `execute()`（Discord: 切り抜き / status / cancel / list）
-  - [ ] `enqueue()` / `get_job()` / `list_jobs()` / `cancel_job()`
-  - [ ] イベント pub/sub（WebGUI SSE 用）
-  - [ ] Discord notifier loop（完了時に結果投稿）
-  - [ ] LLM 意図抽出プロンプト（`_extract_params`）
-- [ ] C5: `__init__.py`（ユニット登録）
-- [ ] C6: `src/unit_manager.py`（または自動ロード機構）での有効化確認
+- [x] C1: `models.py`
+- [x] C2: `agent_client.py`
+- [x] C3: `dispatcher.py`
+- [x] C4: `unit.py`
+- [x] C5: `__init__.py`（ユニット登録）
+- [x] C6: `src/units/__init__.py` に `clip_pipeline` を追加（UnitManager 自動ロード対応）
 
 ## D. Windows Agent 側（`windows-agent/tools/clip_pipeline/`）
 
-- [ ] D1: ディレクトリ新設、旧 `streamarchive-auto-kirinuki/clip-pipeline/*` をコピー
-  - [ ] `pipeline.py`
-  - [ ] `preprocess_audio.py`
-  - [ ] `transcribe.py`
-  - [ ] `analyze_audio.py`
-  - [ ] `emotion.py`
-  - [ ] `highlight.py`
-  - [ ] `export_edl.py`
-  - [ ] `export_clips.py`
-  - [ ] `config.py` は吸収して不要に
-- [ ] D2: 移植コードの修正
-  - [ ] import パス（`sys.path.insert` を削除、明示相対 import へ）
-  - [ ] `config.py` 依存を agent_config.yaml 経由に差し替え
-  - [ ] 旧 `worker.py` / `coordinator.py` / `main.py` / `monitor.py` は移植しない（Pi 側 Dispatcher に吸収）
-- [ ] D3: `runner.py` 新規
-  - [ ] ジョブ辞書（`dict[job_id, JobContext]`）
-  - [ ] `start_job(params) -> job_id`
-  - [ ] `cancel_job(job_id)`
-  - [ ] `get_job(job_id)` snapshot
-  - [ ] SSE 用イベントキュー（step/progress/log/result/error）
-  - [ ] ログコールバック / progress コールバックのアダプタ
-- [ ] D4: `whisper_cache.py` 新規
-  - [ ] NAS `models/whisper/` 列挙
-  - [ ] ローカル SSD `<cache>/whisper/` への sha256 検証付きコピー
-  - [ ] 進捗 SSE
-  - [ ] Whisper ライブラリのモデルパス解決
-- [ ] D5: `router.py` 新規
-  - [ ] `/capability`
-  - [ ] `/whisper/cache-sync` + `/events`
-  - [ ] `/jobs/start`
-  - [ ] `/jobs/{id}` / `/events` / `/cancel`
-  - [ ] X-Agent-Token 認証
-- [ ] D6: `__init__.py` で `init_clip_pipeline(role, agent_config, agent_dir)` を公開
-- [ ] D7: `windows-agent/agent.py` に統合
-  - [ ] `from tools.clip_pipeline import router as clip_pipeline_router, init_clip_pipeline`
-  - [ ] lifespan で `init_clip_pipeline(...)` 呼び出し
-  - [ ] `app.include_router(clip_pipeline_router, prefix="/clip-pipeline")`
-- [ ] D8: `windows-agent/tools/image_gen/nas_mount.py` で `secretary-bot` 共有の再利用動作確認（既存同UNC検出で `N:` が共用されるはず）
-- [ ] D9: `requirements.txt`（Windows Agent）
-  - [ ] `openai-whisper`
-  - [ ] `demucs`
-  - [ ] `librosa`
-  - [ ] `torch`（CUDA 対応、既存設定流用）
-  - [ ] `ffmpeg-python`（既存確認）
+- [x] D1: ディレクトリ新設、旧 `streamarchive-auto-kirinuki/clip-pipeline/*` をコピー
+  - pipeline / preprocess_audio / transcribe / analyze_audio / emotion / highlight / export_edl / export_clips / config（`pipeline/` サブパッケージに集約）
+- [x] D2: 移植コードの修正
+  - [x] 明示相対 import 化（`from .config import ...` 等）
+  - [x] `transcribe` に `download_root` 引数、`run_pipeline` に `step_callback` / `cancel_flag` / `whisper_download_root` / 戻り値 dict を追加
+  - [x] 旧 `worker.py` / `coordinator.py` / `main.py` / `monitor.py` は移植しない（Pi 側 Dispatcher に吸収）
+- [x] D3: `runner.py` 新規（`ClipJob` + `run_clip_job` で SSE イベントキュー駆動）
+- [x] D4: `whisper_cache.py` 新規（NAS → ローカル SSD を 4MB チャンクでコピー、途中キャンセル対応、完了時 atomic replace）
+- [x] D5: `router.py` 新規
+  - [x] `/clip-pipeline/capability`
+  - [x] `/clip-pipeline/whisper/cache-sync` + `/events` + `/cancel`
+  - [x] `/clip-pipeline/jobs/start`
+  - [x] `/clip-pipeline/jobs/{id}` / `/events` / `/cancel`
+  - [x] X-Agent-Token 認証
+- [x] D6: `__init__.py` で `init_clip_pipeline(role, agent_config, agent_dir)` を公開
+- [x] D7: `windows-agent/agent.py` に統合（import + lifespan init + include_router）
+- [ ] D8: 実機で `nas_mount.py` が `secretary-bot` 共有を再利用することの確認（Main/Sub PC 再開時）
+- [x] D9: `requirements.txt`（Windows Agent） — faster-whisper / librosa / demucs / funasr / requests を追加
 
 ## E. WebGUI
 
@@ -162,10 +115,10 @@
 
 - [x] F1: `docs/auto_kirinuki/design.md`
 - [x] F2: `docs/auto_kirinuki/implementation_plan.md`（本書）
-- [ ] F3: `docs/auto_kirinuki/nas_migration.md`
-- [ ] F4: `docs/auto_kirinuki/api.md`（Agent API 仕様書）
-- [ ] F5: `docs/auto_kirinuki/README.md`（目次）
-- [ ] F6: `docs/issues.md` に auto-kirinuki セクション追加
+- [x] F3: `docs/auto_kirinuki/nas_migration.md`
+- [x] F4: `docs/auto_kirinuki/api.md`（Agent API 仕様書）
+- [x] F5: `docs/auto_kirinuki/README.md`（目次）
+- [x] F6: `docs/issues.md` に auto-kirinuki セクション更新（Phase C/D/F 完了記録）
 
 ## G. クリーンアップ / 検証
 
@@ -202,3 +155,6 @@ G1→G2→G4 (静的検証、G3 は実機環境で別途)
 - 2026-04-20 初回作成: 設計・実装計画・NAS 移行手順の 3 ドキュメントを作成。
 - 2026-04-20 Phase A 完了: `config.yaml.example` / `agent_config.yaml.example` / `.env.example` / `windows-agent/config/.env.example` 更新。`docs/image_gen/nas_setup.md` を `secretary-bot` 親共有前提に全面書き換え。`design.md` / `api.md` / `README.md` / `comfyui_usage.md` / `preset_compat.md` / `setup/*.md` のパス参照を `/mnt/secretary-bot/ai-image` / `N:\ai-image` / `//nas/secretary-bot/ai-image` / `secretary-bot-rw` へ更新。
 - 2026-04-20 Phase B 完了: `src/database/_base.py` に migration v32 追加（`clip_pipeline_jobs` + `clip_pipeline_job_events` + 3 インデックス）、`_SCHEMA_VERSION` を 32 に。`src/database/clip_pipeline.py` を新設し `ClipPipelineMixin` に CRUD 10 メソッドを実装、`__init__.py` に登録。`src/errors.py` に `ClipPipelineError` / `WhisperError` / `TranscribeError` / `HighlightError` を追加。`CacheSyncError` は image_gen のものを再利用。
+- 2026-04-20 Phase C 完了: `src/units/clip_pipeline/` に `models.py` / `agent_client.py` / `dispatcher.py` / `unit.py` / `__init__.py` を新設し、`src/units/__init__.py` の `_UNIT_MODULES` に `clip_pipeline` を登録。image_gen テンプレを基にエラー階層を `BotError + is_retryable` 判定に揃え、NAS 出力パスを `outputs/<stem>` 直下に正規化、`warming_cache` 遷移で `AgentClient.capability()` を呼んで Whisper モデル欠落を判定するフローに統一。
+- 2026-04-20 Phase D 完了: `windows-agent/tools/clip_pipeline/` を新設。旧 `streamarchive-auto-kirinuki/clip-pipeline/` の pipeline / preprocess_audio / transcribe / analyze_audio / emotion / highlight / export_edl / export_clips / config を `pipeline/` サブパッケージへ移植（明示相対 import 化、`transcribe` に `download_root`、`run_pipeline` に `step_callback` / `cancel_flag` / 戻り値追加）。`runner.py` で asyncio.to_thread 駆動 + SSE イベントキュー、`whisper_cache.py` で NAS → ローカル SSD への chunked copy（atomic replace）、`router.py` で `/clip-pipeline/capability` / `/whisper/cache-sync` / `/jobs/start` の HTTP + SSE を実装。`windows-agent/agent.py` に init + include_router を追加、`windows-agent/requirements.txt` に faster-whisper / librosa / demucs / funasr / requests を追加。実機疎通は Main/Sub PC で再開時に実施。
+- 2026-04-20 Phase F 完了: `docs/auto_kirinuki/api.md`（Agent API 仕様書）と `docs/auto_kirinuki/README.md`（目次 + 全体構成）を新設。`implementation_plan.md` / `docs/issues.md` を Phase C/D/F 完了状態に更新。

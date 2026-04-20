@@ -48,16 +48,22 @@
   - C 以降は Windows Agent 側の subprocess 管理（kohya / WD14）と SSE 連携が必要なため、実機環境がある PC（Main/Sub PC）で再開する
 
 ### auto-kirinuki（配信切り抜き / Phase 1）
-- [ ] 旧 `streamarchive-auto-kirinuki` を secretary-bot に統合し、Pi 司令塔 + Windows Agent 重処理の構成で切り抜きユニットを新設
-  - 設計・実装計画・NAS 再編手順は `docs/auto_kirinuki/` 配下を参照
-    - `design.md`（アーキテクチャ・DB スキーマ・API 仕様）
-    - `implementation_plan.md`（Phase 1 タスク + 進捗トラッキング）
+- [x] 旧 `streamarchive-auto-kirinuki` を secretary-bot に統合し、Pi 司令塔 + Windows Agent 重処理の構成で切り抜きユニットを新設（コード実装完了、E と G3 実機疎通は未実施）
+  - 設計・実装計画・NAS 再編手順・API 仕様・目次は `docs/auto_kirinuki/` 配下を参照
+    - `design.md`（アーキテクチャ・DB スキーマ・API 概要）
+    - `implementation_plan.md`（Phase 1 タスク + 進捗）
     - `nas_migration.md`（NAS 共有 `ai-image` → `secretary-bot` 再編手順）
+    - `api.md`（Windows Agent `/clip-pipeline/*` API 仕様）
+    - `README.md`（目次 + 全体構成）
   - NAS 方針: 新規 `secretary-bot` 共有を作り、配下に `ai-image/` と `auto-kirinuki/` を並置。image_gen の既存パスも変更が必要
   - Whisper モデルは初回ジョブ投入時に `warming_cache` で自動 NAS→ローカル SSD 同期
   - 1 エージェント 1 ジョブ固定（GPU 1 枚制約）。Sub PC を priority=1、Main PC を priority=2
   - 旧リポジトリ `C:/Users/yamatoishida/Documents/git/streamarchive-auto-kirinuki` は参考用として残置（削除しない）
-  - Remote PC 環境では実機疎通不可のため、コード実装まで。疎通確認は Main/Sub PC で再開
+  - 2026-04-20 セッションで **Phase C (Pi 側ユニット) / Phase D (Windows Agent) / Phase F (ドキュメント) を完了**。残タスクは Phase E (WebGUI) と Phase G (実機疎通/テスト)
+  - 2026-04-20 Phase C: `src/units/clip_pipeline/` に models / agent_client / dispatcher / unit / __init__ を新設し `src/units/__init__.py` の `_UNIT_MODULES` へ登録。image_gen テンプレ基にエラー階層を `BotError + is_retryable` に揃え、`warming_cache` 遷移で `AgentClient.capability()` から Whisper モデル欠落を判定
+  - 2026-04-20 Phase D: `windows-agent/tools/clip_pipeline/` を新設。旧パイプラインを `pipeline/` サブパッケージに移植（相対 import 化、`transcribe` に `download_root`、`run_pipeline` に `step_callback` / `cancel_flag` / 戻り値追加）。`runner.py` で asyncio.to_thread 駆動 + SSE、`whisper_cache.py` で NAS → SSD チャンクコピー + atomic replace、`router.py` で `/clip-pipeline/*` HTTP + SSE を実装。`agent.py` に統合し、`requirements.txt` に faster-whisper / librosa / demucs / funasr / requests を追加
+  - 2026-04-20 Phase F: `api.md` / `README.md` を新設し、`implementation_plan.md` を Phase C/D/F 完了状態に更新
+  - 残: Phase E (WebGUI) 実装、Phase G3 (実機疎通 — Main/Sub PC でのみ可能)。Remote PC 環境では不可
 
 ### image_gen / プロンプト再現・表示
 - [x] ギャラリー「この設定で再現」で、可能な範囲でセクション選択状態（プロンプト断片）も復元してほしい
