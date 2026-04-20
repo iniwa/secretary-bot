@@ -70,10 +70,10 @@ NAS 側（正）に配置：
 
 | 種類 | パス |
 |---|---|
-| Checkpoint | `\\iniwaNAS\Work\ai-image\models\checkpoints\` |
-| LoRA | `\\iniwaNAS\Work\ai-image\models\loras\` |
-| VAE | `\\iniwaNAS\Work\ai-image\models\vae\` |
-| Embedding | `\\iniwaNAS\Work\ai-image\models\embeddings\` |
+| Checkpoint | `\\iniwaNAS\secretary-bot\ai-image\models\checkpoints\` |
+| LoRA | `\\iniwaNAS\secretary-bot\ai-image\models\loras\` |
+| VAE | `\\iniwaNAS\secretary-bot\ai-image\models\vae\` |
+| Embedding | `\\iniwaNAS\secretary-bot\ai-image\models\embeddings\` |
 
 各 PC 側は `C:/secretary-bot-cache/models/` に同期される。**ComfyUI の `extra_model_paths.yaml` がキャッシュ側を参照する設定なので、ローカルにファイルがあればそのまま拾われる。**
 
@@ -168,7 +168,7 @@ Secretary-bot 側は「確定したワークフローを日常的に叩く」用
 
 ### 4.3 モデル追加の流れ
 
-1. NAS の `Work/ai-image/models/<種類>/` に配置
+1. NAS の `secretary-bot/ai-image/models/<種類>/` に配置
 2. Secretary-bot 経由でジョブを投入すると `warming_cache` で自動同期
 3. ComfyUI 単体運用で急ぎたい場合は `C:/secretary-bot-cache/models/<種類>/` にも手動コピー
 

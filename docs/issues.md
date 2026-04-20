@@ -11,6 +11,18 @@
   - B / B+（プロジェクト CRUD + dataset drag-drop upload）は 2026-04-20 に Pi 側コード実装まで完了。実機（Pi + Main/Sub PC + NAS）での疎通確認は未実施
   - C 以降は Windows Agent 側の subprocess 管理（kohya / WD14）と SSE 連携が必要なため、実機環境がある PC（Main/Sub PC）で再開する
 
+### auto-kirinuki（配信切り抜き / Phase 1）
+- [ ] 旧 `streamarchive-auto-kirinuki` を secretary-bot に統合し、Pi 司令塔 + Windows Agent 重処理の構成で切り抜きユニットを新設
+  - 設計・実装計画・NAS 再編手順は `docs/auto_kirinuki/` 配下を参照
+    - `design.md`（アーキテクチャ・DB スキーマ・API 仕様）
+    - `implementation_plan.md`（Phase 1 タスク + 進捗トラッキング）
+    - `nas_migration.md`（NAS 共有 `ai-image` → `secretary-bot` 再編手順）
+  - NAS 方針: 新規 `secretary-bot` 共有を作り、配下に `ai-image/` と `auto-kirinuki/` を並置。image_gen の既存パスも変更が必要
+  - Whisper モデルは初回ジョブ投入時に `warming_cache` で自動 NAS→ローカル SSD 同期
+  - 1 エージェント 1 ジョブ固定（GPU 1 枚制約）。Sub PC を priority=1、Main PC を priority=2
+  - 旧リポジトリ `C:/Users/yamatoishida/Documents/git/streamarchive-auto-kirinuki` は参考用として残置（削除しない）
+  - Remote PC 環境では実機疎通不可のため、コード実装まで。疎通確認は Main/Sub PC で再開
+
 ### image_gen / プロンプト再現・表示
 - [x] ギャラリー「この設定で再現」で、可能な範囲でセクション選択状態（プロンプト断片）も復元してほしい
   - 2026-04-20: クライアント側に `static/js/lib/decompose.js` を新設し、最終 positive/negative と DB の全セクションから「完全一致セクション」を逆算 → `chosen` に復元、部分一致や残余タグは positive/negative 入力欄に流す方針で実装。`gallery.js` の `handleReuse` で `GenerationAPI.listSections()` と `getJob` を並列フェッチして stash に `section_ids` を積み、`generate.js` の `checkStashPrefill` で `chosen` 反映。Extract ページの「🎨 この設定で生成へ」も同じ逆算ルートに統一

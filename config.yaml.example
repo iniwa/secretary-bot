@@ -135,7 +135,7 @@ units:
       stuck_reaper_interval_seconds: 30
       progress_debounce_seconds: 2            # DB 書き込みデバウンス
     nas:
-      base_path: "/mnt/ai-image"              # Pi からの NAS マウントパス（専用共有）。既存共有流用時は親マウント + subdir を含めた実効パスを指定（例: "/mnt/work/ai-image"）
+      base_path: "/mnt/secretary-bot/ai-image" # Pi からの NAS マウントパス（`secretary-bot` 共有配下の `ai-image` サブディレクトリ）
       outputs_subdir: "outputs"
       workflows_subdir: "workflows"
       lora_datasets_subdir: "lora_datasets"
@@ -160,6 +160,39 @@ units:
     enabled: true
     interval_seconds: 1800                    # ポーリング間隔（30分既定）
     trigger_sync: true                        # default_base_model 未キャッシュ時に /cache/sync を発射するか
+  # 配信アーカイブ切り抜き（Whisper + Ollama ハイライト判定 + EDL 出力を Windows Agent で実行）
+  clip_pipeline:
+    enabled: true
+    discord_output_channel_id: 0              # 完了結果を投稿する固定チャンネル（0 で起動元チャンネル）
+    default_mode: "normal"                    # test | normal
+    default_whisper_model: "large-v3"
+    default_ollama_model: "qwen3:14b"
+    defaults:
+      top_n: 0                                # 0=無制限
+      min_clip_sec: 30
+      max_clip_sec: 180
+      do_export_clips: false
+      mic_track: 1
+      use_demucs: true
+      sleep_sec: 2
+    retry:
+      max_retries: 2
+      base_backoff_seconds: 30
+      max_backoff_seconds: 300
+    timeouts:
+      dispatching_seconds: 30
+      warming_cache_seconds: 1800             # Whisper モデル同期（large-v3 で NAS→SSD 数分）
+      running_default_seconds: 7200           # 1h 動画 × large-v3 の余裕値
+      queued_seconds: 86400
+    dispatcher:
+      poll_interval_seconds: 2
+      stuck_reaper_interval_seconds: 30
+      progress_debounce_seconds: 2
+    nas:
+      base_path: "/mnt/secretary-bot/auto-kirinuki"
+      outputs_subdir: "outputs"
+      whisper_models_subdir: "models/whisper"
+      inputs_subdir: "inputs"
 
 # Tools（同居サブツール：BOT本体とは疎結合でホスティング）
 tools:

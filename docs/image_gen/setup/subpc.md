@@ -128,7 +128,7 @@ SubPC の custom_nodes は **MainPC を正本として追従**する。`../prese
   - `comfyui.host/port: 127.0.0.1 / 8188`
   - `kohya.enabled: true` （SubPC でも明示 true）
   - `cache_lru.max_size_gb: 100`
-  - `nas.share: "ai-image"`, `nas.mount_drive: "N:"`（MainPC と同一）
+  - `nas.share: "secretary-bot"`, `nas.subpath: "ai-image"`, `nas.mount_drive: "N:"`（MainPC と同一）
 - [ ] `nas.host` は **`.env` 経由**で上書き（`NAS_HOST`）
 - [ ] **既存の `obs_file_organizer:` は触らない**（現状動いている設定のまま）
 - [ ] **既存の `stt:` は触らない**（SubPC は Whisper 推論担当側の設定のまま）
@@ -140,7 +140,7 @@ SubPC の custom_nodes は **MainPC を正本として追従**する。`../prese
 
 ```dotenv
 NAS_HOST=192.168.1.xx
-NAS_USER=ai-image-rw
+NAS_USER=secretary-bot-rw
 NAS_PASSWORD=********
 SECRETARY_BOT_ROOT=C:/secretary-bot
 SECRETARY_BOT_CACHE=C:/secretary-bot-cache
@@ -152,10 +152,10 @@ SECRETARY_BOT_CACHE=C:/secretary-bot-cache
 
 手順は MainPC と完全に同一。ドライブレターも `N:` で統一する。詳細は [`../nas_setup.md`](../nas_setup.md) §4.2 を参照。
 
-- [ ] `New-SmbMapping -LocalPath "N:" -RemotePath "\\$NAS_HOST\ai-image" -Persistent $true`
+- [ ] `New-SmbMapping -LocalPath "N:" -RemotePath "\\$NAS_HOST\secretary-bot" -Persistent $true`
 - [ ] `Get-ChildItem N:\` が通ること
-- [ ] `Get-ChildItem N:\models\checkpoints\` で MainPC と**同じ一覧**が返ること（NAS 経由なので当然同じになる）
-- [ ] `start_agent.bat` 先頭に `net use N: \\...\ai-image /persistent:yes` を冪等に入れる運用は MainPC と揃える
+- [ ] `Get-ChildItem N:\ai-image\models\checkpoints\` で MainPC と**同じ一覧**が返ること（NAS 経由なので当然同じになる）
+- [ ] `start_agent.bat` 先頭に `net use N: \\...\secretary-bot /persistent:yes` を冪等に入れる運用は MainPC と揃える
 
 ---
 

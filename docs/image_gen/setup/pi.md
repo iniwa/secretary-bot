@@ -72,7 +72,7 @@ dpkg -s cifs-utils 2>/dev/null | grep -E '^Status:' || echo "NOT INSTALLED"
 ```bash
 sudo apt update
 sudo apt install -y cifs-utils
-sudo mkdir -p /mnt/ai-image
+sudo mkdir -p /mnt/secretary-bot
 ```
 
 ### 2.2 認証ファイル作成
@@ -80,20 +80,20 @@ sudo mkdir -p /mnt/ai-image
 
 ```bash
 # root 所有・600 必須
-sudo tee /etc/cifs-credentials-ai-image > /dev/null <<'EOF'
-username=ai-image-rw
+sudo tee /etc/cifs-credentials-secretary-bot > /dev/null <<'EOF'
+username=secretary-bot-rw
 password=********
 domain=WORKGROUP
 EOF
-sudo chown root:root /etc/cifs-credentials-ai-image
-sudo chmod 600 /etc/cifs-credentials-ai-image
+sudo chown root:root /etc/cifs-credentials-secretary-bot
+sudo chmod 600 /etc/cifs-credentials-secretary-bot
 ```
 
 ### 2.3 `/etc/fstab` に永続マウントを追記
 ```bash
 # NAS の IP を確認してから行を追加（既存があればスキップ）
-grep -q '/mnt/ai-image' /etc/fstab || sudo tee -a /etc/fstab > /dev/null <<'EOF'
-//192.168.1.20/ai-image  /mnt/ai-image  cifs  credentials=/etc/cifs-credentials-ai-image,iocharset=utf8,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,vers=3.0,nofail,x-systemd.automount,x-systemd.device-timeout=10  0  0
+grep -q '/mnt/secretary-bot' /etc/fstab || sudo tee -a /etc/fstab > /dev/null <<'EOF'
+//192.168.1.20/secretary-bot  /mnt/secretary-bot  cifs  credentials=/etc/cifs-credentials-secretary-bot,iocharset=utf8,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,vers=3.0,nofail,x-systemd.automount,x-systemd.device-timeout=10  0  0
 EOF
 
 sudo systemctl daemon-reload
@@ -102,17 +102,19 @@ sudo mount -a
 
 ### 2.4 マウント検証
 ```bash
-mountpoint /mnt/ai-image && echo MOUNTED || echo NOT_MOUNTED
-ls /mnt/ai-image
-ls /mnt/ai-image/outputs
-ls /mnt/ai-image/workflows
+mountpoint /mnt/secretary-bot && echo MOUNTED || echo NOT_MOUNTED
+ls /mnt/secretary-bot
+ls /mnt/secretary-bot/ai-image
+ls /mnt/secretary-bot/ai-image/outputs
+ls /mnt/secretary-bot/ai-image/workflows
+ls /mnt/secretary-bot/auto-kirinuki
 
 # 書き込みテスト（Pi は workflows/ に書き込み可）
-echo "pi-mount-test $(date -Is)" > /mnt/ai-image/workflows/_pi_test.txt && rm /mnt/ai-image/workflows/_pi_test.txt && echo OK
+echo "pi-mount-test $(date -Is)" > /mnt/secretary-bot/ai-image/workflows/_pi_test.txt && rm /mnt/secretary-bot/ai-image/workflows/_pi_test.txt && echo OK
 ```
 
 - [ ] `MOUNTED` が出る
-- [ ] `outputs/` / `workflows/` が `ls` できる（NAS 初期化が済んでいれば空でOK）
+- [ ] `ai-image/outputs/` / `ai-image/workflows/` / `auto-kirinuki/` が `ls` できる（NAS 初期化が済んでいれば空でOK）
 - [ ] 書き込みテスト成功
 
 > **Pi 再起動後もマウントが復活するか**（`nofail` + automount）を後で確認すること。
@@ -137,12 +139,12 @@ grep -E '^AGENT_SECRET_TOKEN=' /home/iniwa/docker/secretary-bot/.env || echo "AG
 `[要ユーザー確認]` 値はユーザー/NAS 管理者/Windows Agent 側と共有されているものに合わせる。
 
 ```dotenv
-# === Image Generation (NAS) ===
+# === NAS (secretary-bot 共有) ===
 NAS_SMB_HOST=192.168.1.20
-NAS_SMB_SHARE=ai-image
-NAS_SMB_USER=ai-image-rw
+NAS_SMB_SHARE=secretary-bot
+NAS_SMB_USER=secretary-bot-rw
 NAS_SMB_PASSWORD=********
-NAS_MOUNT_POINT=/mnt/ai-image
+NAS_MOUNT_POINT=/mnt/secretary-bot
 
 # === Windows Agent ===
 # MainPC / SubPC の start_agent.bat で設定している値と完全一致させる
@@ -214,7 +216,7 @@ units:
       stuck_reaper_interval_seconds: 30
       progress_debounce_seconds: 2
     nas:
-      base_path: "/mnt/ai-image"
+      base_path: "/mnt/secretary-bot/ai-image"
       outputs_subdir: "outputs"
       workflows_subdir: "workflows"
       lora_datasets_subdir: "lora_datasets"
@@ -312,7 +314,7 @@ Jobs タブで状態遷移を目視:
 
 ### 6.3 Gallery 確認
 - [ ] Gallery タブに生成画像サムネイルが表示される
-- [ ] `/mnt/ai-image/outputs/YYYY-MM/YYYY-MM-DD/` に実ファイルが保存されている
+- [ ] `/mnt/secretary-bot/ai-image/outputs/YYYY-MM/YYYY-MM-DD/` に実ファイルが保存されている
 
 ---
 
@@ -376,11 +378,11 @@ curl -sS $AUTH "$BASE/api/image/workflows" | python3 -m json.tool
 症状: Gallery が空 / ジョブは成功しているのに `outputs/` が見えない。
 
 ```bash
-mountpoint /mnt/ai-image || sudo mount -a
+mountpoint /mnt/secretary-bot || sudo mount -a
 dmesg | tail -40 | grep -i cifs
 ```
 - ネットワーク断後に復活しないなら `/etc/fstab` の `x-systemd.automount,nofail` を再確認
-- 認証エラーは `/etc/cifs-credentials-ai-image` を疑う
+- 認証エラーは `/etc/cifs-credentials-secretary-bot` を疑う
 - 詳細は `docs/image_gen/nas_setup.md` §8
 
 ### 8.3 Dispatcher が queued から動かない
@@ -414,7 +416,7 @@ docker logs --since 5m secretary-bot 2>&1 | grep -iE 'dispatch|agent|capability'
 ## 9. 完了チェックリスト
 
 ### 必須
-- [ ] `/mnt/ai-image` 永続マウント成功
+- [ ] `/mnt/secretary-bot` 永続マウント成功
 - [ ] `.env` に `NAS_SMB_*` 5 変数 + `AGENT_SECRET_TOKEN` が設定
 - [ ] `config.yaml` に `image_gen` / `lora_train` / `prompt_session` が `enabled: true`
 - [ ] bot 再起動後 `Loaded unit: image_gen` 等がログに出る

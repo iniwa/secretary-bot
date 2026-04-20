@@ -114,10 +114,10 @@ NAS を正本とし、各 PC のローカル SSD にキャッシュ。
 
 ## NAS ディレクトリ構造
 
-共有名: `ai-image/`。データ種別ごとにトップレベルを切る。`models/` 配下は ComfyUI 標準配置と同じ命名にして `extra_model_paths.yaml` のマッピングを最小化する。
+親共有 `secretary-bot/` 配下の `ai-image/` サブディレクトリ。データ種別ごとにトップレベルを切る。`models/` 配下は ComfyUI 標準配置と同じ命名にして `extra_model_paths.yaml` のマッピングを最小化する。
 
 ```
-<NAS 共有>/ai-image/
+<NAS 共有>/secretary-bot/ai-image/
 ├── models/                       # 推論・生成に使うモデル類（ComfyUI 配置準拠）
 │   ├── checkpoints/              # ベースモデル（SDXL 等）
 │   ├── loras/                    # LoRA（学習完成品も含む）
@@ -416,7 +416,7 @@ LLM への system prompt は ChenkinNoob-XL 系の好む記法（Danbooru タグ
 - **パラメータ可変化**: positive / negative / seed / steps / cfg / width / height / ckpt_name / sampler_name / scheduler / lora_* などを Pi が実行時に差し込むため、プレースホルダは `{{VAR_NAME}}` を使う
 - **ノード入力検証**: Pi が JSON をロードする時点で必須プレースホルダが揃っているか検証し、不足なら `ValidationError`
 - **ファイル名規約**: `YYYY-MM-DD_HHMMSS_{job_id}_{seed}.png`（日時先頭、SMB/Windows 安全な文字のみ）
-- **出力先**: Pi が実行時に `{{OUTPUT_DIR}} = //nas/ai-image/outputs/YYYY-MM/YYYY-MM-DD/` を解決して差し込む
+- **出力先**: Pi が実行時に `{{OUTPUT_DIR}} = //nas/secretary-bot/ai-image/outputs/YYYY-MM/YYYY-MM-DD/` を解決して差し込む
 - **PNG メタデータ**: ComfyUI 既定でワークフロー JSON が PNG に埋め込まれる → ギャラリーの「設定再現」機能で利用
 - **サンプラー既定**: Euler a (`euler_ancestral`)、scheduler `normal`。**プリセット定義および実行時パラメータの両方で上書き可能**
 
@@ -1033,7 +1033,7 @@ Team に分担する前に、インターフェース契約を固定する。こ
 
 - [ ] DB マイグレーション SQL 作成（全テーブル定義）
 - [ ] Agent API 仕様書を独立ドキュメント化（`docs/image_gen/api.md`）
-- [ ] NAS 共有 `ai-image/` 初期ディレクトリ作成
+- [ ] NAS 共有 `secretary-bot/ai-image/` 初期ディレクトリ作成
 - [ ] 各 PC の `.env` 追加項目確定（`SECRETARY_BOT_ROOT`, `SECRETARY_BOT_CACHE`, NAS 認証情報）
 - [ ] 既定プリセット `t2i_base` の API フォーマット JSON を MainPC 手作業で export → リポジトリに配置
 
