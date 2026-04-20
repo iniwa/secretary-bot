@@ -1,5 +1,10 @@
 ## 改善案
 
+### リモート開発環境
+- [ ] Remote PC → Sub PC の VS Code Remote-SSH 接続（Claude Code を Sub PC 側で動作させる構成）
+  - 手順・残作業は `docs/guides/remote_pc_subpc_vscode_access.md` を参照
+  - 2026-04-20: Remote PC 側は対応不要（`~/.ssh/config` の `subpcssh` + `cloudflared` 既設）。Sub PC で OpenSSH Server / 公開鍵登録 / cloudflared Tunnel / VS Code + Node.js + Claude Code の導入が残作業
+
 ### image_gen / LoRA 学習 (Phase 4)
 - [ ] LoRA 学習機能の C〜H マイルストーン（WD14 タグ付け / TOML テンプレ / kohya 学習 / 監視 UI / 手動昇格）
   - 進捗・残作業・実装方針は `docs/image_gen/todo.md` の Phase 4 セクション参照
