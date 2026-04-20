@@ -31,7 +31,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F401", "F811"]
-"src/tools/zzz_disc/models.py" = ["E741"]  # マスターデータ定義で短縮変数が多い
+"src/tools/zzz_disc/models/*.py" = ["E741"]  # マスターデータ定義で短縮変数が多い
 # activity/collector.py の restore_open_sessions 内 async クロージャは
 # 同一イテレーション内で即 await するため、B023 は誤検知
 "src/activity/collector.py" = ["B023"]
