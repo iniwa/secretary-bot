@@ -5,6 +5,7 @@
 """
 
 from src.database._base import _SCHEMA_VERSION, JST, DatabaseBase, jst_now
+from src.database.clip_pipeline import ClipPipelineMixin
 from src.database.conversation import ConversationMixin
 from src.database.generation import GenerationJobMixin
 from src.database.lora import LoRAMixin
@@ -21,6 +22,7 @@ class Database(
     MonologueMixin,
     PendingActionMixin,
     GenerationJobMixin,
+    ClipPipelineMixin,
     SectionMixin,
     WildcardMixin,
     LoRAMixin,

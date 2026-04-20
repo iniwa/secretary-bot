@@ -124,6 +124,31 @@ class WorkflowValidationError(ComfyUIError):
     severity = Severity.LOW
 
 
+# === auto-kirinuki（配信アーカイブ切り抜き）エラー階層 ===
+# TransientError / CacheSyncError / AgentCommunicationError は image_gen と共用する。
+# ここでは clip_pipeline 固有のドメインエラーのみ定義する。
+
+
+class ClipPipelineError(BotError):
+    """配信アーカイブ切り抜きパイプラインの基底エラー。"""
+    severity = Severity.MEDIUM
+
+
+class WhisperError(ClipPipelineError):
+    """Whisper 推論エラー（モデルロード失敗・GPU OOM など）。"""
+    severity = Severity.MEDIUM
+
+
+class TranscribeError(ClipPipelineError):
+    """文字起こし処理の失敗（segments 取得失敗・空結果など）。"""
+    severity = Severity.MEDIUM
+
+
+class HighlightError(ClipPipelineError):
+    """ハイライト抽出の失敗（LLM 応答不正・EDL 生成失敗など）。"""
+    severity = Severity.MEDIUM
+
+
 # retry 判定の集約ヘルパー
 _RETRYABLE_CLASSES = (
     TransientError, ResourceUnavailableError, CacheSyncError,

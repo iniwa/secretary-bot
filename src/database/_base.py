@@ -15,7 +15,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 28
+_SCHEMA_VERSION = 32
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -745,6 +745,50 @@ class DatabaseBase:
                     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""",
+            ],
+            32: [
+                # === auto-kirinuki（配信アーカイブ切り抜き）ジョブキュー ===
+                # Dispatcher 状態機械: queued → dispatching → warming_cache → running → done/failed/cancelled
+                # step カラムは Agent 側の実行ステップ（preprocess/transcribe/analyze/emotion/highlight/edl/clips）
+                """CREATE TABLE IF NOT EXISTS clip_pipeline_jobs (
+                    id             TEXT PRIMARY KEY,
+                    user_id        TEXT NOT NULL,
+                    platform       TEXT NOT NULL,
+                    status         TEXT NOT NULL DEFAULT 'queued',
+                    assigned_agent TEXT,
+                    video_path     TEXT NOT NULL,
+                    output_dir     TEXT NOT NULL,
+                    mode           TEXT NOT NULL DEFAULT 'normal',
+                    whisper_model  TEXT NOT NULL,
+                    ollama_model   TEXT NOT NULL,
+                    params_json    TEXT,
+                    step           TEXT,
+                    progress       INTEGER NOT NULL DEFAULT 0,
+                    result_json    TEXT,
+                    last_error     TEXT,
+                    retry_count    INTEGER NOT NULL DEFAULT 0,
+                    max_retries    INTEGER NOT NULL DEFAULT 2,
+                    cache_sync_id  TEXT,
+                    next_attempt_at    DATETIME,
+                    dispatcher_lock_at DATETIME,
+                    timeout_at         DATETIME,
+                    created_at     TEXT NOT NULL,
+                    started_at     TEXT,
+                    finished_at    TEXT
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_clip_jobs_status ON clip_pipeline_jobs(status, next_attempt_at)",
+                "CREATE INDEX IF NOT EXISTS idx_clip_jobs_user ON clip_pipeline_jobs(user_id, created_at DESC)",
+                # ジョブ遷移イベントログ
+                """CREATE TABLE IF NOT EXISTS clip_pipeline_job_events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id      TEXT NOT NULL,
+                    from_status TEXT,
+                    to_status   TEXT NOT NULL,
+                    agent_id    TEXT,
+                    detail_json TEXT,
+                    occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_clip_job_events_job ON clip_pipeline_job_events(job_id, occurred_at)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

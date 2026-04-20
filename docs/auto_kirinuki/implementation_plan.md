@@ -8,14 +8,27 @@
 | フェーズ | 状態 | 備考 |
 |---|---|---|
 | A. NAS再編（設定/ドキュメント） | 完了 | 実機適用は運用時 |
-| B. DB / 共通基盤 | 未着手 | |
-| C. Pi 側ユニット | 未着手 | |
+| B. DB / 共通基盤 | 完了 | migration v32 + ClipPipelineMixin + errors |
+| C. Pi 側ユニット | 未着手 | **次に着手する Phase** |
 | D. Windows Agent 側 | 未着手 | 実機疎通は Main/Sub PC で |
 | E. WebGUI | 未着手 | |
-| F. 設定 / ドキュメント | 部分着手 | design.md / implementation_plan.md / nas_migration.md 作成済み |
+| F. 設定 / ドキュメント | 部分着手 | design.md / implementation_plan.md / nas_migration.md 作成済み。api.md / README.md 未 |
 | G. クリーンアップ | 未着手 | |
 
 最終更新: 2026-04-20 / 担当: Claude Code + iniwa
+
+## 引き継ぎメモ（2026-04-20 時点）
+
+**直前のセッションで完了**:
+- Phase A (NAS 再編): すべての設定・ドキュメントを `secretary-bot` 親共有前提に更新
+- Phase B (DB / 共通基盤): `_base.py` に migration v32 追加（`clip_pipeline_jobs` + `clip_pipeline_job_events` + 3 インデックス）。`src/database/clip_pipeline.py` に `ClipPipelineMixin` を新設し `__init__.py` に登録。`src/errors.py` に `ClipPipelineError` / `WhisperError` / `TranscribeError` / `HighlightError` を追加。
+
+**次に着手するタスク**:
+- Phase C1 (`src/units/clip_pipeline/models.py`) から開始。`image_gen` ユニットの構造を参考にし、`JobStatus` / `TransitionEvent` dataclass、status/step/platform 定数を定義する。
+- その後 C2 (agent_client.py) → C3 (dispatcher.py) → C4 (unit.py) の順で進める。`src/units/image_gen/` の実装をテンプレとして最大限コピーし、clip_pipeline 固有の差分（step カラム、warming_cache 遷移、ジョブ完了時の Discord 投稿内容）のみ書き換える。
+
+**未検証項目**:
+- migration v32 は実機で未起動。Pi 再起動時に `PRAGMA user_version = 32` まで進むこと、`clip_pipeline_jobs` テーブルが生成されることの確認はリモート PC からは不可能。Main/Sub PC で動作確認するか、テストコードで検証する必要がある。
 
 ---
 
@@ -31,22 +44,24 @@
 
 ## B. DB / 共通基盤
 
-- [ ] B1: `src/database.py` マイグレーション追加（`clip_pipeline_jobs` テーブル + 2インデックス）
-- [ ] B2: `src/database.py` に CRUD メソッド追加
-  - [ ] `clip_pipeline_job_insert`
-  - [ ] `clip_pipeline_job_get`
-  - [ ] `clip_pipeline_job_list`
-  - [ ] `clip_pipeline_job_update_status`
-  - [ ] `clip_pipeline_job_update_progress`
-  - [ ] `clip_pipeline_job_update_result`
-  - [ ] `clip_pipeline_job_cancel`
-  - [ ] `clip_pipeline_job_claim_queued`（FIFO + retry 考慮の pick）
-- [ ] B3: `src/errors.py` に例外クラス追加
-  - [ ] `ClipPipelineError`（基底）
-  - [ ] `WhisperError`
-  - [ ] `TranscribeError`
-  - [ ] `HighlightError`
-  - [ ] `CacheSyncError`（image_gen と共通化できるか要確認）
+- [x] B1: `src/database/_base.py` に migration v32 追加（`clip_pipeline_jobs` + `clip_pipeline_job_events` + 3 インデックス）。`_SCHEMA_VERSION` を 32 に更新
+- [x] B2: `src/database/clip_pipeline.py` 新設 + `__init__.py` に `ClipPipelineMixin` 登録。CRUD メソッド実装:
+  - [x] `clip_pipeline_job_insert`
+  - [x] `clip_pipeline_job_get`
+  - [x] `clip_pipeline_job_list`
+  - [x] `clip_pipeline_job_update_status`
+  - [x] `clip_pipeline_job_update_progress`
+  - [x] `clip_pipeline_job_set_result`
+  - [x] `clip_pipeline_job_cancel`
+  - [x] `clip_pipeline_job_claim_queued`（FIFO + next_attempt_at 考慮の楽観ロック pick）
+  - [x] `clip_pipeline_job_find_timed_out`（stuck_reaper 用に追加）
+  - [x] `clip_pipeline_job_events_list`
+- [x] B3: `src/errors.py` に例外クラス追加
+  - [x] `ClipPipelineError`（基底）
+  - [x] `WhisperError`
+  - [x] `TranscribeError`
+  - [x] `HighlightError`
+  - [x] `CacheSyncError` — image_gen のものを共通利用（追加不要と判断）
 
 ## C. Pi 側ユニット（`src/units/clip_pipeline/`）
 
@@ -186,3 +201,4 @@ G1→G2→G4 (静的検証、G3 は実機環境で別途)
 
 - 2026-04-20 初回作成: 設計・実装計画・NAS 移行手順の 3 ドキュメントを作成。
 - 2026-04-20 Phase A 完了: `config.yaml.example` / `agent_config.yaml.example` / `.env.example` / `windows-agent/config/.env.example` 更新。`docs/image_gen/nas_setup.md` を `secretary-bot` 親共有前提に全面書き換え。`design.md` / `api.md` / `README.md` / `comfyui_usage.md` / `preset_compat.md` / `setup/*.md` のパス参照を `/mnt/secretary-bot/ai-image` / `N:\ai-image` / `//nas/secretary-bot/ai-image` / `secretary-bot-rw` へ更新。
+- 2026-04-20 Phase B 完了: `src/database/_base.py` に migration v32 追加（`clip_pipeline_jobs` + `clip_pipeline_job_events` + 3 インデックス）、`_SCHEMA_VERSION` を 32 に。`src/database/clip_pipeline.py` を新設し `ClipPipelineMixin` に CRUD 10 メソッドを実装、`__init__.py` に登録。`src/errors.py` に `ClipPipelineError` / `WhisperError` / `TranscribeError` / `HighlightError` を追加。`CacheSyncError` は image_gen のものを再利用。
