@@ -20,6 +20,7 @@ import * as stt from './pages/stt.js';
 import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
 import * as pending from './pages/pending.js';
+import * as clipPipeline from './pages/clip-pipeline.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -45,6 +46,7 @@ const pages = {
   'docker-monitor': { title: 'Docker Monitor', module: dockerMonitor },
   pending:      { title: 'Pending Actions',  module: pending },
   maintenance:  { title: 'Maintenance',      module: maintenance },
+  'clip-pipeline': { title: 'Auto-Kirinuki', module: clipPipeline },
 };
 
 let currentPage = null;

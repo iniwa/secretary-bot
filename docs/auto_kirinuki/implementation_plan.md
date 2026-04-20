@@ -11,7 +11,7 @@
 | B. DB / 共通基盤 | 完了 | migration v32 + ClipPipelineMixin + errors |
 | C. Pi 側ユニット | 完了 | models / agent_client / dispatcher / unit / __init__ + UnitManager 登録 |
 | D. Windows Agent 側 | 完了 | router / runner / whisper_cache + 旧コード移植。実機疎通は Main/Sub PC で |
-| E. WebGUI | 未着手 | |
+| E. WebGUI | 完了 | `/api/clip-pipeline/*` + `#clip-pipeline` SPA ページ（capability / job CRUD / SSE） |
 | F. 設定 / ドキュメント | 完了 | design / implementation_plan / nas_migration / api / README + issues.md |
 | G. クリーンアップ | 未着手 | 実機疎通前提（Main/Sub PC で再開） |
 
@@ -95,21 +95,24 @@
 
 ## E. WebGUI
 
-- [ ] E1: `src/web/routes/clip_pipeline.py`
-  - [ ] `/api/clip-pipeline/jobs` POST / GET
-  - [ ] `/api/clip-pipeline/jobs/{id}` GET / DELETE
-  - [ ] `/api/clip-pipeline/jobs/{id}/events` SSE
-  - [ ] `/api/clip-pipeline/capability` GET（Agent一覧 + 各 capability）
-- [ ] E2: `src/web/app.py` ルーター登録
-- [ ] E3: `src/web/static/clip_pipeline.html`
-  - [ ] 動画パス入力欄（複数行、フォルダ展開）
-  - [ ] モード/モデル選択
-  - [ ] パラメータ入力（top_n / min_sec / max_sec / do_clips / mic_track / use_demucs）
-  - [ ] 進捗バー + ログエリア（SSE）
-  - [ ] 履歴テーブル + キャンセル/再実行
-- [ ] E4: `src/web/static/js/pages/clip_pipeline.js`（フェッチ + SSE 接続）
-- [ ] E5: `src/web/static/css/clip_pipeline.css`（任意）
-- [ ] E6: WebGUI ナビに `/clip-pipeline` 追加
+- [x] E1: `src/web/routes/clip_pipeline.py`
+  - [x] `POST /api/clip-pipeline/jobs` — ジョブ登録
+  - [x] `GET /api/clip-pipeline/jobs` — 一覧（status/limit/offset）
+  - [x] `GET /api/clip-pipeline/jobs/{id}` — 詳細
+  - [x] `POST /api/clip-pipeline/jobs/{id}/cancel` — 取消
+  - [x] `GET /api/clip-pipeline/jobs/stream` — 共通 SSE（`unit.subscribe_events` 経由）
+  - [x] `GET /api/clip-pipeline/capability` — 全 Agent の `/capability` を並列集約
+- [x] E2: `src/web/routes/__init__.py` の `register_all_routes` に `clip_pipeline.register` 追加
+- [x] E3: `src/web/static/js/pages/clip-pipeline.js` に SPA ページを実装（HTML は render() でインライン）
+  - [x] 動画パス入力欄（単一、Agent 絶対パス）
+  - [x] モード / whisper / ollama / output_dir 指定
+  - [x] パラメータ入力（top_n / min_clip_sec / max_clip_sec / mic_track / use_demucs / do_export_clips）
+  - [x] capability パネル（GPU / VRAM / Whisper モデル一覧 / busy 表示）
+  - [x] ジョブ一覧テーブル（作成時刻 / 動画 / status badge / progress bar / step / agent / whisper / 取消）
+  - [x] SSE 受信で該当ジョブ行をライブ更新、15s ポーリング fallback
+- [x] E4: fetch ラッパ `api()` + `EventSource` 接続（上記 js 内）
+- [x] E5: CSS は render() 内 `<style>` にインライン（既存コンポーネント変数を活用、独立ファイルは作らない）
+- [x] E6: `src/web/static/index.html` の Tools グループに `#clip-pipeline` ナビ追加 / `app.js` の pages レジストリ登録
 
 ## F. 設定 / ドキュメント
 
@@ -158,3 +161,4 @@ G1→G2→G4 (静的検証、G3 は実機環境で別途)
 - 2026-04-20 Phase C 完了: `src/units/clip_pipeline/` に `models.py` / `agent_client.py` / `dispatcher.py` / `unit.py` / `__init__.py` を新設し、`src/units/__init__.py` の `_UNIT_MODULES` に `clip_pipeline` を登録。image_gen テンプレを基にエラー階層を `BotError + is_retryable` 判定に揃え、NAS 出力パスを `outputs/<stem>` 直下に正規化、`warming_cache` 遷移で `AgentClient.capability()` を呼んで Whisper モデル欠落を判定するフローに統一。
 - 2026-04-20 Phase D 完了: `windows-agent/tools/clip_pipeline/` を新設。旧 `streamarchive-auto-kirinuki/clip-pipeline/` の pipeline / preprocess_audio / transcribe / analyze_audio / emotion / highlight / export_edl / export_clips / config を `pipeline/` サブパッケージへ移植（明示相対 import 化、`transcribe` に `download_root`、`run_pipeline` に `step_callback` / `cancel_flag` / 戻り値追加）。`runner.py` で asyncio.to_thread 駆動 + SSE イベントキュー、`whisper_cache.py` で NAS → ローカル SSD への chunked copy（atomic replace）、`router.py` で `/clip-pipeline/capability` / `/whisper/cache-sync` / `/jobs/start` の HTTP + SSE を実装。`windows-agent/agent.py` に init + include_router を追加、`windows-agent/requirements.txt` に faster-whisper / librosa / demucs / funasr / requests を追加。実機疎通は Main/Sub PC で再開時に実施。
 - 2026-04-20 Phase F 完了: `docs/auto_kirinuki/api.md`（Agent API 仕様書）と `docs/auto_kirinuki/README.md`（目次 + 全体構成）を新設。`implementation_plan.md` / `docs/issues.md` を Phase C/D/F 完了状態に更新。
+- 2026-04-20 Phase E 完了: `src/web/routes/clip_pipeline.py` に 6 エンドポイント（jobs POST/GET/detail/cancel、jobs/stream SSE、capability）を実装し、`src/web/routes/__init__.py` に登録。`AgentClient` は `discord.py` 依存経路を避けるため capability ハンドラ内で遅延 import。WebGUI は `src/web/static/js/pages/clip-pipeline.js` に SPA ページを新設（SSE ライブ更新 + 15s ポーリング fallback + 取消ボタン + capability パネル）、`index.html` の Tools グループにナビ追加、`app.js` の pages レジストリに登録。残タスクは Phase G（ローカル型チェック / 実機疎通）。

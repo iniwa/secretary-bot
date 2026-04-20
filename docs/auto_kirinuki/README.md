@@ -135,7 +135,7 @@ clip_pipeline:
 | B. DB / 共通基盤 | 完了 |
 | C. Pi 側ユニット | 完了 |
 | D. Windows Agent | 完了（コード実装、実機疎通未検証） |
-| E. WebGUI | 未着手 |
+| E. WebGUI | 完了（`/api/clip-pipeline/*` + `#clip-pipeline` SPA ページ） |
 | F. 設定 / ドキュメント | 完了（本書含む） |
 | G. クリーンアップ / 検証 | 未着手 |
 

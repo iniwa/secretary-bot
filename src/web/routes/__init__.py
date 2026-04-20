@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from src.web._context import WebContext
 from src.web.routes import (
     activity,
+    clip_pipeline,
     config,
     core,
     docker_monitor,
@@ -41,3 +42,4 @@ def register_all_routes(app: FastAPI, ctx: WebContext) -> None:
     docker_monitor.register(app, ctx)
     image_gen.register(app, ctx)
     lora_train.register(app, ctx)
+    clip_pipeline.register(app, ctx)

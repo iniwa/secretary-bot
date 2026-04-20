@@ -21,7 +21,8 @@
     - 2026-04-20: 実行完了。`administrators_authorized_keys` は 102 bytes（ACL により非管理者不可視だが sshd は SYSTEM 実行のため読み取れる）
   - [x] ネットワークプロファイルを Private に変更（Firewall rule が Private プロファイル限定のため Public のままだとLAN疎通不可）
     - 2026-04-20: `Set-NetConnectionProfile -InterfaceAlias "イーサネット" -NetworkCategory Private` 実行済
-  - [ ] 誤って `cloudflared service install` 済みなら `cloudflared.exe service uninstall` で削除（Pi 経由構成では Sub PC に不要）
+  - [x] 誤って `cloudflared service install` 済みなら `cloudflared.exe service uninstall` で削除（Pi 経由構成では Sub PC に不要）
+    - 2026-04-20: Sub PC では cloudflared サービス未インストール・プロセス未起動・`C:\Cloudflared\cloudflared.exe`（v2026.2.0）バイナリのみ存在。no-op で完了扱い
 
   **Pi 側の残作業**
   - [x] Cloudflare ダッシュボード (`https://one.dash.cloudflare.com/` → Networks → Tunnels → Pi の既存 Tunnel) の **Public Hostnames** に追加:
@@ -65,11 +66,12 @@
   - Whisper モデルは初回ジョブ投入時に `warming_cache` で自動 NAS→ローカル SSD 同期
   - 1 エージェント 1 ジョブ固定（GPU 1 枚制約）。Sub PC を priority=1、Main PC を priority=2
   - 旧リポジトリ `C:/Users/yamatoishida/Documents/git/streamarchive-auto-kirinuki` は参考用として残置（削除しない）
-  - 2026-04-20 セッションで **Phase C (Pi 側ユニット) / Phase D (Windows Agent) / Phase F (ドキュメント) を完了**。残タスクは Phase E (WebGUI) と Phase G (実機疎通/テスト)
+  - 2026-04-20 セッションで **Phase C (Pi 側ユニット) / Phase D (Windows Agent) / Phase E (WebGUI) / Phase F (ドキュメント) を完了**。残タスクは Phase G (実機疎通/テスト)
   - 2026-04-20 Phase C: `src/units/clip_pipeline/` に models / agent_client / dispatcher / unit / __init__ を新設し `src/units/__init__.py` の `_UNIT_MODULES` へ登録。image_gen テンプレ基にエラー階層を `BotError + is_retryable` に揃え、`warming_cache` 遷移で `AgentClient.capability()` から Whisper モデル欠落を判定
   - 2026-04-20 Phase D: `windows-agent/tools/clip_pipeline/` を新設。旧パイプラインを `pipeline/` サブパッケージに移植（相対 import 化、`transcribe` に `download_root`、`run_pipeline` に `step_callback` / `cancel_flag` / 戻り値追加）。`runner.py` で asyncio.to_thread 駆動 + SSE、`whisper_cache.py` で NAS → SSD チャンクコピー + atomic replace、`router.py` で `/clip-pipeline/*` HTTP + SSE を実装。`agent.py` に統合し、`requirements.txt` に faster-whisper / librosa / demucs / funasr / requests を追加
   - 2026-04-20 Phase F: `api.md` / `README.md` を新設し、`implementation_plan.md` を Phase C/D/F 完了状態に更新
-  - 残: Phase E (WebGUI) 実装、Phase G3 (実機疎通 — Main/Sub PC でのみ可能)。Remote PC 環境では不可
+  - 残: Phase G3 (実機疎通 — Main/Sub PC でのみ可能)。Remote PC 環境では不可
+  - 2026-04-20 Phase E 追加: `src/web/routes/clip_pipeline.py` に 6 エンドポイント、`src/web/static/js/pages/clip-pipeline.js` に SPA ページ（capability / job CRUD / SSE ライブ更新 / 取消ボタン）。`index.html` の Tools グループにナビ追加。Pi BOT 再起動で有効化される
 
 ### image_gen / プロンプト再現・表示
 - [x] ギャラリー「この設定で再現」で、可能な範囲でセクション選択状態（プロンプト断片）も復元してほしい
