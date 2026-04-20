@@ -10,8 +10,7 @@ from bisect import bisect_left
 
 import requests
 
-from .config import OLLAMA_URL, OLLAMA_REQUEST_DELAY, LLM_CHUNK_SIZE, HIGHLIGHT_TOP_N
-
+from .config import HIGHLIGHT_TOP_N, LLM_CHUNK_SIZE, OLLAMA_REQUEST_DELAY, OLLAMA_URL
 
 SYSTEM_PROMPT = """あなたはゲーム配信の切り抜き担当編集者です。
 以下はゲーム配信の文字起こしです（タイムスタンプ付き）。
@@ -149,7 +148,7 @@ def _query_ollama(model: str, prompt: str, top_n: int, log=print) -> list[dict]:
         parsed = json.loads(stripped)
     except json.JSONDecodeError as e:
         log(f"  JSON パース失敗: {e}")
-        log(f"  部分サルベージを試行...")
+        log("  部分サルベージを試行...")
         # 壊れたJSON配列から有効なオブジェクトを救出
         salvaged = _salvage_json_array(stripped, log)
         if salvaged:

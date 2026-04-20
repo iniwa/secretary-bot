@@ -60,7 +60,7 @@ def analyze_emotion(
 
     if os.path.exists(emotions_path):
         log("既存の感情分析結果を使用します")
-        with open(emotions_path, "r", encoding="utf-8") as f:
+        with open(emotions_path, encoding="utf-8") as f:
             return json.load(f)
 
     if not segments:
@@ -71,7 +71,7 @@ def analyze_emotion(
         log("前処理済み音声を使用します")
         own_wav = False
     else:
-        log(f"音声を抽出中...")
+        log("音声を抽出中...")
         wav_path = _extract_audio(video_path, log=log)
         own_wav = True
 

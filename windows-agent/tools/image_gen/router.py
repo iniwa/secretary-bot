@@ -26,6 +26,23 @@ from .cache_manager import (
     write_sha256_sidecar,
 )
 from .comfyui_manager import ComfyUIManager
+from .kohya_train import (
+    cancel_train as _lora_train_cancel,
+)
+from .kohya_train import (
+    get_train_task as _lora_train_get,
+)
+from .kohya_train import (
+    list_train_tasks as _lora_train_list,
+)
+from .kohya_train import (
+    log_stream as _lora_train_log_stream,
+)
+from .kohya_train import (
+    run_kohya_train,
+)
+from .lora_sync import local_project_dirs as _lora_local_dirs
+from .lora_sync import run_lora_sync
 from .nas_mount import ensure_mounted
 from .setup_manager import (
     get_task as _setup_get_task,
@@ -38,15 +55,6 @@ from .setup_manager import (
     run_comfyui_update,
     run_kohya_setup,
 )
-from .kohya_train import (
-    cancel_train as _lora_train_cancel,
-    get_train_task as _lora_train_get,
-    list_train_tasks as _lora_train_list,
-    log_stream as _lora_train_log_stream,
-    run_kohya_train,
-)
-from .lora_sync import local_project_dirs as _lora_local_dirs
-from .lora_sync import run_lora_sync
 from .wd14_tagger import run_wd14_tagging
 from .workflow_runner import ImageJob, WorkflowRunner, substitute_placeholders
 

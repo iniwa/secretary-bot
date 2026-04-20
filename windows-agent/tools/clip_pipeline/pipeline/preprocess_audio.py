@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .config import MIC_TRACK_INDEX, DEMUCS_MODEL
+from .config import DEMUCS_MODEL, MIC_TRACK_INDEX
 
 
 def _probe_audio_streams(video_path: str) -> list[dict]:
@@ -60,11 +60,11 @@ def _run_demucs(wav_path: str, output_dir: str, model: str, log) -> str:
     Windows では FFmpeg shared DLL が必要で動作しないことが多い。
     そのため CLI ではなくライブラリとして呼び出し、soundfile で保存する。
     """
-    import torch
     import soundfile as sf
-    from demucs.pretrained import get_model
+    import torch
     from demucs.apply import apply_model
     from demucs.audio import AudioFile
+    from demucs.pretrained import get_model
 
     log(f"Demucs ({model}) でボーカル分離中（CPU）...")
 

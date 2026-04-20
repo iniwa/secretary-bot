@@ -11,14 +11,12 @@ import asyncio
 import os
 import re
 import signal
-import sys
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 
 from .setup_manager import _venv_python
-
 
 _RE_STEPS = re.compile(r"steps:\s*\d+%\|[^|]*\|\s*(\d+)/(\d+)")
 _RE_EPOCH = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)")

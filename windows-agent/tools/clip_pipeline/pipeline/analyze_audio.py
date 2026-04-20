@@ -51,7 +51,7 @@ def analyze_audio(video_path: str, output_dir: str, segment_sec: float = None, w
     features_path = os.path.join(output_dir, "audio_features.json")
     if os.path.exists(features_path):
         log("既存の音声特徴量を使用します")
-        with open(features_path, "r", encoding="utf-8") as f:
+        with open(features_path, encoding="utf-8") as f:
             return json.load(f)
 
     if wav_path and os.path.exists(wav_path):

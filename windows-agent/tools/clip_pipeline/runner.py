@@ -12,7 +12,6 @@ import os
 import time
 import traceback
 from dataclasses import dataclass, field
-from typing import Any
 
 from .pipeline.pipeline import run_pipeline
 

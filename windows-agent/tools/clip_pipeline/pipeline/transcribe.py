@@ -8,7 +8,6 @@ import os
 import subprocess
 import tempfile
 
-import numpy as np
 from faster_whisper import WhisperModel
 
 # CTranslate2 の WhisperModel は __del__ でセグフォする (ctranslate2 4.7.1)
@@ -52,14 +51,14 @@ def transcribe(video_path: str, model_name: str, output_dir: str, wav_path: str 
 
     if os.path.exists(transcript_path):
         log("既存の文字起こし結果を使用します")
-        with open(transcript_path, "r", encoding="utf-8") as f:
+        with open(transcript_path, encoding="utf-8") as f:
             return json.load(f)
 
     if wav_path and os.path.exists(wav_path):
         log("前処理済み音声を使用します")
         own_wav = False
     else:
-        log(f"音声を抽出中...")
+        log("音声を抽出中...")
         wav_path = _extract_audio(video_path, log=log)
         own_wav = True
 

@@ -6,14 +6,14 @@
 import os
 import time
 
+from .analyze_audio import analyze_audio
 from .config import SLEEP_BETWEEN_STEPS
+from .emotion import analyze_emotion
+from .export_clips import export_clips
+from .export_edl import export_edl
+from .highlight import detect_highlights
 from .preprocess_audio import preprocess_audio
 from .transcribe import transcribe
-from .analyze_audio import analyze_audio
-from .emotion import analyze_emotion
-from .highlight import detect_highlights
-from .export_edl import export_edl
-from .export_clips import export_clips
 
 
 def _make_step_progress(progress_callback, step_start, step_weight):
