@@ -12,9 +12,38 @@ const SORT_OPTIONS = [
   { value: 'preset_count', label: 'プリセット数 多→少' },
 ];
 
-let state = { chars: [], sort: 'display_order' };
+const MAIN_STAT_FILTER_SLOTS = [
+  { key: '4', label: '4号位',
+    candidates: ['HP%', '攻撃力%', '防御力%', '会心率%', '会心ダメージ%', '異常掌握'] },
+  { key: '5', label: '5号位',
+    candidates: ['HP%', '攻撃力%', '防御力%', '貫通率%',
+                 '物理属性ダメージ%', '炎属性ダメージ%', '氷属性ダメージ%',
+                 '電気属性ダメージ%', 'エーテル属性ダメージ%'] },
+  { key: '6', label: '6号位',
+    candidates: ['HP%', '攻撃力%', '防御力%', '異常マスタリー', '異常掌握',
+                 '衝撃力%', 'エネルギー自動回復%'] },
+];
+
+let state = {
+  chars: [],
+  sort: 'display_order',
+  mainStatFilter: { '4': new Set(), '5': new Set(), '6': new Set() },
+};
 
 export function render() {
+  const slotChipsHtml = MAIN_STAT_FILTER_SLOTS.map(({ key, label, candidates }) => `
+    <details class="main-stat-filter-slot" data-slot="${key}">
+      <summary><strong>${escapeHtml(label)}</strong></summary>
+      <div class="rec-sub-chips">
+        ${candidates.map(n => `
+          <label class="rec-sub-chip">
+            <input type="checkbox" data-slot="${key}" data-val="${escapeHtml(n)}" />
+            <span>${escapeHtml(n)}</span>
+          </label>
+        `).join('')}
+      </div>
+    </details>
+  `).join('');
   return `
     <div class="page-header">
       <h2>👥 キャラ一覧</h2>
@@ -31,6 +60,13 @@ export function render() {
       </select>
       <span id="char-count" class="text-muted text-sm"></span>
     </div>
+    <details class="main-stat-filter-wrap" id="main-stat-filter">
+      <summary class="text-sm text-muted">🎯 推奨メインステで絞り込み <span id="main-stat-filter-count"></span></summary>
+      <div class="main-stat-filter-body">
+        ${slotChipsHtml}
+        <button class="btn btn-sm" id="main-stat-filter-clear">クリア</button>
+      </div>
+    </details>
     <div id="char-list"><div class="placeholder"><div class="spinner"></div></div></div>
   `;
 }
@@ -43,7 +79,43 @@ export async function mount() {
     state.sort = ev.target.value;
     renderGrid();
   });
+  document.querySelectorAll('#main-stat-filter input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const slot = cb.dataset.slot;
+      const val = cb.dataset.val;
+      const set = state.mainStatFilter[slot];
+      if (cb.checked) set.add(val); else set.delete(val);
+      updateMainStatFilterBadge();
+      renderGrid();
+    });
+  });
+  document.getElementById('main-stat-filter-clear').addEventListener('click', () => {
+    Object.values(state.mainStatFilter).forEach(s => s.clear());
+    document.querySelectorAll('#main-stat-filter input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+    });
+    updateMainStatFilterBadge();
+    renderGrid();
+  });
   await load();
+}
+
+function updateMainStatFilterBadge() {
+  const el = document.getElementById('main-stat-filter-count');
+  if (!el) return;
+  const total = Object.values(state.mainStatFilter).reduce((a, s) => a + s.size, 0);
+  el.textContent = total ? `（${total} 件選択中）` : '';
+}
+
+function matchMainStatFilter(c) {
+  const rec = c.recommended_main_stats || {};
+  for (const [slot, set] of Object.entries(state.mainStatFilter)) {
+    if (!set.size) continue;
+    const chosen = Array.isArray(rec[slot]) ? rec[slot] : [];
+    const hit = chosen.some(v => set.has(v));
+    if (!hit) return false;
+  }
+  return true;
 }
 
 async function load() {
@@ -99,8 +171,9 @@ function sortChars(chars, key) {
 function renderGrid() {
   const el = document.getElementById('char-list');
   const counter = document.getElementById('char-count');
-  const chars = sortChars(state.chars, state.sort);
-  if (counter) counter.textContent = `${chars.length} 件`;
+  const filtered = state.chars.filter(matchMainStatFilter);
+  const chars = sortChars(filtered, state.sort);
+  if (counter) counter.textContent = `${chars.length} / ${state.chars.length} 件`;
   if (!chars.length) {
     el.innerHTML = '<div class="placeholder"><div class="big-icon">👥</div><div>キャラがまだ登録されていません</div><div class="text-muted text-sm mt-1">HoYoLAB 設定から同期してください</div></div>';
     return;

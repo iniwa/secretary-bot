@@ -1039,6 +1039,49 @@ h3 { font-size: 1rem; font-weight: 600; }
   max-height: 110px;
   overflow-y: auto;
 }
+.main-stat-slot-block {
+  margin-bottom: 8px;
+}
+.main-stat-filter-wrap {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.main-stat-filter-body {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.main-stat-filter-slot summary {
+  cursor: pointer;
+  padding: 2px 0;
+}
+.rec-teams-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rec-team-item {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.rec-team-members {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rec-team-chip {
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--bg-overlay);
+  font-size: 0.85rem;
+}
 .swap-sort-bar {
   display: flex;
   align-items: center;

@@ -161,6 +161,10 @@ async def init_schema(db) -> None:
     await _maybe_add_column(db, "zzz_characters", "recommended_notes", "TEXT")
     # オススメ編成（メモ）: 編成例・シナジーをフリーテキストで残す
     await _maybe_add_column(db, "zzz_characters", "recommended_team_notes", "TEXT")
+    # 推奨メインステ（slot 5/6/7）フィルタ用: {"5": ["攻撃力%"], "6": [...], "7": [...]}
+    await _maybe_add_column(db, "zzz_characters", "recommended_main_stats_json", "TEXT")
+    # オススメ編成（構造化・複数可）: [{"members": [...], "note": ""}]
+    await _maybe_add_column(db, "zzz_characters", "recommended_teams_json", "TEXT")
     # 音動機（W-Engine）情報を build に保存
     await _maybe_add_column(db, "zzz_builds", "w_engine_json", "TEXT")
     # HoYoLAB 自動ログイン用（平文・自宅 Pi 前提）

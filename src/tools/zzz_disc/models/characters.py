@@ -16,6 +16,8 @@ __all__ = [
     "update_character_skills",
     "update_character_recommended_notes",
     "update_character_recommended_team_notes",
+    "update_character_recommended_main_stats",
+    "update_character_recommended_teams",
     "list_characters_with_build_stats",
     "get_character",
     "get_character_by_slug",
@@ -138,13 +140,26 @@ def _decode_char_row(row: dict) -> dict:
         row["skills"] = json.loads(raw_skills) if raw_skills else []
     except Exception:
         row["skills"] = []
+    raw_main = row.pop("recommended_main_stats_json", None)
+    try:
+        parsed = json.loads(raw_main) if raw_main else {}
+        row["recommended_main_stats"] = parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        row["recommended_main_stats"] = {}
+    raw_teams = row.pop("recommended_teams_json", None)
+    try:
+        parsed = json.loads(raw_teams) if raw_teams else []
+        row["recommended_teams"] = parsed if isinstance(parsed, list) else []
+    except Exception:
+        row["recommended_teams"] = []
     return row
 
 
 _CHAR_COLS = (
     "id, slug, name_ja, element, faction, icon_url, display_order, "
     "hoyolab_agent_id, recommended_substats_json, recommended_disc_sets_json, "
-    "skills_json, skill_summary, recommended_notes, recommended_team_notes"
+    "skills_json, skill_summary, recommended_notes, recommended_team_notes, "
+    "recommended_main_stats_json, recommended_teams_json"
 )
 
 
@@ -195,6 +210,48 @@ async def update_character_recommended_team_notes(db, character_id: int,
     return await db.execute_returning_rowcount(
         "UPDATE zzz_characters SET recommended_team_notes = ? WHERE id = ?",
         (notes, character_id),
+    )
+
+
+async def update_character_recommended_main_stats(db, character_id: int,
+                                                  main_stats: dict) -> int:
+    """slot (5/6/7) → list[str] の形式で保存。"""
+    clean: dict[str, list[str]] = {}
+    for k, v in (main_stats or {}).items():
+        key = str(k)
+        if key not in ("5", "6", "7"):
+            continue
+        if not isinstance(v, list):
+            continue
+        clean[key] = [s for s in v if isinstance(s, str) and s]
+    payload = json.dumps(clean, ensure_ascii=False)
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET recommended_main_stats_json = ? WHERE id = ?",
+        (payload, character_id),
+    )
+
+
+async def update_character_recommended_teams(db, character_id: int,
+                                             teams: list) -> int:
+    """[{"members": list[str], "note": str}] を保存。members 空の要素は除外。"""
+    clean: list[dict] = []
+    for t in (teams or []):
+        if not isinstance(t, dict):
+            continue
+        members = t.get("members") or []
+        if not isinstance(members, list):
+            continue
+        members = [m.strip() for m in members if isinstance(m, str) and m.strip()]
+        if not members:
+            continue
+        note = t.get("note")
+        if note is not None and not isinstance(note, str):
+            note = str(note)
+        clean.append({"members": members, "note": note or ""})
+    payload = json.dumps(clean, ensure_ascii=False)
+    return await db.execute_returning_rowcount(
+        "UPDATE zzz_characters SET recommended_teams_json = ? WHERE id = ?",
+        (payload, character_id),
     )
 
 

@@ -53,6 +53,20 @@ const SUB_STAT_CANDIDATES = [
   '会心率%', '会心ダメージ%', '異常マスタリー', '貫通値', '貫通率%',
 ];
 
+// 変動メインステスロット（4/5/6）の候補。内部 disc.slot と一致。
+// UI 上は「5 番 / 6 番 / 7 番ディスク」という慣用表記で表示する。
+const MAIN_STAT_SLOTS = [
+  { key: '4', label: '4号位', candidates:
+    ['HP%', '攻撃力%', '防御力%', '会心率%', '会心ダメージ%', '異常掌握'] },
+  { key: '5', label: '5号位', candidates:
+    ['HP%', '攻撃力%', '防御力%', '貫通率%',
+     '物理属性ダメージ%', '炎属性ダメージ%', '氷属性ダメージ%',
+     '電気属性ダメージ%', 'エーテル属性ダメージ%'] },
+  { key: '6', label: '6号位', candidates:
+    ['HP%', '攻撃力%', '防御力%', '異常マスタリー', '異常掌握',
+     '衝撃力%', 'エネルギー自動回復%'] },
+];
+
 function renderRecommendedEditor() {
   const recommended = new Set(state.character?.recommended_substats || []);
   const boxes = SUB_STAT_CANDIDATES.map(name => `
@@ -150,13 +164,17 @@ function renderBody() {
   const el = document.getElementById('detail-body');
   el.innerHTML = `
     <div id="rec-editors-area"></div>
+    <div id="rec-main-stats-area"></div>
     <div id="rec-notes-area"></div>
+    <div id="rec-teams-area"></div>
     <div id="rec-team-notes-area"></div>
     <div id="skills-area"></div>
     <div id="builds-area"></div>
   `;
   renderRecEditorsSection();
+  renderRecMainStatsSection();
   renderRecNotesSection();
+  renderRecTeamsSection();
   renderRecTeamNotesSection();
   renderSkillsSection();
   renderBuildsSection();
@@ -374,6 +392,188 @@ function openSkillsEditor() {
   });
 }
 
+function renderRecMainStatsSection() {
+  const el = document.getElementById('rec-main-stats-area');
+  if (!el) return;
+  const current = state.character?.recommended_main_stats || {};
+  const blocks = MAIN_STAT_SLOTS.map(({ key, label, candidates }) => {
+    const picked = new Set(Array.isArray(current[key]) ? current[key] : []);
+    const chips = candidates.map(name => `
+      <label class="rec-sub-chip ${picked.has(name) ? 'on' : ''}">
+        <input type="checkbox" data-slot="${key}" data-val="${escapeHtml(name)}" ${picked.has(name) ? 'checked' : ''} />
+        <span>${escapeHtml(name)}</span>
+      </label>
+    `).join('');
+    return `
+      <div class="main-stat-slot-block" data-slot="${key}">
+        <div class="text-sm text-secondary mb-1"><strong>${escapeHtml(label)}</strong></div>
+        <div class="rec-sub-chips">${chips}</div>
+      </div>
+    `;
+  }).join('');
+  el.innerHTML = `
+    <div class="recommended-editor" data-rec-kind="main_stats">
+      <h3 class="mb-1">🎯 推奨メインステ（4/5/6号位） <span class="text-muted text-sm rec-status"></span></h3>
+      <div class="text-muted text-sm mb-1">チェックで即時保存。一覧フィルタとスワップモーダルの初期フィルタに反映されます</div>
+      ${blocks}
+    </div>
+  `;
+  wireRecMainStats();
+}
+
+const _mainStatsSaveTimer = { t: null, seq: 0 };
+
+function wireRecMainStats() {
+  const wrap = document.querySelector('[data-rec-kind="main_stats"]');
+  if (!wrap) return;
+  const status = wrap.querySelector('.rec-status');
+
+  const collect = () => {
+    const out = {};
+    MAIN_STAT_SLOTS.forEach(({ key }) => { out[key] = []; });
+    wrap.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+      const slot = cb.dataset.slot;
+      if (!out[slot]) out[slot] = [];
+      out[slot].push(cb.dataset.val);
+    });
+    return out;
+  };
+
+  const doSave = async () => {
+    const payload = collect();
+    _mainStatsSaveTimer.seq += 1;
+    const seq = _mainStatsSaveTimer.seq;
+    if (status) status.textContent = '保存中…';
+    try {
+      const res = await api(`/characters/${state.character.id}/recommended-main-stats`, {
+        method: 'PUT', body: { main_stats: payload },
+      });
+      if (seq !== _mainStatsSaveTimer.seq) return;
+      state.character = res.character || { ...state.character, recommended_main_stats: payload };
+      if (status) status.textContent = '✓ 保存済み';
+      setTimeout(() => { if (status && seq === _mainStatsSaveTimer.seq) status.textContent = ''; }, 1500);
+    } catch (err) {
+      if (seq !== _mainStatsSaveTimer.seq) return;
+      if (status) status.textContent = '';
+      toast(`保存失敗: ${err.message}`, 'error');
+    }
+  };
+
+  wrap.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
+      state.character = { ...state.character, recommended_main_stats: collect() };
+      clearTimeout(_mainStatsSaveTimer.t);
+      _mainStatsSaveTimer.t = setTimeout(doSave, 250);
+    });
+  });
+}
+
+function renderRecTeamsSection() {
+  const el = document.getElementById('rec-teams-area');
+  if (!el) return;
+  const teams = state.character?.recommended_teams || [];
+  const listHtml = teams.length
+    ? teams.map((t, i) => `
+        <div class="rec-team-item">
+          <div class="rec-team-members"><strong>#${i + 1}</strong> ${
+            (t.members || []).map(m => `<span class="rec-team-chip">${escapeHtml(m)}</span>`).join('')
+          }</div>
+          ${t.note ? `<div class="text-muted text-sm">${escapeHtml(t.note)}</div>` : ''}
+        </div>
+      `).join('')
+    : '<div class="text-muted text-sm">おすすめ編成は未登録です。</div>';
+  el.innerHTML = `
+    <div class="skills-block">
+      <div class="skills-head">
+        <h3 class="mb-1">🧩 おすすめ編成（複数可） <span class="text-muted text-sm">編成フィルタに使用</span></h3>
+        <button class="btn btn-sm" id="rec-teams-edit-btn">編集</button>
+      </div>
+      <div class="rec-teams-list">${listHtml}</div>
+    </div>
+  `;
+  document.getElementById('rec-teams-edit-btn').addEventListener('click', openRecTeamsEditor);
+}
+
+function openRecTeamsEditor() {
+  const ch = state.character;
+  const teams = (ch?.recommended_teams || []).map(t => ({
+    members: Array.isArray(t.members) ? [...t.members] : [],
+    note: t.note || '',
+  }));
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="text-muted text-sm mb-1">
+      メンバーはキャラ名をカンマ区切りで入力（例: <code>アリア, 羽, 千夏</code>）。<br>
+      編成モードのフィルタやフィルタ UI で使用されます。
+    </div>
+    <div class="flex-between mb-1">
+      <strong>編成一覧</strong>
+      <button class="btn btn-sm" id="rt-add">＋ 編成追加</button>
+    </div>
+    <div id="rt-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
+  `;
+  const { footerEl, close } = openModal({ title: 'おすすめ編成（複数可）編集', body: wrap });
+  footerEl.innerHTML = `
+    <button class="btn" data-act="cancel">キャンセル</button>
+    <button class="btn btn-primary" data-act="ok">保存</button>
+  `;
+  const rowsEl = wrap.querySelector('#rt-rows');
+
+  function rowHtml(idx, t) {
+    return `
+      <div class="rt-row" data-idx="${idx}" style="border:1px solid var(--border,#333);border-radius:4px;padding:6px;">
+        <div style="display:flex;gap:4px;margin-bottom:4px;">
+          <input class="rt-members" type="text" placeholder="キャラ名をカンマ区切り"
+            value="${escapeHtml((t.members || []).join(', '))}" style="flex:1;" />
+          <button class="btn btn-sm btn-danger rt-del">×</button>
+        </div>
+        <input class="rt-note" type="text" placeholder="メモ（軸キャラ・用途など・任意）"
+          value="${escapeHtml(t.note || '')}" style="width:100%;" />
+      </div>
+    `;
+  }
+  function draw() {
+    rowsEl.innerHTML = teams.map((t, i) => rowHtml(i, t)).join('');
+    rowsEl.querySelectorAll('.rt-row').forEach(row => {
+      const idx = Number(row.dataset.idx);
+      row.querySelector('.rt-del').addEventListener('click', () => {
+        teams.splice(idx, 1);
+        draw();
+      });
+      row.querySelector('.rt-members').addEventListener('input', (e) => {
+        teams[idx].members = e.target.value.split(/[,、]/).map(s => s.trim()).filter(Boolean);
+      });
+      row.querySelector('.rt-note').addEventListener('input', (e) => {
+        teams[idx].note = e.target.value;
+      });
+    });
+  }
+  wrap.querySelector('#rt-add').addEventListener('click', () => {
+    teams.push({ members: [], note: '' });
+    draw();
+  });
+  draw();
+
+  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
+    const clean = teams
+      .map(t => ({ members: (t.members || []).filter(Boolean), note: t.note || '' }))
+      .filter(t => t.members.length > 0);
+    try {
+      const res = await api(`/characters/${ch.id}/recommended-teams`, {
+        method: 'PUT', body: { teams: clean },
+      });
+      state.character = res.character || state.character;
+      close();
+      toast('保存しました', 'success');
+      renderRecTeamsSection();
+    } catch (err) {
+      toast(err.message || String(err), 'error');
+    }
+  });
+}
+
 function renderRecEditorsSection() {
   const el = document.getElementById('rec-editors-area');
   if (!el) return;
@@ -553,16 +753,17 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
 
   let sortKey = 'score';
   let subStatFor = recommended.find(r => subStatOptions.includes(r)) || subStatOptions[0] || '';
-  // フィルタ: 初期値は推奨セット & 推奨サブステ（存在するもののみ）
+  // フィルタ: 初期値は推奨セット & 推奨サブステ & 推奨メインステ（存在するもののみ）
   const filterSets = new Set(recommendedSets.filter(s => setOptions.includes(s)));
   const filterSubs = new Set(recommended.filter(s => subStatOptions.includes(s)));
-  let filterMain = '';
+  const recommendedMainForSlot = (state.character?.recommended_main_stats?.[String(slot)] || []);
+  const filterMain = new Set(recommendedMainForSlot.filter(s => mainStatOptions.includes(s)));
 
   function filteredRows() {
     return scored.filter(({ disc: d }) => {
       const setName = d.set_name_ja || d.name || '';
       if (filterSets.size && !filterSets.has(setName)) return false;
-      if (filterMain && d.main_stat_name !== filterMain) return false;
+      if (filterMain.size && !filterMain.has(d.main_stat_name)) return false;
       if (filterSubs.size) {
         const has = (d.sub_stats || []).some(s => filterSubs.has(s.name));
         if (!has) return false;
@@ -694,10 +895,14 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
       </div>
       <div class="swap-filter-row">
         <label class="text-sm text-muted">メインステ:</label>
-        <select id="swap-filter-main" class="select-sm">
-          <option value="">(全て)</option>
-          ${mainStatOptions.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(statLabel(n))}</option>`).join('')}
-        </select>
+        <div class="filter-chips" id="filter-chips-main">
+          ${mainStatOptions.map(n => `
+            <label class="rec-sub-chip ${filterMain.has(n) ? 'on' : ''}">
+              <input type="checkbox" data-val="${escapeHtml(n)}" ${filterMain.has(n) ? 'checked' : ''} />
+              <span>${escapeHtml(statLabel(n))}</span>
+            </label>
+          `).join('')}
+        </div>
       </div>
       <div class="swap-filter-row">
         <label class="text-sm text-muted">サブステ含む:</label>
@@ -730,7 +935,6 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
     <div class="swap-list"></div>
   `;
 
-  const filterMainSel = bodyEl.querySelector('#swap-filter-main');
   const sortSel = bodyEl.querySelector('#swap-sort-key');
   const subSel = bodyEl.querySelector('#swap-sort-substat');
 
@@ -748,13 +952,12 @@ async function openSwapModal({ buildId, slot, currentDiscId }) {
   }
   wireChipFilter('filter-chips-set', filterSets);
   wireChipFilter('filter-chips-sub', filterSubs);
+  wireChipFilter('filter-chips-main', filterMain);
 
-  filterMainSel.addEventListener('change', () => { filterMain = filterMainSel.value; renderRows(); });
   bodyEl.querySelector('#swap-filter-clear').addEventListener('click', () => {
     filterSets.clear();
     filterSubs.clear();
-    filterMain = '';
-    filterMainSel.value = '';
+    filterMain.clear();
     bodyEl.querySelectorAll('.filter-chips input[type="checkbox"]').forEach(cb => {
       cb.checked = false;
       cb.closest('.rec-sub-chip').classList.remove('on');

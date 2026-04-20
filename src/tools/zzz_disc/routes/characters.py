@@ -75,4 +75,30 @@ def build_characters_router(bot, config: dict) -> APIRouter:
         ch = await models.get_character(db, character_id)
         return {"character": ch}
 
+    @router.put("/api/characters/{character_id}/recommended-main-stats")
+    async def put_recommended_main_stats(character_id: int, payload: dict):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        main_stats = payload.get("main_stats")
+        if not isinstance(main_stats, dict):
+            raise HTTPException(400, "main_stats must be dict")
+        await models.update_character_recommended_main_stats(
+            db, character_id, main_stats)
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
+    @router.put("/api/characters/{character_id}/recommended-teams")
+    async def put_recommended_teams(character_id: int, payload: dict):
+        ch = await models.get_character(db, character_id)
+        if not ch:
+            raise HTTPException(404, "character not found")
+        teams = payload.get("teams")
+        if not isinstance(teams, list):
+            raise HTTPException(400, "teams must be list")
+        await models.update_character_recommended_teams(
+            db, character_id, teams)
+        ch = await models.get_character(db, character_id)
+        return {"character": ch}
+
     return router
