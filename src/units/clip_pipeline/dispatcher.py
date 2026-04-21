@@ -148,21 +148,10 @@ class Dispatcher:
         try:
             agent = await self._select_agent_for_job(job)
             if agent is None:
+                # 全 Agent が busy or unavailable。budget を消費せず待機。
+                # （他 Agent が空く / agent_pool のメトリクスが回復する）
                 await self._transition_retry(
                     job, reason="no_agent_available",
-                    from_status=STATUS_DISPATCHING,
-                )
-                return
-
-            # Agent は同時実行 1 本制限。先行ジョブがあれば完了まで待つ
-            # （retry budget を消費せず固定間隔で再試行）。
-            active_on_agent = await self.bot.database \
-                .clip_pipeline_job_count_active_on_agent(
-                    agent["id"], exclude_job_id=job_id,
-                )
-            if active_on_agent > 0:
-                await self._transition_retry(
-                    job, reason="agent_busy",
                     from_status=STATUS_DISPATCHING,
                     consume_budget=False,
                 )
@@ -207,15 +196,39 @@ class Dispatcher:
             )
 
     async def _select_agent_for_job(self, job: dict) -> dict | None:
-        """Sub PC を優先（config priority=1）、ゲーム中 Main PC は自動除外。"""
-        # design.md §11: preferred=sub (Sub PC priority=1)
-        preferred = None
-        for a in getattr(self.bot.unit_manager.agent_pool, "_agents", []):
-            # priority=1 の Agent を preferred に（config 記載のまま使用）
-            if a.get("priority") == 1:
-                preferred = a.get("id")
-                break
-        return await self.bot.unit_manager.agent_pool.select_agent(preferred=preferred)
+        """優先度順に Agent を見て、clip_pipeline の先行ジョブを抱えていない
+        かつ agent_pool 的にも利用可能な最初の 1 台を返す。
+
+        Sub PC (priority=1) → Main PC (priority=2) の順で評価。Sub PC が
+        clip_pipeline ジョブ実行中なら Main PC へ自動フォールバックする。
+        agent_pool 側の alive / idle / paused / mode=deny 判定は
+        select_agent(preferred=aid) で流用する。
+        """
+        agent_pool = self.bot.unit_manager.agent_pool
+        job_id = job["id"]
+        agents_sorted = sorted(
+            list(getattr(agent_pool, "_agents", [])),
+            key=lambda a: a.get("priority", 99),
+        )
+        for agent in agents_sorted:
+            aid = agent.get("id")
+            if not aid:
+                continue
+            # clip_pipeline は Agent 側で同時実行 1 本制限。先行ジョブを
+            # 抱えているなら priority 順で次の Agent を試す。
+            active = await self.bot.database \
+                .clip_pipeline_job_count_active_on_agent(
+                    aid, exclude_job_id=job_id,
+                )
+            if active > 0:
+                continue
+            # agent_pool の alive/idle/paused チェック。
+            # preferred=aid 指定で aid が NG のとき他 Agent が返ってくるため、
+            # 戻り値の id が一致したもののみ採用する。
+            selected = await agent_pool.select_agent(preferred=aid)
+            if selected and selected.get("id") == aid:
+                return selected
+        return None
 
     async def _check_whisper_cache_missing(
         self, agent: dict, whisper_model: str,
