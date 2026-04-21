@@ -110,6 +110,21 @@ class STTProcessor:
                     reason = "silence"
 
         if not fire:
+            # 詰み解消: gap_split で確定した先頭チャンクが min_chunk 未満なら、
+            # もう新しい transcript が挿入される余地がない（=永遠に発火しない）ので、
+            # 要約せず summarized=1 を立てて次のチャンクへ進める。
+            if gap_split and total_chars < self._min_chunk:
+                ids = [r["id"] for r in rows]
+                placeholders = ",".join("?" * len(ids))
+                await self.bot.database.execute(
+                    f"UPDATE stt_transcripts SET summarized = 1 WHERE id IN ({placeholders})",
+                    tuple(ids),
+                )
+                log.info(
+                    "STT pruned %d stuck transcripts (%d chars, gap-closed below min_chunk=%d)",
+                    len(ids), total_chars, self._min_chunk,
+                )
+                return True
             return False
 
         # LLM要約
