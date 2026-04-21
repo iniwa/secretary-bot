@@ -71,9 +71,11 @@ async def run_clip_job(
         except Exception:
             pct = 0
         job.progress = float(frac)
+        # step を同梱しておくと、Pi 側で step イベント欠落時でも追随できる
         _schedule_emit(loop, job, "progress", {
             "percent": pct,
             "desc": desc,
+            "step": job.step,
         })
 
     def _step(name: str):

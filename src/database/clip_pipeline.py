@@ -150,6 +150,13 @@ class ClipPipelineMixin:
                 (int(progress), step, job_id),
             )
 
+    async def clip_pipeline_job_update_step(self, job_id: str, step: str) -> None:
+        """step のみ更新。step イベントで progress を上書きしたくないときに使う。"""
+        await self.execute(
+            "UPDATE clip_pipeline_jobs SET step = ? WHERE id = ?",
+            (step, job_id),
+        )
+
     async def clip_pipeline_job_set_result(
         self, job_id: str, result_json: str,
     ) -> None:

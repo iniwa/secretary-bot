@@ -59,6 +59,7 @@ class Dispatcher:
         self._monitoring: set[str] = set()
         self._running = False
         self._progress_last: dict[str, float] = {}
+        self._last_step: dict[str, str] = {}
         self._agent_clients: dict[str, AgentClient] = {}
 
         cfg = (
@@ -425,10 +426,9 @@ class Dispatcher:
                         data,
                     )
                 elif name == "step":
-                    # step 変化は progress とまとめて扱う
-                    await self._on_progress(
+                    # step イベントは step のみを更新（percent を 0 で上書きしない）
+                    await self._on_step(
                         job_id,
-                        int(data.get("percent", 0)),
                         data.get("step"),
                         agent.get("id"),
                         data,
@@ -478,6 +478,11 @@ class Dispatcher:
         self, job_id: str, percent: int, step: str | None,
         agent_id: str | None, detail: dict,
     ) -> None:
+        # step が進捗イベントに乗っていない場合は直近 step を補完
+        if not step:
+            step = self._last_step.get(job_id)
+        else:
+            self._last_step[job_id] = step
         # DB 書き込みはデバウンス
         now = time.monotonic()
         last = self._progress_last.get(job_id, 0.0)
@@ -490,6 +495,19 @@ class Dispatcher:
             job_id=job_id, from_status=STATUS_RUNNING, to_status=STATUS_RUNNING,
             progress=percent, step=step, event="progress", agent_id=agent_id,
             detail=detail,
+        ))
+
+    async def _on_step(
+        self, job_id: str, step: str | None, agent_id: str | None, detail: dict,
+    ) -> None:
+        """step イベント専用経路。progress を保持したまま step のみ更新する。"""
+        if not step:
+            return
+        self._last_step[job_id] = step
+        await self.bot.database.clip_pipeline_job_update_step(job_id, step)
+        await self._broadcast(TransitionEvent(
+            job_id=job_id, from_status=STATUS_RUNNING, to_status=STATUS_RUNNING,
+            step=step, event="step", agent_id=agent_id, detail=detail,
         ))
 
     async def _on_job_done(
