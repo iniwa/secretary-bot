@@ -203,7 +203,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             if unit_llm.get("ollama_model"):
                 unit_models[name] = unit_llm["ollama_model"]
         return {
-            "ollama_model": llm_cfg.get("ollama_model", "gemma4"),
+            "ollama_model": llm_cfg.get("ollama_model", "gemma4:e2b"),
             "ollama_timeout": int(llm_cfg.get("ollama_timeout", 300)),
             "gemini_model": bot.llm_router.gemini.model,
             "unit_models": unit_models,

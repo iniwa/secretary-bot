@@ -57,7 +57,7 @@ class LLMRouter:
         if direct_url:
             self._url_to_name[direct_url.rstrip("/")] = "サブPC"
 
-        model = config.get("llm", {}).get("ollama_model", "gemma4")
+        model = config.get("llm", {}).get("ollama_model", "gemma4:e2b")
         timeout = int(config.get("llm", {}).get("ollama_timeout", 150))
 
         # GPUメモリ監視: 他プロセスがGPUを占有中のインスタンスをOllamaから除外

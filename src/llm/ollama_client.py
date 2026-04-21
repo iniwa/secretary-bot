@@ -42,7 +42,7 @@ class _Waiter:
 
 class OllamaClient:
     def __init__(
-        self, model: str = "gemma4", urls: list[str] | None = None, timeout: int = 150,
+        self, model: str = "gemma4:e2b", urls: list[str] | None = None, timeout: int = 150,
         gpu_monitor=None,
     ):
         self.model = model

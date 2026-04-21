@@ -1,10 +1,10 @@
 # デフォルト設定（WebGUIで上書き可能）
 
 # モデル設定
+# Whisper / Ollama モデルはジョブ毎にリクエストで指定される（WebGUI / Discord 経由）。
+# Ollama モデルの既定はミミの llm.ollama_model（WebGUI で動的変更可）に追従。
 WHISPER_MODEL_TEST = "base"
 WHISPER_MODEL_NORMAL = "large-v3"
-OLLAMA_MODEL_TEST = "gemma4:e4b"
-OLLAMA_MODEL_NORMAL = "gemma4"
 OLLAMA_URL = "http://localhost:11434"
 
 # 負荷設定

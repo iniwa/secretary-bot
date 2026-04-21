@@ -11,7 +11,7 @@ from .prompts import EXTRACT_PROMPT
 
 async def extract(
     image_bytes: bytes,
-    model: str = "gemma4",
+    model: str = "gemma4:e2b",
     ollama_url: str = "http://localhost:11434",
 ) -> dict:
     """画像を Ollama VLM に投げて JSON 抽出結果を返す。

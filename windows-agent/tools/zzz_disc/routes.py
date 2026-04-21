@@ -112,7 +112,7 @@ async def capture_and_extract(request: Request):
     except Exception as e:
         raise HTTPException(500, f"Capture failed: {e}")
 
-    model = body.get("model", "gemma4")
+    model = body.get("model", "gemma4:e2b")
     ollama_url = body.get("ollama_url", "http://localhost:11434")
     try:
         result = await vlm_extract(png, model=model, ollama_url=ollama_url)
