@@ -128,37 +128,42 @@ function closeSidebar() {
 const COLLAPSE_KEY = 'sidebar-collapsed-groups';
 
 function initCollapsibleGroups() {
-  const groups = document.querySelectorAll('.nav-group[data-group]');
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+
   const stored = localStorage.getItem(COLLAPSE_KEY);
   const hasStored = stored !== null;
-  let collapsed;
-  try {
-    collapsed = new Set(hasStored ? JSON.parse(stored) : []);
-  } catch { collapsed = new Set(); }
+  let collapsed = new Set();
+  try { collapsed = new Set(hasStored ? JSON.parse(stored) : []); } catch { /* silent */ }
 
-  groups.forEach(group => {
+  // 初期状態の復元（保存があれば優先、なければHTMLの初期状態を読み取って保存）
+  sidebar.querySelectorAll('.nav-group[data-group]').forEach(group => {
     const name = group.dataset.group;
-    const label = group.querySelector('.nav-group-label');
-    if (!label) return;
-
     if (hasStored) {
       group.classList.toggle('collapsed', collapsed.has(name));
     } else if (group.classList.contains('collapsed')) {
       collapsed.add(name);
     }
-    label.setAttribute('aria-expanded', group.classList.contains('collapsed') ? 'false' : 'true');
-
-    label.addEventListener('click', () => {
-      const isCollapsed = group.classList.toggle('collapsed');
-      label.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-      if (isCollapsed) collapsed.add(name); else collapsed.delete(name);
-      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* silent */ }
-    });
+    const label = group.querySelector('.nav-group-label');
+    if (label) label.setAttribute('aria-expanded', group.classList.contains('collapsed') ? 'false' : 'true');
   });
-
   if (!hasStored) {
     try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* silent */ }
   }
+
+  // Event delegation: ラベル内の SVG/span をクリックしてもラベルに解決する
+  sidebar.addEventListener('click', (e) => {
+    const label = e.target.closest('.nav-group-label');
+    if (!label) return;
+    const group = label.closest('.nav-group[data-group]');
+    if (!group) return;
+    e.preventDefault();
+    const name = group.dataset.group;
+    const isCollapsed = group.classList.toggle('collapsed');
+    label.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    if (isCollapsed) collapsed.add(name); else collapsed.delete(name);
+    try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* silent */ }
+  });
 }
 
 // ============================================================
