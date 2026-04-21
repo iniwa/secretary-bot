@@ -10,6 +10,7 @@ extend-exclude = [
     "temp",
     ".playwright-mcp",
     "windows-agent/tools/input-relay",
+    "archives",
 ]
 
 [tool.ruff.lint]

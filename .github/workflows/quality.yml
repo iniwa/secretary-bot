@@ -3,8 +3,18 @@ name: Quality (Lint + Test)
 on:
   push:
     branches: [main]
+    paths:
+      - '**.py'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/quality.yml'
   pull_request:
     branches: [main]
+    paths:
+      - '**.py'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/quality.yml'
 
 jobs:
   quality:
