@@ -50,6 +50,32 @@ body { display: flex; }
   letter-spacing: 0.08em;
   color: var(--text-muted);
   padding: 0.75rem 1rem 0.3rem;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  font-family: inherit;
+  transition: color var(--ease);
+}
+.nav-group-label:hover { color: var(--text-secondary); }
+.nav-group-chevron {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: transform var(--ease);
+}
+.nav-group.collapsed .nav-group-chevron { transform: rotate(-90deg); }
+.nav-group-items {
+  overflow: hidden;
+  max-height: 1000px;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+.nav-group.collapsed .nav-group-items {
+  max-height: 0;
+  opacity: 0;
 }
 
 .nav-item {

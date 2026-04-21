@@ -22,40 +22,60 @@
     <a href="#dashboard" class="nav-item active" data-page="dashboard">Dashboard</a>
     <a href="#chat" class="nav-item" data-page="chat">Chat</a>
 
-    <div class="nav-group">
-      <div class="nav-group-label">Units</div>
-      <a href="#reminder" class="nav-item" data-page="reminder">Reminder</a>
-      <a href="#todo" class="nav-item" data-page="todo">Todo</a>
-      <a href="#memo" class="nav-item" data-page="memo">Memo</a>
-      <a href="#timer" class="nav-item" data-page="timer">Timer</a>
-      <a href="#weather" class="nav-item" data-page="weather">Weather</a>
-      <a href="#rss" class="nav-item" data-page="rss">RSS</a>
+    <div class="nav-group" data-group="tools">
+      <button class="nav-group-label" type="button" aria-expanded="true">
+        <span>Tools</span>
+        <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M3 4 L5 6 L7 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="nav-group-items">
+        <a href="#obs" class="nav-item" data-page="obs">OBS</a>
+        <a href="#input-relay" class="nav-item" data-page="input-relay">Input Relay</a>
+        <a href="#stt" class="nav-item" data-page="stt">STT</a>
+        <a href="#activity" class="nav-item" data-page="activity">Activity</a>
+        <a href="/tools/image-gen/" class="nav-item" target="_blank" rel="noopener">Image Gen ↗</a>
+        <a href="/tools/zzz-disc/" class="nav-item" target="_blank" rel="noopener">ZZZ Disc ↗</a>
+        <a href="#clip-pipeline" class="nav-item" data-page="clip-pipeline">Auto-Kirinuki</a>
+      </div>
     </div>
 
-    <div class="nav-group">
-      <div class="nav-group-label">Mind</div>
-      <a href="#monologue" class="nav-item" data-page="monologue">Monologue</a>
-      <a href="#memory" class="nav-item" data-page="memory">Memory</a>
-      <a href="#innermind" class="nav-item" data-page="innermind">InnerMind</a>
+    <div class="nav-group" data-group="mind">
+      <button class="nav-group-label" type="button" aria-expanded="true">
+        <span>Mind</span>
+        <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M3 4 L5 6 L7 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="nav-group-items">
+        <a href="#monologue" class="nav-item" data-page="monologue">Monologue</a>
+        <a href="#memory" class="nav-item" data-page="memory">Memory</a>
+        <a href="#innermind" class="nav-item" data-page="innermind">InnerMind</a>
+      </div>
     </div>
 
-    <div class="nav-group">
-      <div class="nav-group-label">Tools</div>
-      <a href="#obs" class="nav-item" data-page="obs">OBS</a>
-      <a href="#input-relay" class="nav-item" data-page="input-relay">Input Relay</a>
-      <a href="#stt" class="nav-item" data-page="stt">STT</a>
-      <a href="#activity" class="nav-item" data-page="activity">Activity</a>
-      <a href="/tools/image-gen/" class="nav-item" target="_blank" rel="noopener">Image Gen ↗</a>
-      <a href="/tools/zzz-disc/" class="nav-item" target="_blank" rel="noopener">ZZZ Disc ↗</a>
-      <a href="#clip-pipeline" class="nav-item" data-page="clip-pipeline">Auto-Kirinuki</a>
+    <div class="nav-group collapsed" data-group="units">
+      <button class="nav-group-label" type="button" aria-expanded="false">
+        <span>Units</span>
+        <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M3 4 L5 6 L7 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="nav-group-items">
+        <a href="#reminder" class="nav-item" data-page="reminder">Reminder</a>
+        <a href="#todo" class="nav-item" data-page="todo">Todo</a>
+        <a href="#memo" class="nav-item" data-page="memo">Memo</a>
+        <a href="#timer" class="nav-item" data-page="timer">Timer</a>
+        <a href="#weather" class="nav-item" data-page="weather">Weather</a>
+        <a href="#rss" class="nav-item" data-page="rss">RSS</a>
+      </div>
     </div>
 
-    <div class="nav-group">
-      <div class="nav-group-label">System</div>
-      <a href="#settings" class="nav-item" data-page="settings">Settings</a>
-      <a href="#logs" class="nav-item" data-page="logs">Logs</a>
-      <a href="#docker-monitor" class="nav-item" data-page="docker-monitor">Docker Monitor</a>
-      <a href="#maintenance" class="nav-item" data-page="maintenance">Maintenance</a>
+    <div class="nav-group collapsed" data-group="system">
+      <button class="nav-group-label" type="button" aria-expanded="false">
+        <span>System</span>
+        <svg class="nav-group-chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M3 4 L5 6 L7 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="nav-group-items">
+        <a href="#settings" class="nav-item" data-page="settings">Settings</a>
+        <a href="#logs" class="nav-item" data-page="logs">Logs</a>
+        <a href="#docker-monitor" class="nav-item" data-page="docker-monitor">Docker Monitor</a>
+        <a href="#maintenance" class="nav-item" data-page="maintenance">Maintenance</a>
+      </div>
     </div>
   </div>
 

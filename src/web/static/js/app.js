@@ -123,6 +123,45 @@ function closeSidebar() {
 }
 
 // ============================================================
+// Sidebar group collapse (persisted in localStorage)
+// ============================================================
+const COLLAPSE_KEY = 'sidebar-collapsed-groups';
+
+function initCollapsibleGroups() {
+  const groups = document.querySelectorAll('.nav-group[data-group]');
+  const stored = localStorage.getItem(COLLAPSE_KEY);
+  const hasStored = stored !== null;
+  let collapsed;
+  try {
+    collapsed = new Set(hasStored ? JSON.parse(stored) : []);
+  } catch { collapsed = new Set(); }
+
+  groups.forEach(group => {
+    const name = group.dataset.group;
+    const label = group.querySelector('.nav-group-label');
+    if (!label) return;
+
+    if (hasStored) {
+      group.classList.toggle('collapsed', collapsed.has(name));
+    } else if (group.classList.contains('collapsed')) {
+      collapsed.add(name);
+    }
+    label.setAttribute('aria-expanded', group.classList.contains('collapsed') ? 'false' : 'true');
+
+    label.addEventListener('click', () => {
+      const isCollapsed = group.classList.toggle('collapsed');
+      label.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      if (isCollapsed) collapsed.add(name); else collapsed.delete(name);
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* silent */ }
+    });
+  });
+
+  if (!hasStored) {
+    try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])); } catch { /* silent */ }
+  }
+}
+
+// ============================================================
 // Toast
 // ============================================================
 export function toast(message, type = 'info') {
@@ -204,6 +243,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Mobile menu
   document.getElementById('menu-btn').addEventListener('click', openSidebar);
   document.getElementById('sidebar-overlay').addEventListener('click', closeSidebar);
+
+  // Collapsible nav groups
+  initCollapsibleGroups();
 
   // Hash navigation
   window.addEventListener('hashchange', () => navigate(getPageFromHash()));
