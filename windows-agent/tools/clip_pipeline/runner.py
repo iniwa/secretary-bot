@@ -203,16 +203,19 @@ async def run_clip_job(
 
 def _sync_dir(src: str, dst: str) -> None:
     """src 配下の全ファイルを dst へコピー（上書き）。
-    子ディレクトリは再帰的に、既存は削除してから copytree でコピー。
+    子ディレクトリは dirs_exist_ok=True で既存構造にマージする。
+
+    以前は `rmtree(d) + copytree(s, d)` で既存サブディレクトリを作り直していたが、
+    NAS (SMB) は削除が非同期遅延するケースがあり、rmtree 直後の copytree が
+    WinError 183 (ERROR_ALREADY_EXISTS) で落ちていた。ファイル単位の上書きに
+    切り替えることで削除フェーズを無くしている。
     """
     os.makedirs(dst, exist_ok=True)
     for name in os.listdir(src):
         s = os.path.join(src, name)
         d = os.path.join(dst, name)
         if os.path.isdir(s):
-            if os.path.exists(d):
-                shutil.rmtree(d, ignore_errors=True)
-            shutil.copytree(s, d)
+            shutil.copytree(s, d, dirs_exist_ok=True)
         else:
             shutil.copy2(s, d)
 
