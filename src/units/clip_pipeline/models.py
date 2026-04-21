@@ -96,8 +96,7 @@ class TransitionEvent:
 # Discord / WebGUI からの入力デフォルト
 DEFAULT_PARAMS: dict[str, Any] = {
     "top_n": 10,               # ハイライト候補数
-    "min_clip_sec": 15,        # 切り抜き 1 本の下限秒数
-    "max_clip_sec": 90,        # 上限秒数
+    "min_clip_sec": 15,        # 切り抜き 1 本の下限秒数（満たない場合は前後に時間を足して確保）
     "do_export_clips": True,   # False なら EDL までで止める
     "mic_track": 1,            # マイク音声の trackindex（ffmpeg）
     "use_demucs": False,       # ソース分離を行うか

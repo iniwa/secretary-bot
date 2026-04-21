@@ -106,7 +106,6 @@ async def run_clip_job(
             sleep_sec=params.get("sleep_sec", 2),
             top_n=int(params.get("top_n", 10)),
             min_clip_sec=float(params.get("min_clip_sec", 30)),
-            max_clip_sec=float(params.get("max_clip_sec", 180)),
             do_export_clips=bool(params.get("do_export_clips", False)),
             mic_track=params.get("mic_track", 1),
             use_demucs=bool(params.get("use_demucs", True)),

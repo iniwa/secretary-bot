@@ -50,7 +50,6 @@ def run_pipeline(
     sleep_sec: float = None,
     top_n: int = 10,
     min_clip_sec: float = 30,
-    max_clip_sec: float = 180,
     do_export_clips: bool = False,
     mic_track: int = None,
     use_demucs: bool = True,
@@ -70,8 +69,7 @@ def run_pipeline(
         output_dir: 出力ディレクトリ
         sleep_sec: ステップ間スリープ秒数
         top_n: 最大候補数
-        min_clip_sec: 最短クリップ秒数
-        max_clip_sec: 最長クリップ秒数
+        min_clip_sec: 最短クリップ秒数（満たない場合は前後に時間を足して確保）
         do_export_clips: MP4切り出しを行うか
         mic_track: マイクトラック番号 (0始まり、None=config値)
         use_demucs: 単一トラック時にDemucsを使用するか
@@ -189,39 +187,45 @@ def run_pipeline(
         log(f"バリデーション: {len(highlights) - len(valid_highlights)}件の不正なハイライトを除外")
     highlights = valid_highlights
 
-    # 隣接ハイライトのマージ（短いクリップを統合して見応えのあるシーンにする）
+    # 隣接ハイライトのマージ（15秒以内のギャップで統合、上限なし）
     if highlights:
         highlights.sort(key=lambda h: h["start"])
         merged = [highlights[0].copy()]
         for h in highlights[1:]:
             prev = merged[-1]
             gap = h["start"] - prev["end"]
-            merged_duration = h["end"] - prev["start"]
-            # 15秒以内のギャップ、かつマージ後が max_clip_sec 以内なら統合
-            if gap <= 15 and merged_duration <= max_clip_sec:
-                prev["end"] = h["end"]
+            if gap <= 15:
                 # reason は最初のものを保持（代表シーン）
+                prev["end"] = h["end"]
             else:
                 merged.append(h.copy())
         log(f"隣接マージ: {len(highlights)}件 → {len(merged)}件")
         highlights = merged
 
-    # クリップ長のフィルタリング
-    log(f"クリップ長フィルタ適用: {min_clip_sec}s ≤ duration ≤ {max_clip_sec}s（フィルタ前: {len(highlights)}件）")
-    filtered_out = []
-    filtered_in = []
-    for h in highlights:
-        duration = h.get("end", 0) - h.get("start", 0)
-        if min_clip_sec <= duration <= max_clip_sec:
-            filtered_in.append(h)
-        else:
-            filtered_out.append(h)
-            log(f"  除外: start={h.get('start')}s, end={h.get('end')}s, "
-                f"duration={duration:.1f}s, reason={h.get('reason', '(なし)')}")
-    if filtered_out:
-        log(f"  {len(filtered_out)}件がフィルタで除外されました")
-    highlights = filtered_in
-    log(f"クリップ長フィルタ後: {len(highlights)}件")
+    # 最低時間パディング（min_clip_sec に満たない場合は前後を等分に拡張）
+    # start<0 になる場合は 0 にクランプし、不足分を後ろに振り替える。
+    if min_clip_sec > 0 and highlights:
+        padded_count = 0
+        for h in highlights:
+            start = h["start"]
+            end = h["end"]
+            duration = end - start
+            if duration >= min_clip_sec:
+                continue
+            pad = min_clip_sec - duration
+            pad_before = pad / 2
+            pad_after = pad - pad_before
+            new_start = max(0.0, start - pad_before)
+            overflow = pad_before - (start - new_start)
+            new_end = end + pad_after + overflow
+            log(f"  延長: {start:.1f}s-{end:.1f}s ({duration:.1f}s) "
+                f"→ {new_start:.1f}s-{new_end:.1f}s ({new_end - new_start:.1f}s)")
+            h["start"] = new_start
+            h["end"] = new_end
+            padded_count += 1
+        if padded_count:
+            log(f"最低時間パディング: {padded_count}件を {min_clip_sec}s まで延長")
+    log(f"最終ハイライト: {len(highlights)}件")
     _step_done(4)
     time.sleep(sleep_sec)
 

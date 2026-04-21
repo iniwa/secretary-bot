@@ -48,13 +48,13 @@ _EXTRACT_PROMPT = """\
 - video_path: 動画ファイルの絶対パス（NAS UNC / ローカル SSD の絶対パス）
 - whisper_model: whisper モデル名（例: "large-v3"）
 - ollama_model:  Ollama モデル名（例: "qwen3:14b"）
-- top_n / min_clip_sec / max_clip_sec: 整数
+- top_n / min_clip_sec: 整数
 - do_export_clips: bool
 - use_demucs: bool
 - mic_track: 0 or 1
 
 ## 出力形式（厳守）
-{{"action": "...", "video_path": "...", "whisper_model": "...", "ollama_model": "...", "top_n": 0, "min_clip_sec": 0, "max_clip_sec": 0, "do_export_clips": false, "use_demucs": false, "mic_track": 1, "job_id": "..."}}
+{{"action": "...", "video_path": "...", "whisper_model": "...", "ollama_model": "...", "top_n": 0, "min_clip_sec": 0, "do_export_clips": false, "use_demucs": false, "mic_track": 1, "job_id": "..."}}
 
 - 不要なフィールドは省略。
 - JSON 1 個だけ。他テキストは禁止。
@@ -170,7 +170,7 @@ class ClipPipelineUnit(BaseUnit):
         )
 
         params = dict(DEFAULT_PARAMS)
-        for k in ("top_n", "min_clip_sec", "max_clip_sec",
+        for k in ("top_n", "min_clip_sec",
                   "do_export_clips", "use_demucs", "mic_track",
                   "sleep_sec"):
             if k in extracted and extracted[k] is not None:

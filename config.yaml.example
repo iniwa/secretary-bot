@@ -174,8 +174,7 @@ units:
     default_ollama_model: "qwen3:14b"
     defaults:
       top_n: 0                                # 0=無制限
-      min_clip_sec: 30
-      max_clip_sec: 180
+      min_clip_sec: 30                        # 満たない場合は前後に時間を足して確保
       do_export_clips: false
       mic_track: 1
       use_demucs: true

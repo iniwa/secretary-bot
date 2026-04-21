@@ -252,10 +252,6 @@ export function render() {
             <input id="cp-min-clip" type="number" min="1" value="30">
           </div>
           <div class="cp-form-row">
-            <label for="cp-max-clip">max_clip_sec</label>
-            <input id="cp-max-clip" type="number" min="1" value="180">
-          </div>
-          <div class="cp-form-row">
             <label for="cp-mic-track">mic_track</label>
             <input id="cp-mic-track" type="number" min="0" value="1">
           </div>
@@ -654,7 +650,6 @@ async function onSubmit(e) {
   const params = {
     top_n: Number($('cp-top-n').value) || 0,
     min_clip_sec: Number($('cp-min-clip').value) || 30,
-    max_clip_sec: Number($('cp-max-clip').value) || 180,
     mic_track: Number($('cp-mic-track').value) || 0,
     use_demucs: $('cp-use-demucs').checked,
     do_export_clips: $('cp-do-export-clips').checked,
@@ -668,7 +663,6 @@ async function onSubmit(e) {
     'cp-ollama': ollamaSel,
     'cp-top-n': params.top_n,
     'cp-min-clip': params.min_clip_sec,
-    'cp-max-clip': params.max_clip_sec,
     'cp-mic-track': params.mic_track,
     'cp-use-demucs': params.use_demucs,
     'cp-do-export-clips': params.do_export_clips,
