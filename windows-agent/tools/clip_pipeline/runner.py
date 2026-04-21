@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -61,6 +63,15 @@ async def run_clip_job(
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # 中間ファイル（voice.wav / transcript.json など）をローカル SSD で処理し、
+    # 完了時に output_dir（多くは NAS 上の UNC / ドライブレター）へ同期する。
+    # SMB 書き込みを逐次ではなく最後に 1 回にまとめることで preprocess 等の I/O
+    # ボトルネックを大幅に減らす狙い。
+    work_dir = os.path.join(
+        tempfile.gettempdir(), "clip_pipeline_work", job.job_id,
+    )
+    os.makedirs(work_dir, exist_ok=True)
+
     def _log(msg: str):
         _schedule_emit(loop, job, "log", {"message": str(msg)})
 
@@ -91,7 +102,7 @@ async def run_clip_job(
             video_path=video_path,
             whisper_model=whisper_model,
             ollama_model=ollama_model,
-            output_dir=output_dir,
+            output_dir=work_dir,
             sleep_sec=params.get("sleep_sec", 2),
             top_n=int(params.get("top_n", 10)),
             min_clip_sec=float(params.get("min_clip_sec", 30)),
@@ -109,9 +120,15 @@ async def run_clip_job(
             job.status = "cancelled"
             await _emit(job, "status", {"status": "cancelled"})
         else:
+            # work_dir の成果物をまとめて output_dir へコピー。成功時のみ行う。
+            _log(f"成果物を {output_dir} に同期中...")
+            await asyncio.to_thread(_sync_dir, work_dir, output_dir)
+            # result に含まれる work_dir 基準のパスを output_dir 基準に付け替え
+            result = _retarget_result_paths(result or {}, work_dir, output_dir)
+
             job.status = "done"
             job.progress = 1.0
-            job.result = result or {}
+            job.result = result
             await _emit(job, "result", {
                 "highlights_count": len(job.result.get("highlights") or []),
                 "edl_path": job.result.get("edl_path") or "",
@@ -136,9 +153,60 @@ async def run_clip_job(
             await _emit(job, "error", job.last_error)
             await _emit(job, "status", {"status": "failed"})
     finally:
+        # 成功・失敗・キャンセルいずれでも work_dir を片付ける。
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
         job.finished_at = time.time()
         job.done_flag = True
         await _emit(job, "done", {})
+
+
+def _sync_dir(src: str, dst: str) -> None:
+    """src 配下の全ファイルを dst へコピー（上書き）。
+    子ディレクトリは再帰的に、既存は削除してから copytree でコピー。
+    """
+    os.makedirs(dst, exist_ok=True)
+    for name in os.listdir(src):
+        s = os.path.join(src, name)
+        d = os.path.join(dst, name)
+        if os.path.isdir(s):
+            if os.path.exists(d):
+                shutil.rmtree(d, ignore_errors=True)
+            shutil.copytree(s, d)
+        else:
+            shutil.copy2(s, d)
+
+
+def _retarget_result_paths(result: dict, work_dir: str, output_dir: str) -> dict:
+    """run_pipeline が work_dir 基準で返すパスを output_dir 基準へ置換。
+    transcript_path / edl_path / clip_paths のみ対象（highlights は中身データなので触らない）。
+    """
+    work_norm = os.path.normpath(work_dir)
+
+    def _retarget(p: str) -> str:
+        if not p:
+            return p
+        try:
+            p_norm = os.path.normpath(p)
+            rel = os.path.relpath(p_norm, work_norm)
+            # work_dir 配下でなければそのまま返す
+            if rel.startswith(".."):
+                return p
+            return os.path.join(output_dir, rel)
+        except ValueError:
+            # 異なるドライブで relpath 不能（Windows）
+            return os.path.join(output_dir, os.path.basename(p))
+
+    out = dict(result)
+    if out.get("transcript_path"):
+        out["transcript_path"] = _retarget(out["transcript_path"])
+    if out.get("edl_path"):
+        out["edl_path"] = _retarget(out["edl_path"])
+    if out.get("clip_paths"):
+        out["clip_paths"] = [_retarget(p) for p in out["clip_paths"]]
+    return out
 
 
 def _guess_error_class(cls_name: str, msg: str) -> str:

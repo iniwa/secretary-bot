@@ -3,6 +3,7 @@
 全ステップをオーケストレーション（スリープ挿入、ログコールバック）
 """
 
+import concurrent.futures
 import os
 import time
 
@@ -116,19 +117,37 @@ def run_pipeline(
     _step_done(0)
     time.sleep(sleep_sec)
 
-    # ① 文字起こし
-    _notify(1, "ステップ1: 文字起こし")
-    log("--- ステップ1: 文字起こし ---")
-    sp1 = _make_step_progress(progress_callback, _step_start(1), _STEP_WEIGHTS[1])
-    transcript = transcribe(video_path, whisper_model, output_dir, wav_path=voice_wav, log=log, progress_callback=sp1, download_root=whisper_download_root)
-    _step_done(1)
-    time.sleep(sleep_sec)
+    # ①+② 文字起こし（GPU）+ 音声特徴量分析（CPU）を並走
+    # transcribe は GPU、analyze_audio は librosa 純 CPU なのでリソース非競合。
+    # 進捗は transcribe を代表ドライバとし、ステップ1+2 の weight を合算した 1 本の bar にまとめる。
+    _notify(1, "ステップ1+2: 文字起こし+音声特徴量分析（並列実行）")
+    log("--- ステップ1+2: 文字起こし + 音声特徴量分析（並列） ---")
+    combined_weight = _STEP_WEIGHTS[1] + _STEP_WEIGHTS[2]
+    sp_main = _make_step_progress(progress_callback, _step_start(1), combined_weight)
 
-    # ② 音声特徴量分析
-    _notify(2, "ステップ2: 音声特徴量分析")
-    log("--- ステップ2: 音声特徴量分析 ---")
-    sp2 = _make_step_progress(progress_callback, _step_start(2), _STEP_WEIGHTS[2])
-    audio_features = analyze_audio(video_path, output_dir, wav_path=voice_wav, log=log, progress_callback=sp2)
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="clip_pipeline"
+    ) as pool:
+        f_transcribe = pool.submit(
+            transcribe,
+            video_path, whisper_model, output_dir,
+            wav_path=voice_wav, log=log,
+            progress_callback=sp_main,
+            download_root=whisper_download_root,
+        )
+        f_analyze = pool.submit(
+            analyze_audio,
+            video_path, output_dir,
+            wav_path=voice_wav, log=log,
+            progress_callback=None,  # transcribe 側で進捗を代表
+        )
+        # transcribe の方が一般に長いが、順序は保証しない。例外は先に伝播させる。
+        transcript = f_transcribe.result()
+        # transcribe 完了後に analyze が残っていれば step 表示を analyze に切り替え
+        if step_callback and not f_analyze.done():
+            step_callback(_STEP_NAMES[2])
+        audio_features = f_analyze.result()
+    _check_cancelled()
     _step_done(2)
     time.sleep(sleep_sec)
 
