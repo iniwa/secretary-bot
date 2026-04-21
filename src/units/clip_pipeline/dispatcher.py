@@ -61,6 +61,11 @@ class Dispatcher:
         self._progress_last: dict[str, float] = {}
         self._last_step: dict[str, str] = {}
         self._agent_clients: dict[str, AgentClient] = {}
+        # _handle_dispatching が同時並行で走るとき、DB の assigned_agent が
+        # セットされるのは ac.job_start 完了後になるため、その間に別ジョブが
+        # 同じ Agent を picks してしまう。job_start の呼び出し中だけ in-memory
+        # で追跡して、先行ジョブが掴んでいる Agent を除外する。
+        self._dispatching_to: dict[str, str] = {}  # agent_id → job_id
 
         cfg = (
             bot.config.get("units", {})
@@ -145,6 +150,7 @@ class Dispatcher:
         """dispatching 状態のジョブを処理: Agent 選定 → cache 判定 → running or warming_cache。"""
         job_id = job["id"]
         new_trace_id()
+        agent: dict | None = None
         try:
             agent = await self._select_agent_for_job(job)
             if agent is None:
@@ -156,6 +162,10 @@ class Dispatcher:
                     consume_budget=False,
                 )
                 return
+
+            # assigned_agent が DB に書かれるまで、他 _handle_dispatching が
+            # 同じ Agent を拾ってしまわないよう in-memory で予約しておく。
+            self._dispatching_to[agent["id"]] = job_id
 
             # Whisper モデルのキャッシュ判定
             whisper_model = job.get("whisper_model", "")
@@ -194,6 +204,14 @@ class Dispatcher:
             await self._transition_failed(
                 job, str(e), from_status=STATUS_DISPATCHING,
             )
+        finally:
+            # 成功経路でも失敗経路でも、この時点では DB が assigned_agent を
+            # 持っている（running/warming_cache）か、リトライで queued に
+            # 戻っている。どちらにせよ in-memory 予約は役目を終えた。
+            if agent is not None:
+                aid = agent.get("id")
+                if aid and self._dispatching_to.get(aid) == job_id:
+                    self._dispatching_to.pop(aid, None)
 
     async def _select_agent_for_job(self, job: dict) -> dict | None:
         """優先度順に Agent を見て、clip_pipeline の先行ジョブを抱えていない
@@ -213,6 +231,11 @@ class Dispatcher:
         for agent in agents_sorted:
             aid = agent.get("id")
             if not aid:
+                continue
+            # 先行の _handle_dispatching が同じ Agent に dispatch 中（まだ
+            # DB の assigned_agent が未セット）ならここでも除外する。
+            pending_job = self._dispatching_to.get(aid)
+            if pending_job and pending_job != job_id:
                 continue
             # clip_pipeline は Agent 側で同時実行 1 本制限。先行ジョブを
             # 抱えているなら priority 順で次の Agent を試す。
