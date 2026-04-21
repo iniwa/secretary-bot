@@ -12,6 +12,12 @@ let manualMode = false;
 let ollamaModels = [];      // /api/ollama-models から取得
 let mimiOllamaModel = '';   // /api/llm-config の ollama_model（Mimi と共有する初期値）
 
+// ログ表示用の状態（SSE の log / step イベントをジョブ別に蓄積）
+const logsByJob = new Map();  // jobId -> Array<{ts:number, kind:'log'|'step', message:string}>
+let activeLogJobId = null;    // 現在ログ表示中のジョブ ID（最新イベント発生ジョブを自動追従）
+let followLatestLog = true;   // ドロップダウンで明示選択すると false になる
+const MAX_LOG_LINES = 500;
+
 const STORAGE_KEY = 'clip-pipeline:form:v1';
 
 // Agent の NAS / SSD に未配置でも選べるよう、faster-whisper が自動 DL できる
@@ -173,6 +179,22 @@ export function render() {
   .cp-toggle-row { display: flex; align-items: center; gap: 0.4rem;
                    margin-bottom: 0.6rem; font-size: 0.78rem;
                    color: var(--text-secondary); }
+  .cp-log-section { margin-top: 0.8rem; padding-top: 0.6rem;
+                    border-top: 1px dashed var(--border); }
+  .cp-log-header { display: flex; align-items: center; gap: 0.4rem;
+                   margin-bottom: 0.35rem; font-size: 0.78rem;
+                   color: var(--text-secondary); }
+  .cp-log-header select { padding: 2px 6px; font-size: 0.75rem;
+                          background: var(--bg-body); color: var(--text);
+                          border: 1px solid var(--border); border-radius: 0.25rem;
+                          max-width: 20ch; }
+  .cp-log-pane { font-family: monospace; font-size: 0.72rem;
+                 line-height: 1.35; white-space: pre-wrap; word-break: break-all;
+                 background: var(--bg-body); border: 1px solid var(--border);
+                 border-radius: 0.3rem; padding: 0.45rem 0.55rem;
+                 height: 18rem; overflow-y: auto; margin: 0; color: var(--text); }
+  .cp-log-pane .cp-log-step { color: #4af; font-weight: 600; }
+  .cp-log-pane .cp-log-ts { color: var(--text-secondary); }
 </style>
 
 <div class="cp-grid">
@@ -272,6 +294,15 @@ export function render() {
     <div id="cp-capability" class="cp-agent-list">
       <div style="color:var(--text-secondary)">読み込み中...</div>
     </div>
+    <div class="cp-log-section">
+      <div class="cp-log-header">
+        <span>ジョブログ</span>
+        <select id="cp-log-job"><option value="">(イベント待ち)</option></select>
+        <span style="flex:1"></span>
+        <button type="button" id="cp-log-clear" class="cp-btn-small">消去</button>
+      </div>
+      <pre class="cp-log-pane" id="cp-log-pane"><span style="color:var(--text-secondary)">SSE log / step イベント待ち...</span></pre>
+    </div>
   </div>
 </div>
 
@@ -337,6 +368,25 @@ export async function mount() {
       copyToClipboard(text);
     });
   });
+
+  // ログパネル
+  const logSel = $('cp-log-job');
+  if (logSel) {
+    logSel.addEventListener('change', () => {
+      activeLogJobId = logSel.value || null;
+      followLatestLog = !activeLogJobId;  // 空選択 → auto-follow 再開
+      renderLogPane();
+    });
+  }
+  const logClear = $('cp-log-clear');
+  if (logClear) {
+    logClear.addEventListener('click', () => {
+      if (activeLogJobId) logsByJob.delete(activeLogJobId);
+      else logsByJob.clear();
+      renderLogJobSelect();
+      renderLogPane();
+    });
+  }
 
   restoreNumericFields();
   await Promise.all([loadCapability(), loadOllamaModels(), loadMimiLLMConfig(), loadJobs()]);
@@ -806,6 +856,22 @@ function connectSSE() {
 function handleEvent(ev) {
   const jobId = ev.job_id;
   if (!jobId) return;
+
+  // log / step / error イベントはジョブログへ流す
+  if (ev.event === 'log') {
+    const msg = ev.detail && ev.detail.message;
+    if (msg) pushJobLog(jobId, 'log', String(msg));
+    return;  // log だけなら progress / step を触らない
+  }
+  if (ev.event === 'step' && ev.step) {
+    pushJobLog(jobId, 'step', `--- step: ${ev.step} ---`);
+    // step 更新は下でジョブ行にも反映するのでフォールスルーさせる
+  }
+  if (ev.event === 'error') {
+    const msg = ev.detail && ev.detail.message;
+    if (msg) pushJobLog(jobId, 'step', `[error] ${String(msg)}`);
+  }
+
   const idx = jobs.findIndex(j => j.job_id === jobId);
   if (idx === -1) {
     // Unknown job — refresh whole list
@@ -824,4 +890,87 @@ function handleEvent(ev) {
   if (ev.agent_id) j.assigned_agent = ev.agent_id;
   if (ev.detail && ev.detail.message && ev.status === 'failed') j.last_error = ev.detail.message;
   renderJobs();
+}
+
+function pushJobLog(jobId, kind, message) {
+  let arr = logsByJob.get(jobId);
+  const isNew = !arr;
+  if (isNew) { arr = []; logsByJob.set(jobId, arr); }
+  arr.push({ ts: Date.now(), kind, message });
+  if (arr.length > MAX_LOG_LINES) arr.splice(0, arr.length - MAX_LOG_LINES);
+
+  if (isNew) renderLogJobSelect();
+  // auto-follow: 最新イベントのジョブを追従
+  if (followLatestLog && activeLogJobId !== jobId) {
+    activeLogJobId = jobId;
+    const sel = $('cp-log-job');
+    if (sel) sel.value = jobId;
+    renderLogPane();
+    return;
+  }
+  if (jobId === activeLogJobId) {
+    appendLogLine(arr[arr.length - 1]);
+  }
+}
+
+function fmtLogTime(ts) {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mi}:${ss}`;
+}
+
+function shortJobId(jobId) {
+  return (jobId || '').slice(0, 8);
+}
+
+function renderLogJobSelect() {
+  const sel = $('cp-log-job');
+  if (!sel) return;
+  const ids = Array.from(logsByJob.keys());
+  if (ids.length === 0) {
+    sel.innerHTML = '<option value="">(イベント待ち)</option>';
+    return;
+  }
+  const cur = activeLogJobId || '';
+  sel.innerHTML = ids.map(id => {
+    const label = shortJobId(id);
+    return `<option value="${esc(id)}"${id === cur ? ' selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+}
+
+function renderLogPane() {
+  const pane = $('cp-log-pane');
+  if (!pane) return;
+  if (!activeLogJobId) {
+    pane.innerHTML = '<span style="color:var(--text-secondary)">SSE log / step イベント待ち...</span>';
+    return;
+  }
+  const arr = logsByJob.get(activeLogJobId) || [];
+  if (arr.length === 0) {
+    pane.innerHTML = '<span style="color:var(--text-secondary)">(ログなし)</span>';
+    return;
+  }
+  pane.innerHTML = arr.map(renderLogLine).join('\n');
+  pane.scrollTop = pane.scrollHeight;
+}
+
+function renderLogLine(line) {
+  const ts = `<span class="cp-log-ts">[${fmtLogTime(line.ts)}]</span>`;
+  const cls = line.kind === 'step' ? ' class="cp-log-step"' : '';
+  return `${ts} <span${cls}>${esc(line.message)}</span>`;
+}
+
+function appendLogLine(line) {
+  const pane = $('cp-log-pane');
+  if (!pane) return;
+  // 初回（プレースホルダのみ）の場合はまるごと再描画
+  if (!pane.querySelector('.cp-log-ts')) {
+    renderLogPane();
+    return;
+  }
+  const nearBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40;
+  pane.insertAdjacentHTML('beforeend', '\n' + renderLogLine(line));
+  if (nearBottom) pane.scrollTop = pane.scrollHeight;
 }
