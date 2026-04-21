@@ -395,7 +395,6 @@ async def jobs_start(request: Request):
     job_id = body.get("job_id")
     video_path = body.get("video_path")
     output_dir = body.get("output_dir")
-    mode = body.get("mode") or "normal"
     whisper_model = body.get("whisper_model")
     ollama_model = body.get("ollama_model")
     params = body.get("params") or {}
@@ -457,7 +456,6 @@ async def jobs_start(request: Request):
             ollama_model=ollama_model,
             params=params,
             whisper_download_root=cache_root,
-            mode=mode,
         )
 
     task = asyncio.create_task(_run_task())

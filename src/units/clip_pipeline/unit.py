@@ -24,8 +24,6 @@ from src.units.clip_pipeline.agent_client import AgentClient
 from src.units.clip_pipeline.dispatcher import Dispatcher
 from src.units.clip_pipeline.models import (
     DEFAULT_PARAMS,
-    MODE_NORMAL,
-    MODE_TEST,
     PLATFORM_DISCORD,
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -48,7 +46,6 @@ _EXTRACT_PROMPT = """\
 
 ## 補助パラメータ（enqueue のときだけ）
 - video_path: 動画ファイルの絶対パス（NAS UNC / ローカル SSD の絶対パス）
-- mode: "test" (先頭 3 分のみ) / "normal" (全尺)。省略時は normal
 - whisper_model: whisper モデル名（例: "large-v3"）
 - ollama_model:  Ollama モデル名（例: "qwen3:14b"）
 - top_n / min_clip_sec / max_clip_sec: 整数
@@ -57,7 +54,7 @@ _EXTRACT_PROMPT = """\
 - mic_track: 0 or 1
 
 ## 出力形式（厳守）
-{{"action": "...", "video_path": "...", "mode": "...", "whisper_model": "...", "ollama_model": "...", "top_n": 0, "min_clip_sec": 0, "max_clip_sec": 0, "do_export_clips": false, "use_demucs": false, "mic_track": 1, "job_id": "..."}}
+{{"action": "...", "video_path": "...", "whisper_model": "...", "ollama_model": "...", "top_n": 0, "min_clip_sec": 0, "max_clip_sec": 0, "do_export_clips": false, "use_demucs": false, "mic_track": 1, "job_id": "..."}}
 
 - 不要なフィールドは省略。
 - JSON 1 個だけ。他テキストは禁止。
@@ -161,9 +158,6 @@ class ClipPipelineUnit(BaseUnit):
             return "切り抜きを実行する動画のパスを指定してください。例: 「切り抜き D:\\videos\\stream_01.mp4」"
 
         cfg = self._clip_cfg()
-        mode = str(extracted.get("mode") or cfg.get("default_mode") or MODE_NORMAL).lower()
-        if mode not in (MODE_NORMAL, MODE_TEST):
-            mode = MODE_NORMAL
         whisper_model = str(
             extracted.get("whisper_model")
             or cfg.get("default_whisper_model")
@@ -189,7 +183,6 @@ class ClipPipelineUnit(BaseUnit):
             job_id = await self.enqueue(
                 user_id=user_id, platform=PLATFORM_DISCORD,
                 video_path=video_path,
-                mode=mode,
                 whisper_model=whisper_model,
                 ollama_model=ollama_model,
                 params=params,
@@ -205,7 +198,7 @@ class ClipPipelineUnit(BaseUnit):
             "message_id": int(msg_id) if msg_id else 0,
         }
         return (
-            f"✂️ 受付ました（job_id={job_id[:8]}, mode={mode}, whisper={whisper_model}）。"
+            f"✂️ 受付ました（job_id={job_id[:8]}, whisper={whisper_model}）。"
             "完了したらここに結果を返します。"
         )
 
@@ -315,7 +308,6 @@ class ClipPipelineUnit(BaseUnit):
     async def enqueue(
         self, *, user_id: str, platform: str,
         video_path: str,
-        mode: str = MODE_NORMAL,
         whisper_model: str = "",
         ollama_model: str = "",
         params: dict[str, Any] | None = None,
@@ -334,8 +326,6 @@ class ClipPipelineUnit(BaseUnit):
             whisper_model = cfg.get("default_whisper_model") or "large-v3"
         if not ollama_model:
             ollama_model = cfg.get("default_ollama_model") or "qwen3:14b"
-        if mode not in (MODE_NORMAL, MODE_TEST):
-            mode = MODE_NORMAL
 
         # output_dir: config.units.clip_pipeline.nas.base_path + outputs_subdir + 動画ベース名
         if not output_dir:
@@ -353,19 +343,19 @@ class ClipPipelineUnit(BaseUnit):
         job_id = await self.bot.database.clip_pipeline_job_insert(
             user_id=user_id, platform=platform,
             video_path=video_path, output_dir=output_dir,
-            mode=mode, whisper_model=whisper_model, ollama_model=ollama_model,
+            whisper_model=whisper_model, ollama_model=ollama_model,
             params_json=json.dumps(merged, ensure_ascii=False),
             max_retries=max_retries,
         )
         log.info(
-            "clip job enqueued: id=%s user=%s video=%s mode=%s whisper=%s",
-            job_id, user_id, video_path, mode, whisper_model,
+            "clip job enqueued: id=%s user=%s video=%s whisper=%s",
+            job_id, user_id, video_path, whisper_model,
         )
         self.dispatcher.wake()
         await self.broadcast_event(TransitionEvent(
             job_id=job_id, from_status=None, to_status="queued",
             event="status",
-            detail={"video_path": video_path, "mode": mode,
+            detail={"video_path": video_path,
                     "whisper_model": whisper_model},
         ))
         return job_id
@@ -521,7 +511,6 @@ class ClipPipelineUnit(BaseUnit):
             "assigned_agent": row.get("assigned_agent"),
             "video_path": row["video_path"],
             "output_dir": row["output_dir"],
-            "mode": row["mode"],
             "whisper_model": row["whisper_model"],
             "ollama_model": row["ollama_model"],
             "params": params,

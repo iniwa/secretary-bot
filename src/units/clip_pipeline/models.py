@@ -49,10 +49,6 @@ STEP_WEIGHTS: dict[str, int] = {
 PLATFORM_DISCORD = "discord"
 PLATFORM_WEBGUI = "webgui"
 
-# === 実行モード ===
-MODE_TEST = "test"      # 先頭 3 分だけ処理（動作確認用）
-MODE_NORMAL = "normal"  # 全尺処理
-
 
 @dataclass
 class JobStatus:
@@ -66,7 +62,6 @@ class JobStatus:
     assigned_agent: str | None
     video_path: str
     output_dir: str
-    mode: str
     whisper_model: str
     ollama_model: str
     params: dict[str, Any]

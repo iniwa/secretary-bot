@@ -9,6 +9,22 @@ let pollTimer = null;
 let inputsCache = { base: '', files: [] };
 let selectedFullPath = '';  // video_path に使う絶対パス
 let manualMode = false;
+let ollamaModels = [];      // /api/ollama-models から取得
+
+const STORAGE_KEY = 'clip-pipeline:form:v1';
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveSettings(patch) {
+  const cur = loadSettings();
+  const next = { ...cur, ...patch };
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+}
 
 function $(id) { return document.getElementById(id); }
 
@@ -79,7 +95,7 @@ function currentAgentCap() {
   const sel = $('cp-agent');
   if (!sel || !Array.isArray(capability)) return null;
   const agentId = sel.value;
-  const hit = capability.find(a => a.ok && (a.capability?.agent_id || a.agent_id) === agentId);
+  const hit = capability.find(a => a.ok && a.agent_id === agentId);
   return hit ? (hit.capability || {}) : null;
 }
 
@@ -193,19 +209,12 @@ export function render() {
 
       <div class="cp-form-grid">
         <div class="cp-form-row">
-          <label for="cp-mode">mode</label>
-          <select id="cp-mode">
-            <option value="normal">normal</option>
-            <option value="test">test (先頭3分)</option>
-          </select>
+          <label for="cp-whisper">whisper_model (Agent ローカル/NAS にあるもの)</label>
+          <select id="cp-whisper"><option value="">(Agent 選択待ち)</option></select>
         </div>
         <div class="cp-form-row">
-          <label for="cp-whisper">whisper_model</label>
-          <input id="cp-whisper" type="text" placeholder="large-v3">
-        </div>
-        <div class="cp-form-row">
-          <label for="cp-ollama">ollama_model</label>
-          <input id="cp-ollama" type="text" placeholder="qwen3:14b">
+          <label for="cp-ollama">ollama_model (Mimi と共有)</label>
+          <select id="cp-ollama"><option value="">(読込中)</option></select>
         </div>
         <div class="cp-form-row" id="cp-output-preview-row">
           <label>output_dir (空なら自動)</label>
@@ -280,16 +289,35 @@ export function render() {
 export async function mount() {
   $('cp-form').addEventListener('submit', onSubmit);
   $('cp-cap-refresh').addEventListener('click', async () => {
-    await loadCapability();
+    await Promise.all([loadCapability(), loadOllamaModels()]);
     await loadInputsForSelected();
   });
   $('cp-jobs-refresh').addEventListener('click', loadJobs);
   $('cp-inputs-refresh').addEventListener('click', loadInputsForSelected);
   $('cp-manual-toggle').addEventListener('change', onToggleManual);
-  $('cp-agent').addEventListener('change', loadInputsForSelected);
+  $('cp-agent').addEventListener('change', () => {
+    saveSettings({ agent_id: $('cp-agent').value });
+    renderWhisperSelect();
+    loadInputsForSelected();
+  });
   $('cp-video-select').addEventListener('change', onVideoSelect);
   $('cp-video-path-manual').addEventListener('input', syncManualVideo);
   $('cp-output-dir').addEventListener('input', () => { /* manual output is read on submit */ });
+
+  // form の各入力を localStorage に同期
+  const persistFields = [
+    'cp-whisper', 'cp-ollama',
+    'cp-top-n', 'cp-min-clip', 'cp-max-clip', 'cp-mic-track',
+    'cp-use-demucs', 'cp-do-export-clips',
+  ];
+  persistFields.forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    const ev = (el.type === 'checkbox') ? 'change' : 'input';
+    el.addEventListener(ev, () => {
+      saveSettings({ [id]: el.type === 'checkbox' ? el.checked : el.value });
+    });
+  });
 
   // Copy chip handlers (delegated)
   document.querySelectorAll('[data-copy-target]').forEach(btn => {
@@ -302,11 +330,76 @@ export async function mount() {
     });
   });
 
-  await Promise.all([loadCapability(), loadJobs()]);
+  restoreNumericFields();
+  await Promise.all([loadCapability(), loadOllamaModels(), loadJobs()]);
   await loadInputsForSelected();
   connectSSE();
   // Also periodic refresh in case SSE misses
   pollTimer = setInterval(loadJobs, 15000);
+}
+
+function restoreNumericFields() {
+  const s = loadSettings();
+  const numFields = {
+    'cp-top-n': 0,
+    'cp-min-clip': 30,
+    'cp-max-clip': 180,
+    'cp-mic-track': 1,
+  };
+  for (const [id, def] of Object.entries(numFields)) {
+    const el = $(id);
+    if (!el) continue;
+    if (s[id] !== undefined && s[id] !== '') el.value = s[id];
+    else if (!el.value) el.value = def;
+  }
+  const boolFields = ['cp-use-demucs', 'cp-do-export-clips'];
+  for (const id of boolFields) {
+    const el = $(id);
+    if (!el) continue;
+    if (typeof s[id] === 'boolean') el.checked = s[id];
+  }
+}
+
+async function loadOllamaModels() {
+  const sel = $('cp-ollama');
+  if (!sel) return;
+  try {
+    const res = await api('/api/ollama-models');
+    ollamaModels = res.models || [];
+  } catch {
+    ollamaModels = [];
+  }
+  const saved = loadSettings()['cp-ollama'] || '';
+  const opts = ['<option value="">-- 選択 --</option>'];
+  for (const m of ollamaModels) {
+    opts.push(`<option value="${esc(m)}">${esc(m)}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  if (saved && ollamaModels.includes(saved)) sel.value = saved;
+}
+
+function renderWhisperSelect() {
+  const sel = $('cp-whisper');
+  if (!sel) return;
+  const cap = currentAgentCap() || {};
+  const local = cap.whisper_models_local || [];
+  const nas = cap.whisper_models_nas || [];
+  // 重複除去（local 優先でラベルを区別）
+  const seen = new Set();
+  const opts = ['<option value="">-- 選択 --</option>'];
+  for (const m of local) {
+    if (seen.has(m)) continue;
+    seen.add(m);
+    opts.push(`<option value="${esc(m)}">${esc(m)} (local)</option>`);
+  }
+  for (const m of nas) {
+    if (seen.has(m)) continue;
+    seen.add(m);
+    opts.push(`<option value="${esc(m)}">${esc(m)} (NAS — 同期必要)</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  const saved = loadSettings()['cp-whisper'] || '';
+  if (saved && seen.has(saved)) sel.value = saved;
 }
 
 export function unmount() {
@@ -411,14 +504,18 @@ function renderAgentSelect() {
     sel.innerHTML = '<option value="">(利用可能な Agent なし)</option>';
     return;
   }
+  // value は config 側 id（バックエンドのキー）、表示は capability 側 id があればそれを使う
   sel.innerHTML = okAgents.map(a => {
-    const id = a.capability?.agent_id || a.agent_id || '?';
-    return `<option value="${esc(id)}">${esc(id)}</option>`;
+    const cfgId = a.agent_id || '?';
+    const capId = a.capability?.agent_id || '';
+    const label = capId && capId !== cfgId ? `${cfgId} (${capId})` : cfgId;
+    return `<option value="${esc(cfgId)}">${esc(label)}</option>`;
   }).join('');
-  // Preserve prior selection if still present
-  if (oldVal && okAgents.some(a => (a.capability?.agent_id || a.agent_id) === oldVal)) {
-    sel.value = oldVal;
-  }
+  // 復元優先度: 前回選択 > localStorage > 先頭
+  const saved = loadSettings().agent_id || '';
+  const pick = [oldVal, saved].find(v => v && okAgents.some(a => a.agent_id === v));
+  if (pick) sel.value = pick;
+  renderWhisperSelect();
 }
 
 async function loadInputsForSelected() {
@@ -487,7 +584,6 @@ async function onSubmit(e) {
   }
   const body = {
     video_path: videoPath,
-    mode: $('cp-mode').value,
     whisper_model: $('cp-whisper').value.trim(),
     ollama_model: $('cp-ollama').value.trim(),
     output_dir: outputDir,
@@ -500,6 +596,18 @@ async function onSubmit(e) {
       do_export_clips: $('cp-do-export-clips').checked,
     },
   };
+  // 送信時にも設定を保存（select 値も確実に永続化）
+  saveSettings({
+    agent_id: $('cp-agent').value,
+    'cp-whisper': body.whisper_model,
+    'cp-ollama': body.ollama_model,
+    'cp-top-n': body.params.top_n,
+    'cp-min-clip': body.params.min_clip_sec,
+    'cp-max-clip': body.params.max_clip_sec,
+    'cp-mic-track': body.params.mic_track,
+    'cp-use-demucs': body.params.use_demucs,
+    'cp-do-export-clips': body.params.do_export_clips,
+  });
   try {
     const res = await api('/api/clip-pipeline/jobs', { method: 'POST', body });
     toast(`ジョブ登録: ${res.job_id.slice(0, 8)}...`, 'success');

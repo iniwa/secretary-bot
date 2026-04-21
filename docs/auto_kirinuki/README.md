@@ -70,7 +70,6 @@ units:
   clip_pipeline:
     enabled: true
     discord_output_channel_id: 0
-    default_mode: "normal"
     default_whisper_model: "large-v3"
     default_ollama_model: "qwen3:14b"
     defaults:

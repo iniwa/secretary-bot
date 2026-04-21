@@ -35,7 +35,6 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         video_path = (body.get("video_path") or "").strip()
         if not video_path:
             raise HTTPException(400, "video_path is required")
-        mode = (body.get("mode") or "normal").strip().lower()
         whisper_model = (body.get("whisper_model") or "").strip()
         ollama_model = (body.get("ollama_model") or "").strip()
         params = body.get("params") or {}
@@ -47,7 +46,6 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 user_id=ctx.webgui_user_id or "webgui",
                 platform="web",
                 video_path=video_path,
-                mode=mode,
                 whisper_model=whisper_model,
                 ollama_model=ollama_model,
                 params=params,

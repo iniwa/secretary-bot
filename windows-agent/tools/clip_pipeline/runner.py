@@ -53,7 +53,6 @@ async def run_clip_job(
     ollama_model: str,
     params: dict,
     whisper_download_root: str | None,
-    mode: str = "normal",
 ) -> None:
     """Pipeline 実行本体。エラー時は job.last_error に格納し、終端 `done` イベントも発行。"""
     loop = asyncio.get_running_loop()

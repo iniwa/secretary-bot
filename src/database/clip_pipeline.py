@@ -19,7 +19,7 @@ class ClipPipelineMixin:
     async def clip_pipeline_job_insert(
         self, *, user_id: str, platform: str,
         video_path: str, output_dir: str,
-        mode: str, whisper_model: str, ollama_model: str,
+        whisper_model: str, ollama_model: str,
         params_json: str | None = None,
         max_retries: int = 2,
     ) -> str:
@@ -28,11 +28,11 @@ class ClipPipelineMixin:
         await self.execute(
             "INSERT INTO clip_pipeline_jobs "
             "(id, user_id, platform, status, video_path, output_dir, "
-            " mode, whisper_model, ollama_model, params_json, "
+            " whisper_model, ollama_model, params_json, "
             " max_retries, created_at) "
-            "VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
             (job_id, user_id, platform, video_path, output_dir,
-             mode, whisper_model, ollama_model, params_json,
+             whisper_model, ollama_model, params_json,
              max_retries, jst_now()),
         )
         await self._clip_pipeline_job_event(

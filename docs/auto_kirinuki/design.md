@@ -117,7 +117,6 @@ CREATE TABLE clip_pipeline_jobs (
   assigned_agent TEXT,
   video_path TEXT NOT NULL,
   output_dir TEXT NOT NULL,
-  mode TEXT NOT NULL,                     -- 'test' | 'normal'
   whisper_model TEXT NOT NULL,
   ollama_model TEXT NOT NULL,
   params_json TEXT,                       -- top_n/min_clip_sec/max_clip_sec/do_export_clips/mic_track/use_demucs/sleep_sec
@@ -217,7 +216,6 @@ units:
   clip_pipeline:
     enabled: true
     discord_output_channel_id: 0
-    default_mode: "normal"             # test | normal
     default_whisper_model: "large-v3"
     default_ollama_model: "qwen3:14b"
     defaults:

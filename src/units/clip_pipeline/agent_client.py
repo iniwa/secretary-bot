@@ -168,7 +168,7 @@ class AgentClient:
 
     async def job_start(
         self, *, job_id: str, video_path: str, output_dir: str,
-        mode: str, whisper_model: str, ollama_model: str,
+        whisper_model: str, ollama_model: str,
         params: dict[str, Any] | None = None,
         timeout_sec: int | None = None,
     ) -> dict:
@@ -179,7 +179,6 @@ class AgentClient:
             "job_id": job_id,
             "video_path": video_path,
             "output_dir": output_dir,
-            "mode": mode,
             "whisper_model": whisper_model,
             "ollama_model": ollama_model,
             "params": params or {},
