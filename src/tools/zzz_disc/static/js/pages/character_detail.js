@@ -166,7 +166,6 @@ function renderBody() {
     <div id="rec-editors-area"></div>
     <div id="rec-main-stats-area"></div>
     <div id="rec-notes-area"></div>
-    <div id="rec-teams-area"></div>
     <div id="rec-team-notes-area"></div>
     <div id="skills-area"></div>
     <div id="builds-area"></div>
@@ -174,7 +173,6 @@ function renderBody() {
   renderRecEditorsSection();
   renderRecMainStatsSection();
   renderRecNotesSection();
-  renderRecTeamsSection();
   renderRecTeamNotesSection();
   renderSkillsSection();
   renderBuildsSection();
@@ -238,12 +236,12 @@ function renderRecTeamNotesSection() {
   el.innerHTML = `
     <div class="skills-block">
       <div class="skills-head">
-        <h3 class="mb-1">🧩 オススメ編成（メモ）</h3>
+        <h3 class="mb-1">🧩 おすすめ編成（メモ）</h3>
         <button class="btn btn-sm" id="rec-team-notes-edit-btn">編集</button>
       </div>
       ${notes
         ? `<div class="skill-summary">${escapeHtml(notes)}</div>`
-        : '<div class="text-muted text-sm">オススメ編成やシナジーをフリーテキストで残せます。（未設定）</div>'}
+        : '<div class="text-muted text-sm">おすすめ編成やシナジーをフリーテキストで残せます。（未設定）</div>'}
     </div>
   `;
   document.getElementById('rec-team-notes-edit-btn').addEventListener('click', openRecTeamNotesEditor);
@@ -254,20 +252,56 @@ function openRecTeamNotesEditor() {
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <div class="text-muted text-sm mb-1">
-      オススメ編成・シナジー・カウンター例などを自由に記入。<br>
-      「オススメステータス（メモ）」と同じくフリーテキストの表示専用。
+      おすすめ編成・シナジー・カウンター例などを自由に記入。<br>
+      「コーデックスから取り込み」を押すと <code>docs/zzz_character_codex.md</code> の「編成例」セクションをそのまま貼り付けます。
     </div>
-    <textarea id="rec-team-notes-text" rows="6" style="width:100%;"
+    <div class="flex-between mb-1">
+      <button class="btn btn-sm" id="rec-team-notes-import-btn" type="button">📖 コーデックスから取り込み</button>
+      <span class="text-muted text-sm rec-team-notes-import-status"></span>
+    </div>
+    <textarea id="rec-team-notes-text" rows="8" style="width:100%;"
       placeholder="例: 妄想エンジェル編成（千夏 / アリア / 南宮羽）&#10;代替: 強攻編成（千夏 / 葉瞬光 / ダイアリン）など">${escapeHtml(ch?.recommended_team_notes || '')}</textarea>
   `;
-  const { footerEl, close } = openModal({ title: 'オススメ編成（メモ）編集', body: wrap });
+  const { footerEl, close } = openModal({ title: 'おすすめ編成（メモ）編集', body: wrap });
   footerEl.innerHTML = `
     <button class="btn" data-act="cancel">キャンセル</button>
     <button class="btn btn-primary" data-act="ok">保存</button>
   `;
+
+  const textarea = wrap.querySelector('#rec-team-notes-text');
+  const importBtn = wrap.querySelector('#rec-team-notes-import-btn');
+  const importStatus = wrap.querySelector('.rec-team-notes-import-status');
+
+  importBtn.addEventListener('click', async () => {
+    const existing = (textarea.value || '').trim();
+    if (existing) {
+      const ok = await confirmDialog(
+        '既存のメモをコーデックスの「編成例」で上書きします。よろしいですか？'
+      );
+      if (!ok) return;
+    }
+    importBtn.disabled = true;
+    if (importStatus) importStatus.textContent = '取得中…';
+    try {
+      const res = await api(`/characters/${ch.id}/codex/teams`);
+      if (!res?.found || !res?.text) {
+        if (importStatus) importStatus.textContent = '';
+        toast('コーデックスに「編成例」セクションが見つかりません', 'warning');
+        return;
+      }
+      textarea.value = res.text;
+      if (importStatus) importStatus.textContent = '✓ 取り込み完了（保存で確定）';
+    } catch (err) {
+      if (importStatus) importStatus.textContent = '';
+      toast(`取り込み失敗: ${err.message || err}`, 'error');
+    } finally {
+      importBtn.disabled = false;
+    }
+  });
+
   footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
   footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
-    const notes = wrap.querySelector('#rec-team-notes-text').value;
+    const notes = textarea.value;
     try {
       const res = await api(`/characters/${ch.id}/recommended-team-notes`, {
         method: 'PUT', body: { notes: notes || null },
@@ -466,111 +500,6 @@ function wireRecMainStats() {
       clearTimeout(_mainStatsSaveTimer.t);
       _mainStatsSaveTimer.t = setTimeout(doSave, 250);
     });
-  });
-}
-
-function renderRecTeamsSection() {
-  const el = document.getElementById('rec-teams-area');
-  if (!el) return;
-  const teams = state.character?.recommended_teams || [];
-  const listHtml = teams.length
-    ? teams.map((t, i) => `
-        <div class="rec-team-item">
-          <div class="rec-team-members"><strong>#${i + 1}</strong> ${
-            (t.members || []).map(m => `<span class="rec-team-chip">${escapeHtml(m)}</span>`).join('')
-          }</div>
-          ${t.note ? `<div class="text-muted text-sm">${escapeHtml(t.note)}</div>` : ''}
-        </div>
-      `).join('')
-    : '<div class="text-muted text-sm">おすすめ編成は未登録です。</div>';
-  el.innerHTML = `
-    <div class="skills-block">
-      <div class="skills-head">
-        <h3 class="mb-1">🧩 おすすめ編成（複数可） <span class="text-muted text-sm">編成フィルタに使用</span></h3>
-        <button class="btn btn-sm" id="rec-teams-edit-btn">編集</button>
-      </div>
-      <div class="rec-teams-list">${listHtml}</div>
-    </div>
-  `;
-  document.getElementById('rec-teams-edit-btn').addEventListener('click', openRecTeamsEditor);
-}
-
-function openRecTeamsEditor() {
-  const ch = state.character;
-  const teams = (ch?.recommended_teams || []).map(t => ({
-    members: Array.isArray(t.members) ? [...t.members] : [],
-    note: t.note || '',
-  }));
-  const wrap = document.createElement('div');
-  wrap.innerHTML = `
-    <div class="text-muted text-sm mb-1">
-      メンバーはキャラ名をカンマ区切りで入力（例: <code>アリア, 羽, 千夏</code>）。<br>
-      編成モードのフィルタやフィルタ UI で使用されます。
-    </div>
-    <div class="flex-between mb-1">
-      <strong>編成一覧</strong>
-      <button class="btn btn-sm" id="rt-add">＋ 編成追加</button>
-    </div>
-    <div id="rt-rows" style="display:flex;flex-direction:column;gap:6px;"></div>
-  `;
-  const { footerEl, close } = openModal({ title: 'おすすめ編成（複数可）編集', body: wrap });
-  footerEl.innerHTML = `
-    <button class="btn" data-act="cancel">キャンセル</button>
-    <button class="btn btn-primary" data-act="ok">保存</button>
-  `;
-  const rowsEl = wrap.querySelector('#rt-rows');
-
-  function rowHtml(idx, t) {
-    return `
-      <div class="rt-row" data-idx="${idx}" style="border:1px solid var(--border,#333);border-radius:4px;padding:6px;">
-        <div style="display:flex;gap:4px;margin-bottom:4px;">
-          <input class="rt-members" type="text" placeholder="キャラ名をカンマ区切り"
-            value="${escapeHtml((t.members || []).join(', '))}" style="flex:1;" />
-          <button class="btn btn-sm btn-danger rt-del">×</button>
-        </div>
-        <input class="rt-note" type="text" placeholder="メモ（軸キャラ・用途など・任意）"
-          value="${escapeHtml(t.note || '')}" style="width:100%;" />
-      </div>
-    `;
-  }
-  function draw() {
-    rowsEl.innerHTML = teams.map((t, i) => rowHtml(i, t)).join('');
-    rowsEl.querySelectorAll('.rt-row').forEach(row => {
-      const idx = Number(row.dataset.idx);
-      row.querySelector('.rt-del').addEventListener('click', () => {
-        teams.splice(idx, 1);
-        draw();
-      });
-      row.querySelector('.rt-members').addEventListener('input', (e) => {
-        teams[idx].members = e.target.value.split(/[,、]/).map(s => s.trim()).filter(Boolean);
-      });
-      row.querySelector('.rt-note').addEventListener('input', (e) => {
-        teams[idx].note = e.target.value;
-      });
-    });
-  }
-  wrap.querySelector('#rt-add').addEventListener('click', () => {
-    teams.push({ members: [], note: '' });
-    draw();
-  });
-  draw();
-
-  footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
-  footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
-    const clean = teams
-      .map(t => ({ members: (t.members || []).filter(Boolean), note: t.note || '' }))
-      .filter(t => t.members.length > 0);
-    try {
-      const res = await api(`/characters/${ch.id}/recommended-teams`, {
-        method: 'PUT', body: { teams: clean },
-      });
-      state.character = res.character || state.character;
-      close();
-      toast('保存しました', 'success');
-      renderRecTeamsSection();
-    } catch (err) {
-      toast(err.message || String(err), 'error');
-    }
   });
 }
 
