@@ -1378,3 +1378,120 @@ h3 { font-size: 1rem; font-weight: 600; }
     max-height: 40vh;
   }
 }
+
+/* === キャラ一覧 フィルタ UI === */
+.filter-total-badge {
+  display: inline-block;
+  min-width: 1.2em;
+  margin-left: 4px;
+  padding: 0 6px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.filter-total-badge:empty { display: none; }
+.btn#filter-toggle.on {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.btn-ghost:hover {
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.active-filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.active-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 10px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text-primary);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.active-tag:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.active-tag-x {
+  opacity: 0.65;
+  font-size: 0.9em;
+}
+.active-tag:hover .active-tag-x { opacity: 1; }
+
+.filter-panel {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.filter-section-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.filter-slot-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.filter-slot-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: start;
+  gap: 8px;
+}
+.filter-slot-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  padding-top: 3px;
+}
+@media (max-width: 600px) {
+  .filter-slot-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
+/* 属性チップの色分け */
+.element-chip.element-fire.on  { border-color: #e85c3a; color: #f08060; background: color-mix(in srgb, #e85c3a 22%, transparent); }
+.element-chip.element-ice.on   { border-color: #5ec9e8; color: #7fd7f0; background: color-mix(in srgb, #5ec9e8 22%, transparent); }
+.element-chip.element-elec.on  { border-color: #e8c742; color: #f0d660; background: color-mix(in srgb, #e8c742 22%, transparent); }
+.element-chip.element-phys.on  { border-color: #b0b0b8; color: #c8c8d0; background: color-mix(in srgb, #b0b0b8 22%, transparent); }
+.element-chip.element-ether.on { border-color: #c062e8; color: #d080f0; background: color-mix(in srgb, #c062e8 22%, transparent); }
+.element-chip.element-frost.on { border-color: #88d8f0; color: #aee4f6; background: color-mix(in srgb, #88d8f0 22%, transparent); }
+
+.active-tag.element-fire  { border-color: color-mix(in srgb, #e85c3a 50%, transparent); background: color-mix(in srgb, #e85c3a 18%, transparent); }
+.active-tag.element-ice   { border-color: color-mix(in srgb, #5ec9e8 50%, transparent); background: color-mix(in srgb, #5ec9e8 18%, transparent); }
+.active-tag.element-elec  { border-color: color-mix(in srgb, #e8c742 50%, transparent); background: color-mix(in srgb, #e8c742 18%, transparent); }
+.active-tag.element-phys  { border-color: color-mix(in srgb, #b0b0b8 50%, transparent); background: color-mix(in srgb, #b0b0b8 18%, transparent); }
+.active-tag.element-ether { border-color: color-mix(in srgb, #c062e8 50%, transparent); background: color-mix(in srgb, #c062e8 18%, transparent); }
+.active-tag.element-frost { border-color: color-mix(in srgb, #88d8f0 50%, transparent); background: color-mix(in srgb, #88d8f0 18%, transparent); }

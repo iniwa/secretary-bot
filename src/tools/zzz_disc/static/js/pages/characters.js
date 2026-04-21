@@ -1,6 +1,6 @@
 /** キャラ一覧グリッド（検索 + 属性 / 陣営 / 推奨メインステ フィルタ + ソート） */
 import { api } from '../api.js';
-import { escapeHtml, toast } from '../app.js';
+import { escapeHtml } from '../app.js';
 import { elementLabel } from '../labels.js';
 
 const SORT_OPTIONS = [
@@ -33,6 +33,7 @@ const BUILD_STATUS_OPTIONS = [
   { value: 'has_preset', label: 'プリセット有' },
   { value: 'no_preset', label: 'プリセット無' },
 ];
+const BUILD_STATUS_LABEL = Object.fromEntries(BUILD_STATUS_OPTIONS.map(o => [o.value, o.label]));
 
 let state = {
   chars: [],
@@ -42,12 +43,19 @@ let state = {
   factionFilter: new Set(),
   buildStatus: 'all',
   mainStatFilter: { '4': new Set(), '5': new Set(), '6': new Set() },
+  panelOpen: false,
 };
 
 export function render() {
-  const slotChipsHtml = MAIN_STAT_FILTER_SLOTS.map(({ key, label, candidates }) => `
-    <details class="main-stat-filter-slot" data-slot="${key}">
-      <summary><strong>${escapeHtml(label)}</strong></summary>
+  const elementChipsHtml = ELEMENT_OPTIONS.map(n => `
+    <label class="rec-sub-chip element-chip element-${elementKey(n)}" data-filter="element">
+      <input type="checkbox" data-filter="element" data-val="${escapeHtml(n)}" />
+      <span>${escapeHtml(n)}</span>
+    </label>
+  `).join('');
+  const slotRowsHtml = MAIN_STAT_FILTER_SLOTS.map(({ key, label, candidates }) => `
+    <div class="filter-slot-row" data-slot="${key}">
+      <div class="filter-slot-label">${escapeHtml(label)}</div>
       <div class="rec-sub-chips">
         ${candidates.map(n => `
           <label class="rec-sub-chip">
@@ -56,13 +64,7 @@ export function render() {
           </label>
         `).join('')}
       </div>
-    </details>
-  `).join('');
-  const elementChipsHtml = ELEMENT_OPTIONS.map(n => `
-    <label class="rec-sub-chip">
-      <input type="checkbox" data-filter="element" data-val="${escapeHtml(n)}" />
-      <span>${escapeHtml(n)}</span>
-    </label>
+    </div>
   `).join('');
   return `
     <div class="page-header">
@@ -83,36 +85,50 @@ export function render() {
       <select id="build-status">
         ${BUILD_STATUS_OPTIONS.map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('')}
       </select>
-      <button class="btn btn-sm" id="filter-clear-all">全フィルタ解除</button>
+      <button class="btn btn-sm" id="filter-toggle" type="button" aria-expanded="false">
+        🎛 フィルタ<span class="filter-total-badge" id="filter-total-badge"></span>
+      </button>
+      <button class="btn btn-sm btn-ghost" id="filter-clear-all" hidden>全解除</button>
       <span id="char-count" class="text-muted text-sm"></span>
     </div>
-    <details class="main-stat-filter-wrap" id="element-filter">
-      <summary class="text-sm text-muted">⚡ 属性で絞り込み <span id="element-filter-count"></span></summary>
-      <div class="main-stat-filter-body">
-        <div class="rec-sub-chips">${elementChipsHtml}</div>
+    <div class="active-filter-tags" id="active-tags" hidden></div>
+    <div class="filter-panel" id="filter-panel" hidden>
+      <div class="filter-section">
+        <div class="filter-section-label">⚡ 属性</div>
+        <div class="rec-sub-chips" id="element-chips">${elementChipsHtml}</div>
       </div>
-    </details>
-    <details class="main-stat-filter-wrap" id="faction-filter">
-      <summary class="text-sm text-muted">🏴 陣営で絞り込み <span id="faction-filter-count"></span></summary>
-      <div class="main-stat-filter-body">
+      <div class="filter-section">
+        <div class="filter-section-label">🏴 陣営</div>
         <div class="rec-sub-chips" id="faction-chips">
           <div class="text-muted text-sm">読み込み中…</div>
         </div>
       </div>
-    </details>
-    <details class="main-stat-filter-wrap" id="main-stat-filter">
-      <summary class="text-sm text-muted">🎯 推奨メインステで絞り込み <span id="main-stat-filter-count"></span></summary>
-      <div class="main-stat-filter-body">
-        ${slotChipsHtml}
-        <button class="btn btn-sm" id="main-stat-filter-clear">クリア</button>
+      <div class="filter-section">
+        <div class="filter-section-label">🎯 推奨メインステ</div>
+        <div class="filter-slot-rows">${slotRowsHtml}</div>
       </div>
-    </details>
+    </div>
     <div id="char-list"><div class="placeholder"><div class="spinner"></div></div></div>
   `;
 }
 
+function elementKey(label) {
+  // CSS クラス化のため英数キーにマップ
+  return ({ '物理': 'phys', '炎': 'fire', '氷': 'ice', '電気': 'elec',
+           'エーテル': 'ether', '霜': 'frost' })[label] || 'other';
+}
+
 export async function mount() {
   document.getElementById('refresh-btn').addEventListener('click', load);
+
+  const panel = document.getElementById('filter-panel');
+  const toggleBtn = document.getElementById('filter-toggle');
+  toggleBtn.addEventListener('click', () => {
+    state.panelOpen = !state.panelOpen;
+    panel.hidden = !state.panelOpen;
+    toggleBtn.setAttribute('aria-expanded', String(state.panelOpen));
+    toggleBtn.classList.toggle('on', state.panelOpen);
+  });
 
   const sel = document.getElementById('sort-by');
   sel.value = state.sort;
@@ -125,6 +141,7 @@ export async function mount() {
   searchEl.value = state.searchText;
   searchEl.addEventListener('input', (ev) => {
     state.searchText = (ev.target.value || '').trim();
+    renderActiveTags();
     renderGrid();
   });
 
@@ -132,67 +149,158 @@ export async function mount() {
   bsSel.value = state.buildStatus;
   bsSel.addEventListener('change', (ev) => {
     state.buildStatus = ev.target.value;
+    renderActiveTags();
     renderGrid();
   });
 
-  document.querySelectorAll('#element-filter input[type="checkbox"]').forEach(cb => {
+  document.querySelectorAll('#element-chips input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', () => {
       const val = cb.dataset.val;
       if (cb.checked) state.elementFilter.add(val);
       else state.elementFilter.delete(val);
       cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
-      updateBadge('element-filter-count', state.elementFilter.size);
+      renderActiveTags();
       renderGrid();
     });
   });
 
-  document.querySelectorAll('#main-stat-filter input[type="checkbox"]').forEach(cb => {
+  document.querySelectorAll('.filter-slot-row input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', () => {
       const slot = cb.dataset.slot;
       const val = cb.dataset.val;
       const set = state.mainStatFilter[slot];
       if (cb.checked) set.add(val); else set.delete(val);
       cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
-      const total = Object.values(state.mainStatFilter).reduce((a, s) => a + s.size, 0);
-      updateBadge('main-stat-filter-count', total);
+      renderActiveTags();
       renderGrid();
     });
   });
-  document.getElementById('main-stat-filter-clear').addEventListener('click', () => {
-    Object.values(state.mainStatFilter).forEach(s => s.clear());
-    document.querySelectorAll('#main-stat-filter input[type="checkbox"]').forEach(cb => {
-      cb.checked = false;
-      cb.closest('.rec-sub-chip').classList.remove('on');
-    });
-    updateBadge('main-stat-filter-count', 0);
+
+  document.getElementById('filter-clear-all').addEventListener('click', () => {
+    clearAllFilters();
+    renderActiveTags();
     renderGrid();
   });
 
-  document.getElementById('filter-clear-all').addEventListener('click', () => {
-    state.searchText = '';
-    state.elementFilter.clear();
-    state.factionFilter.clear();
-    state.buildStatus = 'all';
-    Object.values(state.mainStatFilter).forEach(s => s.clear());
-    searchEl.value = '';
-    bsSel.value = 'all';
-    document.querySelectorAll('#element-filter input[type="checkbox"], #faction-filter input[type="checkbox"], #main-stat-filter input[type="checkbox"]').forEach(cb => {
-      cb.checked = false;
-      cb.closest('.rec-sub-chip')?.classList.remove('on');
-    });
-    updateBadge('element-filter-count', 0);
-    updateBadge('faction-filter-count', 0);
-    updateBadge('main-stat-filter-count', 0);
+  // アクティブタグのクリックで個別解除（イベント委譲）
+  document.getElementById('active-tags').addEventListener('click', (ev) => {
+    const tag = ev.target.closest('.active-tag');
+    if (!tag) return;
+    const { kind, val, slot } = tag.dataset;
+    removeFilter(kind, val, slot);
+    renderActiveTags();
     renderGrid();
   });
 
   await load();
 }
 
-function updateBadge(id, total) {
-  const el = document.getElementById(id);
+function clearAllFilters() {
+  state.searchText = '';
+  state.elementFilter.clear();
+  state.factionFilter.clear();
+  state.buildStatus = 'all';
+  Object.values(state.mainStatFilter).forEach(s => s.clear());
+  const searchEl = document.getElementById('search-text');
+  const bsSel = document.getElementById('build-status');
+  if (searchEl) searchEl.value = '';
+  if (bsSel) bsSel.value = 'all';
+  document.querySelectorAll(
+    '#element-chips input[type="checkbox"], #faction-chips input[type="checkbox"], .filter-slot-row input[type="checkbox"]'
+  ).forEach(cb => {
+    cb.checked = false;
+    cb.closest('.rec-sub-chip')?.classList.remove('on');
+  });
+}
+
+function removeFilter(kind, val, slot) {
+  if (kind === 'search') {
+    state.searchText = '';
+    const el = document.getElementById('search-text'); if (el) el.value = '';
+  } else if (kind === 'build') {
+    state.buildStatus = 'all';
+    const el = document.getElementById('build-status'); if (el) el.value = 'all';
+  } else if (kind === 'element') {
+    state.elementFilter.delete(val);
+    syncChip('#element-chips', val, false);
+  } else if (kind === 'faction') {
+    state.factionFilter.delete(val);
+    syncChip('#faction-chips', val, false);
+  } else if (kind === 'mainstat') {
+    state.mainStatFilter[slot]?.delete(val);
+    const cb = document.querySelector(
+      `.filter-slot-row[data-slot="${slot}"] input[data-val="${cssEscape(val)}"]`
+    );
+    if (cb) { cb.checked = false; cb.closest('.rec-sub-chip')?.classList.remove('on'); }
+  }
+}
+
+function syncChip(containerSel, val, checked) {
+  const cb = document.querySelector(
+    `${containerSel} input[data-val="${cssEscape(val)}"]`
+  );
+  if (!cb) return;
+  cb.checked = checked;
+  cb.closest('.rec-sub-chip')?.classList.toggle('on', checked);
+}
+
+function cssEscape(s) {
+  return String(s).replace(/"/g, '\\"');
+}
+
+function activeFilterCount() {
+  return (state.searchText ? 1 : 0)
+    + (state.buildStatus !== 'all' ? 1 : 0)
+    + state.elementFilter.size
+    + state.factionFilter.size
+    + Object.values(state.mainStatFilter).reduce((a, s) => a + s.size, 0);
+}
+
+function renderActiveTags() {
+  const el = document.getElementById('active-tags');
+  const clearBtn = document.getElementById('filter-clear-all');
+  const badge = document.getElementById('filter-total-badge');
   if (!el) return;
-  el.textContent = total ? `（${total} 件選択中）` : '';
+  const tags = [];
+  if (state.searchText) {
+    tags.push(tagHtml('search', null, null, `🔍 「${state.searchText}」`));
+  }
+  if (state.buildStatus !== 'all') {
+    tags.push(tagHtml('build', null, null, `装備: ${BUILD_STATUS_LABEL[state.buildStatus]}`));
+  }
+  for (const v of state.elementFilter) {
+    tags.push(tagHtml('element', v, null, `⚡ ${v}`, `element-${elementKey(v)}`));
+  }
+  for (const v of state.factionFilter) {
+    tags.push(tagHtml('faction', v, null, `🏴 ${v}`));
+  }
+  for (const [slot, set] of Object.entries(state.mainStatFilter)) {
+    for (const v of set) {
+      tags.push(tagHtml('mainstat', v, slot, `🎯 ${slot}番 ${v}`));
+    }
+  }
+  const total = activeFilterCount();
+  if (badge) badge.textContent = total ? String(total) : '';
+  if (clearBtn) clearBtn.hidden = total === 0;
+  if (!tags.length) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = tags.join('');
+}
+
+function tagHtml(kind, val, slot, label, extraClass = '') {
+  const attrs = [`data-kind="${kind}"`];
+  if (val !== null) attrs.push(`data-val="${escapeHtml(val)}"`);
+  if (slot !== null) attrs.push(`data-slot="${escapeHtml(slot)}"`);
+  return `
+    <button class="active-tag ${extraClass}" type="button" ${attrs.join(' ')} title="クリックで解除">
+      <span>${escapeHtml(label)}</span>
+      <span class="active-tag-x">✕</span>
+    </button>
+  `;
 }
 
 function renderFactionChips() {
@@ -212,7 +320,7 @@ function renderFactionChips() {
       if (cb.checked) state.factionFilter.add(val);
       else state.factionFilter.delete(val);
       cb.closest('.rec-sub-chip').classList.toggle('on', cb.checked);
-      updateBadge('faction-filter-count', state.factionFilter.size);
+      renderActiveTags();
       renderGrid();
     });
   });
@@ -274,6 +382,7 @@ async function load() {
     const list = Array.isArray(chars) ? chars : (chars?.characters || []);
     state.chars = list;
     renderFactionChips();
+    renderActiveTags();
     renderGrid();
   } catch (err) {
     el.innerHTML = `<div class="placeholder"><div class="big-icon">⚠️</div><div>${escapeHtml(err.message)}</div></div>`;
@@ -330,7 +439,7 @@ function renderGrid() {
     if (!state.chars.length) {
       el.innerHTML = '<div class="placeholder"><div class="big-icon">👥</div><div>キャラがまだ登録されていません</div><div class="text-muted text-sm mt-1">HoYoLAB 設定から同期してください</div></div>';
     } else {
-      el.innerHTML = '<div class="placeholder"><div class="big-icon">🔍</div><div>フィルタ条件に一致するキャラがいません</div><div class="text-muted text-sm mt-1">「全フィルタ解除」で初期状態に戻せます</div></div>';
+      el.innerHTML = '<div class="placeholder"><div class="big-icon">🔍</div><div>フィルタ条件に一致するキャラがいません</div><div class="text-muted text-sm mt-1">「全解除」で初期状態に戻せます</div></div>';
     }
     return;
   }
