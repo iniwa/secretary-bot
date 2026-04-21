@@ -71,11 +71,16 @@ class ClipPipelineMixin:
     # === Dispatcher 操作 ===
 
     async def clip_pipeline_job_claim_queued(self) -> dict | None:
-        """queued 先頭 1 件を dispatching に遷移させて返す。楽観ロック。"""
+        """queued 先頭 1 件を dispatching に遷移させて返す。楽観ロック。
+
+        時刻列は全て JST 文字列で保存されるため（jst_now / _future）、
+        SQL の比較も `datetime('now', '+9 hours')` で JST に揃える。
+        """
         row = await self.fetchone(
             "SELECT id FROM clip_pipeline_jobs "
             "WHERE status = 'queued' "
-            "  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now')) "
+            "  AND (next_attempt_at IS NULL "
+            "       OR next_attempt_at <= datetime('now', '+9 hours')) "
             "ORDER BY created_at ASC LIMIT 1"
         )
         if not row:
@@ -85,9 +90,10 @@ class ClipPipelineMixin:
             "UPDATE clip_pipeline_jobs "
             "SET status = 'dispatching', "
             "    dispatcher_lock_at = ?, "
-            "    timeout_at = datetime('now', '+30 seconds') "
+            "    timeout_at = datetime('now', '+9 hours', '+30 seconds') "
             "WHERE id = ? AND status = 'queued' "
-            "  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now'))",
+            "  AND (next_attempt_at IS NULL "
+            "       OR next_attempt_at <= datetime('now', '+9 hours'))",
             (jst_now(), job_id),
         )
         if rowcount != 1:
@@ -197,12 +203,14 @@ class ClipPipelineMixin:
         return int(row["n"]) if row else 0
 
     async def clip_pipeline_job_find_timed_out(self) -> list[dict]:
-        """timeout_at < now の非終端ジョブを返す。stuck_reaper が使う。"""
+        """timeout_at < now の非終端ジョブを返す。stuck_reaper が使う。
+        timeout_at は JST 文字列で書かれるので比較も JST に揃える。
+        """
         return await self.fetchall(
             "SELECT * FROM clip_pipeline_jobs "
             "WHERE status NOT IN ('done', 'failed', 'cancelled') "
             "  AND timeout_at IS NOT NULL "
-            "  AND timeout_at < datetime('now') "
+            "  AND timeout_at < datetime('now', '+9 hours') "
             "ORDER BY created_at ASC"
         )
 
