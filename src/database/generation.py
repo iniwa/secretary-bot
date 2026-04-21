@@ -116,11 +116,15 @@ class GenerationJobMixin:
         設計書の UPDATE 文に準拠:
           WHERE status='queued'
             AND (next_attempt_at IS NULL OR next_attempt_at <= now)
+
+        時刻列は全て JST 文字列で保存されるため（jst_now / _future）、
+        SQL の比較も `datetime('now', '+9 hours')` で JST に揃える。
         """
         row = await self.fetchone(
             "SELECT id FROM generation_jobs "
             "WHERE status = 'queued' "
-            "  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now')) "
+            "  AND (next_attempt_at IS NULL "
+            "       OR next_attempt_at <= datetime('now', '+9 hours')) "
             "ORDER BY priority DESC, created_at ASC LIMIT 1"
         )
         if not row:
@@ -130,9 +134,10 @@ class GenerationJobMixin:
             "UPDATE generation_jobs "
             "SET status = 'dispatching', "
             "    dispatcher_lock_at = ?, "
-            "    timeout_at = datetime('now', '+30 seconds') "
+            "    timeout_at = datetime('now', '+9 hours', '+30 seconds') "
             "WHERE id = ? AND status = 'queued' "
-            "  AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now'))",
+            "  AND (next_attempt_at IS NULL "
+            "       OR next_attempt_at <= datetime('now', '+9 hours'))",
             (jst_now(), job_id),
         )
         if rowcount != 1:
@@ -206,12 +211,14 @@ class GenerationJobMixin:
             )
 
     async def generation_job_find_timed_out(self) -> list[dict]:
-        """timeout_at < now の非終端ジョブを返す。"""
+        """timeout_at < now の非終端ジョブを返す。
+        timeout_at は JST 文字列で書かれるので比較も JST に揃える。
+        """
         return await self.fetchall(
             "SELECT * FROM generation_jobs "
             "WHERE status NOT IN ('done', 'failed', 'cancelled') "
             "  AND timeout_at IS NOT NULL "
-            "  AND timeout_at < datetime('now') "
+            "  AND timeout_at < datetime('now', '+9 hours') "
             "ORDER BY created_at ASC"
         )
 
