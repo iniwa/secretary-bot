@@ -24,6 +24,7 @@
   - 詳細は `docs/auto_kirinuki/implementation_plan.md` Phase G セクション参照
 
 ### daily_diary（活動日記）後続タスク
-- [ ] 旧 STT 要約（people_memory 上）の掃除スクリプト（任意）
-  - A案適用後、STT 要約は ChromaDB の `stt_summaries` コレクションのみに残る方針
-  - 切り替え前に people_memory へ保存された STT 要約は放置（自然減衰）でも実害なし。気になる場合のみ掃除
+- [x] 旧 STT 要約（people_memory 上）の掃除スクリプト
+  - `scripts/cleanup_stt_in_people_memory.py`（dry-run デフォルト、`--apply` で実削除）
+  - 2026-04-21 に Pi 上で実行し、`source=stt` の 16 件を削除（people_memory 91 → 75）
+  - A案適用後は `stt_summaries` ChromaDB コレクションのみに要約が残る
