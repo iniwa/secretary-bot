@@ -68,15 +68,7 @@ body { display: flex; }
   transition: transform var(--ease);
 }
 .nav-group.collapsed .nav-group-chevron { transform: rotate(-90deg); }
-.nav-group-items {
-  overflow: hidden;
-  max-height: 1000px;
-  transition: max-height 0.2s ease, opacity 0.15s ease;
-}
-.nav-group.collapsed .nav-group-items {
-  max-height: 0;
-  opacity: 0;
-}
+.nav-group.collapsed .nav-group-items { display: none; }
 
 .nav-item {
   display: block;
