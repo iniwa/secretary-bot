@@ -17,6 +17,42 @@ from dataclasses import dataclass, field
 
 from .pipeline.pipeline import run_pipeline
 
+# 前回実行の成果物を work_dir に事前配置してキャッシュヒットさせるファイル群。
+# 各パイプラインステップは work_dir 配下の固定名ファイルの存在でキャッシュ判定する。
+_PREWARM_FILES = (
+    "voice.wav",
+    "transcript.json",
+    "audio_features.json",
+    "emotions.json",
+    "highlights.json",
+    "timeline.edl",
+)
+
+
+def _prewarm_from_output(output_dir: str, work_dir: str, log=print) -> None:
+    """output_dir（NAS）に前回実行の成果物があれば work_dir にコピーして再利用する。
+
+    work_dir は job ごとに tempfile で切られる（commit 57699cc）ため、
+    同じ動画を再処理する際にも前回の成果物が参照できず全ステップを走らせていた。
+    job 開始時に NAS 側の成果物を work_dir に事前配置することで preprocess /
+    transcribe / analyze / emotion / highlight / edl の cache-hit を復活させる。
+    """
+    if not os.path.isdir(output_dir):
+        return
+    copied: list[str] = []
+    for name in _PREWARM_FILES:
+        src = os.path.join(output_dir, name)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(work_dir, name)
+        try:
+            shutil.copy2(src, dst)
+            copied.append(name)
+        except OSError as e:
+            log(f"prewarm copy failed for {name}: {e}")
+    if copied:
+        log(f"既存成果物を work_dir に配置: {', '.join(copied)}")
+
 
 @dataclass
 class ClipJob:
@@ -74,6 +110,9 @@ async def run_clip_job(
 
     def _log(msg: str):
         _schedule_emit(loop, job, "log", {"message": str(msg)})
+
+    # NAS に残っている前回成果物を work_dir に事前配置しキャッシュヒットを復活させる
+    _prewarm_from_output(output_dir, work_dir, log=_log)
 
     def _progress(frac: float, desc: str = ""):
         # 0.0 - 1.0 を 0-100 の整数 percent に変換

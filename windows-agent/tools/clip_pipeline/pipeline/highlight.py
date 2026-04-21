@@ -198,6 +198,18 @@ def detect_highlights(
     if top_n is None:
         top_n = HIGHLIGHT_TOP_N
 
+    # 前回実行の highlights.json があれば再利用（LLM 呼び出しは高コスト）
+    highlights_path = os.path.join(output_dir, "highlights.json")
+    if os.path.exists(highlights_path):
+        try:
+            with open(highlights_path, encoding="utf-8") as f:
+                cached = json.load(f)
+            if isinstance(cached, list):
+                log(f"既存のハイライト判定結果を使用します（{len(cached)}件）")
+                return cached
+        except (OSError, json.JSONDecodeError) as e:
+            log(f"既存 highlights.json の読込失敗、再生成します: {e}")
+
     if not transcript:
         log("文字起こし結果がありません。ハイライト検出をスキップします。")
         return []
