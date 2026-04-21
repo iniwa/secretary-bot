@@ -149,8 +149,8 @@
 
 ## ドキュメント側の未確定事項（実運用で詰める）
 
-- `api.md` §12（残り）
-  - Preview イベント送出頻度
-  - `/system/logs follow=true` バッファ上限
-  - NAS 並行読み出し本数
-  - `/image/generate` タイムアウト既定値
+- ~~`api.md` §12（残り）~~ → **確定 (2026-04-21)**: `api.md` §12.1〜12.4 に反映済み。
+  - Preview: Phase 1 無効、Phase 2+ は 500ms スロットル・最大 10 件/ジョブ・JPEG 256px
+  - `/system/logs follow=true`: source 別 deque と接続キュー 1000 件 + `log_dropped` イベント
+  - NAS 並行本数: Phase 1 直列、Phase 2 で Semaphore(2)（config で 1〜4 上書き可）
+  - タイムアウト既定値: Pi が必ず埋める + Agent 側 300 秒フォールバック

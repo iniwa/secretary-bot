@@ -7,11 +7,12 @@
   - 詳細は `docs/image_gen/todo.md` Phase 4 参照
 
 ### image_gen / API ドキュメント未確定事項
-- [ ] `docs/image_gen/api.md` §12 の以下項目を実装時に確定させる
-  - `preview` イベント送出頻度（ComfyUI の PreviewImage ノード設定に依存）
-  - `/system/logs` の `follow=true` 時のバッファサイズ上限
-  - `cache/sync` の NAS 並行読み出し本数（1GbE 上限を踏まえた自動スロットリング）
-  - `/image/generate` の `timeout_sec` 未指定時の扱い（Pi 側で必ず埋めるか、Agent が既定値を持つか）
+- [x] `docs/image_gen/api.md` §12 の以下項目を実装時に確定させる（2026-04-21 確定）
+  - preview: Phase 1 は送出無効、Phase 2+ で 500ms スロットリング・最大 10 件/ジョブ・JPEG 256px
+  - `/system/logs` follow=true: source 別 deque（agent/comfyui 500, kohya 600, setup 400）、接続キュー 1000 件、溢れは `log_dropped` イベント
+  - `cache/sync` 並行本数: Phase 1 は直列、Phase 2 で Semaphore(2)（config `image_gen.cache.sync_concurrency` 1〜4）
+  - `timeout_sec` 未指定: Pi 側で `workflows.default_timeout_sec` を必ず埋める + Agent 側 300 秒フォールバック（二段構え）
+  - Phase 2+ 実装時の反映先: §12.1/12.3 の Phase 2 挙動を router/workflow_runner/config に落とす
 
 ### auto-kirinuki（配信切り抜き / Phase 1）
 - [ ] D8: 実機で `nas_mount.py` が `secretary-bot` 共有を再利用することの確認（Main/Sub PC 再開時）
