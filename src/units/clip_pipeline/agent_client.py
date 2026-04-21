@@ -133,6 +133,23 @@ class AgentClient:
             raise _map_error_response(resp.status_code, _safe_json(resp))
         return resp.json()
 
+    async def outputs_edl(self, stem: str) -> dict:
+        """GET /clip-pipeline/outputs/{stem}/edl。
+        outputs_base/{stem}/timeline.edl の内容を返す。
+        レスポンス: {stem, path, content, size}
+        """
+        try:
+            resp = await self._get_client().get(
+                f"{_PREFIX}/outputs/{stem}/edl", headers=self._headers(),
+            )
+        except httpx.HTTPError as e:
+            raise AgentCommunicationError(
+                f"clip_pipeline outputs_edl request failed: {e}"
+            ) from e
+        if resp.status_code != 200:
+            raise _map_error_response(resp.status_code, _safe_json(resp))
+        return resp.json()
+
     # --- whisper cache sync ---
 
     async def whisper_cache_sync(

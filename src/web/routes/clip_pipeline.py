@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from starlette.responses import StreamingResponse
@@ -107,6 +108,43 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         unit = _get_unit()
         ok = await unit.cancel_job(job_id)
         return {"ok": bool(ok)}
+
+    @app.get("/api/clip-pipeline/jobs/{job_id}/edl", dependencies=[Depends(ctx.verify)])
+    async def cp_job_edl(job_id: str):
+        """完了ジョブの timeline.edl を Agent 経由で取得する。
+        output_dir のベース名を stem として Agent の /outputs/{stem}/edl を叩く。
+        """
+        from src.units.clip_pipeline.agent_client import AgentClient
+
+        unit = _get_unit()
+        job = await unit.get_job(job_id)
+        if not job:
+            raise HTTPException(404, "job not found")
+        output_dir = (job.get("output_dir") or "").strip()
+        if not output_dir:
+            raise HTTPException(400, "job has no output_dir")
+        # NAS UNC でも N:\ でも `/` でも basename を取り出したい
+        stem = os.path.basename(output_dir.replace("\\", "/").rstrip("/"))
+        if not stem:
+            raise HTTPException(400, f"failed to derive stem from output_dir: {output_dir}")
+        agent_id = job.get("assigned_agent")
+        if not agent_id:
+            raise HTTPException(400, "job has no assigned_agent")
+        agents = list(
+            getattr(unit.bot.unit_manager.agent_pool, "_agents", []) or []
+        )
+        target = next((a for a in agents if a.get("id") == agent_id), None)
+        if not target:
+            raise HTTPException(404, f"agent not found: {agent_id}")
+        client = AgentClient(target)
+        try:
+            return await client.outputs_edl(stem)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"agent outputs_edl failed: {e}")
+        finally:
+            await client.close()
 
     # --- capability aggregation ---
 
