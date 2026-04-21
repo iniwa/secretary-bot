@@ -66,11 +66,13 @@ def _run_demucs(wav_path: str, output_dir: str, model: str, log) -> str:
     from demucs.audio import AudioFile
     from demucs.pretrained import get_model
 
-    log(f"Demucs ({model}) でボーカル分離中（CPU）...")
+    # CUDA が使えるなら GPU、ダメなら CPU。
+    # かつて cuDNN 9.x 初期版でクラッシュする報告があったが、PyTorch 2.5+ / cuDNN 9.5+ では解消済み。
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    log(f"Demucs ({model}) でボーカル分離中（device={device}）...")
 
-    # Demucs は cuDNN 9.x との組み合わせでクラッシュするため CPU 固定
     demucs_model = get_model(model)
-    demucs_model.to("cpu")
+    demucs_model.to(device)
     demucs_model.eval()
 
     # 音声読み込み
@@ -82,14 +84,27 @@ def _run_demucs(wav_path: str, output_dir: str, model: str, log) -> str:
         std_val = 1.0
     wav = (wav - ref.mean()) / std_val
 
-    # 分離実行
-    with torch.no_grad():
-        sources = apply_model(demucs_model, wav[None], progress=True)[0]
+    # 分離実行（CUDA 実行時に OOM / cuDNN 例外が出たら CPU にフォールバック）
+    try:
+        wav_dev = wav.to(device) if device == "cuda" else wav
+        with torch.no_grad():
+            sources = apply_model(demucs_model, wav_dev[None], progress=True)[0]
+    except RuntimeError as e:
+        if device != "cuda":
+            raise
+        log(f"Demucs CUDA 実行失敗 → CPU フォールバック: {e}")
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        demucs_model.to("cpu")
+        with torch.no_grad():
+            sources = apply_model(demucs_model, wav[None], progress=True)[0]
 
     # vocals を取得して保存
-    sources = sources * std_val + ref.mean()
+    sources = sources.cpu() * std_val + ref.mean()
     vocals_idx = demucs_model.sources.index("vocals")
-    vocals = sources[vocals_idx].cpu().numpy().T  # (samples, channels)
+    vocals = sources[vocals_idx].numpy().T  # (samples, channels)
 
     stem_name = os.path.splitext(os.path.basename(wav_path))[0]
     out_dir = os.path.join(output_dir, model, stem_name)
