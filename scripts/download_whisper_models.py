@@ -1,0 +1,206 @@
+"""Download faster-whisper (CTranslate2) models to NAS for Auto-Kirinuki.
+
+faster-whisper は CTranslate2 形式のモデルディレクトリ
+(`model.bin` / `config.json` / `tokenizer.json` / `vocabulary.*`) を参照する。
+Agent 側 `list_nas_models` は `<dest>/<model>/model.bin` の存在でモデルを検出するため、
+このスクリプトでは HuggingFace Hub から `Systran/faster-whisper-*` 相当の CT2 リポジトリを
+`<dest>/<model>/` に展開する。
+
+既定では `windows-agent/config/.env` の NAS_HOST / NAS_SHARE / NAS_USER / NAS_PASS を
+読み、Agent と同じ方式で `\\<HOST>\<SHARE>` を一時 `net use` してから UNC パス
+`\\<HOST>\<SHARE>\auto-kirinuki\models\whisper\<model>\` に書き込む。
+これで `W:` / `N:` のドライブレターが切れていても配置できる。
+
+Usage:
+    python scripts/download_whisper_models.py large-v3-turbo large-v3
+    python scripts/download_whisper_models.py --all
+    python scripts/download_whisper_models.py --dest "W:/auto-kirinuki/models/whisper" large-v3
+
+前提:
+    - pip install huggingface_hub
+    - windows-agent/config/.env に NAS_HOST / NAS_USER / NAS_PASS がある
+      （image_gen の nas_mount.py と同じ設計）
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+AGENT_ENV = REPO_ROOT / "windows-agent" / "config" / ".env"
+
+# モデル名 → HuggingFace Hub リポジトリ ID
+REPO_MAP: dict[str, str] = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+}
+
+# NAS 上の whisper 置き場（SHARE 配下）— Agent config の clip_pipeline.nas と一致
+NAS_SUBPATH = r"auto-kirinuki\models\whisper"
+
+
+def _read_env(env_path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not env_path.exists():
+        return env
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        env[k.strip()] = v.strip().strip('"').strip("'")
+    return env
+
+
+def ensure_nas_mount() -> str | None:
+    """Agent と同じ認証で `\\<HOST>\<SHARE>` を一時 net use し、UNC パス base を返す。
+
+    既にマウント済みなら何もせず UNC パスを返す。失敗時は None。
+    """
+    env = _read_env(AGENT_ENV)
+    host = env.get("NAS_HOST", "").strip()
+    share = env.get("NAS_SHARE", "").strip() or "Work"
+    user = env.get("NAS_USER", "").strip()
+    pw = env.get("NAS_PASS", "").strip() or env.get("NAS_PASSWORD", "").strip()
+    if not host:
+        print(f"[warn] NAS_HOST not set in {AGENT_ENV}")
+        return None
+
+    unc = rf"\\{host}\{share}"
+
+    # 既に UNC で読めるか試す
+    try:
+        if os.path.isdir(unc):
+            print(f"[nas] already accessible: {unc}")
+            return unc
+    except OSError:
+        pass
+
+    if not user or not pw:
+        print(f"[warn] NAS_USER / NAS_PASS not set in {AGENT_ENV}")
+        return None
+
+    # net use で一時マウント（/persistent:no）
+    print(f"[nas] net use {unc} (user={user})")
+    result = subprocess.run(
+        ["net", "use", unc, pw, f"/user:{user}", "/persistent:no"],
+        capture_output=True, text=True, errors="replace", timeout=20,
+    )
+    if result.returncode == 0:
+        print(f"[nas] connected: {unc}")
+        return unc
+    out = (result.stderr or "").strip() or (result.stdout or "").strip()
+    if "1219" in out or "already" in out.lower():
+        print(f"[nas] already connected: {unc}")
+        return unc
+    print(f"[error] net use failed (rc={result.returncode}): {out}")
+    return None
+
+
+def download_model(name: str, dest_base: Path) -> bool:
+    from huggingface_hub import snapshot_download
+
+    repo = REPO_MAP.get(name)
+    if not repo:
+        print(f"[skip] unknown model: {name}")
+        return False
+    dest = dest_base / name
+    marker = dest / "model.bin"
+    if marker.exists():
+        print(f"[skip] already present: {dest}")
+        return True
+    print(f"[download] {name}  <-  {repo}")
+    dest.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=repo,
+        local_dir=str(dest),
+        allow_patterns=[
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+            "vocabulary.*",
+            "preprocessor_config.json",
+            "generation_config.json",
+        ],
+    )
+    if not marker.exists():
+        print(f"[warn] model.bin not found after download: {dest}")
+        return False
+    print(f"[done] {dest}")
+    return True
+
+
+def resolve_dest(arg_dest: str | None) -> Path | None:
+    """--dest の解決。未指定なら `\\<HOST>\<SHARE>\<NAS_SUBPATH>` を自動選択する。"""
+    if arg_dest:
+        return Path(arg_dest)
+    base = ensure_nas_mount()
+    if not base:
+        return None
+    return Path(base) / NAS_SUBPATH
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "models", nargs="*",
+        help="model names to download (e.g. large-v3 large-v3-turbo)",
+    )
+    parser.add_argument("--all", action="store_true", help="download every known model")
+    parser.add_argument(
+        "--dest", default=None,
+        help=r"destination base directory (default: \\<NAS_HOST>\<NAS_SHARE>\auto-kirinuki\models\whisper)",
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="print available model names and exit",
+    )
+    args = parser.parse_args()
+
+    if args.list:
+        print("available models:")
+        for n, r in REPO_MAP.items():
+            print(f"  {n:<18} <- {r}")
+        return 0
+
+    names = list(REPO_MAP.keys()) if args.all else args.models
+    if not names:
+        parser.print_help()
+        print("\n(specify model names or --all)")
+        return 1
+
+    unknown = [n for n in names if n not in REPO_MAP]
+    if unknown:
+        print(f"[error] unknown model(s): {', '.join(unknown)}")
+        print("use --list to see available names")
+        return 2
+
+    dest_base = resolve_dest(args.dest)
+    if dest_base is None:
+        print("[error] failed to resolve NAS destination (see warnings above)")
+        return 3
+    try:
+        dest_base.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"[error] cannot create destination: {dest_base}: {e}")
+        return 3
+
+    print(f"[dest] {dest_base}")
+    ok = 0
+    for n in names:
+        if download_model(n, dest_base):
+            ok += 1
+    total = len(names)
+    print(f"\nsummary: {ok}/{total} model(s) ready under {dest_base}")
+    return 0 if ok == total else 4
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -7,11 +7,19 @@ let jobs = [];
 let capability = null;     // array of {agent_id, ok, capability, error?}
 let pollTimer = null;
 let inputsCache = { base: '', files: [] };
-let selectedFullPath = '';  // video_path に使う絶対パス
+let selectedFullPaths = [];  // 複数選択: Agent に送信する絶対パスの配列
 let manualMode = false;
 let ollamaModels = [];      // /api/ollama-models から取得
+let mimiOllamaModel = '';   // /api/llm-config の ollama_model（Mimi と共有する初期値）
 
 const STORAGE_KEY = 'clip-pipeline:form:v1';
+
+// Agent の NAS / SSD に未配置でも選べるよう、faster-whisper が自動 DL できる
+// 既知のモデル名をフォールバック表示に使う。
+const KNOWN_WHISPER_MODELS = [
+  'large-v3-turbo', 'large-v3', 'distil-large-v3',
+  'medium', 'small', 'base', 'tiny',
+];
 
 function loadSettings() {
   try {
@@ -157,7 +165,8 @@ export function render() {
   .cp-preview { font-family: monospace; font-size: 0.78rem;
                 padding: 0.3rem 0.45rem; border-radius: 0.3rem;
                 background: var(--bg-body); border: 1px solid var(--border);
-                word-break: break-all; min-height: 1.2em; }
+                word-break: break-all; min-height: 1.2em;
+                white-space: pre-wrap; max-height: 8rem; overflow-y: auto; }
   .cp-preview-row { display: flex; align-items: stretch; gap: 0.3rem; }
   .cp-preview-row .cp-preview { flex: 1; }
   .cp-file-info { font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.2rem; }
@@ -187,8 +196,9 @@ export function render() {
           <select id="cp-agent"></select>
         </div>
         <div class="cp-form-row" id="cp-video-select-row">
-          <label for="cp-video-select">video (inputs フォルダから選択)</label>
-          <select id="cp-video-select"></select>
+          <label for="cp-video-select">video (inputs フォルダから複数選択可)</label>
+          <select id="cp-video-select" multiple size="6"></select>
+          <div class="cp-file-info">Ctrl / Shift + クリックで複数選択。選択したファイル数だけジョブを登録します。</div>
         </div>
       </div>
 
@@ -199,7 +209,7 @@ export function render() {
       </div>
 
       <div class="cp-form-row" id="cp-video-preview-row">
-        <label>video_path</label>
+        <label>送信される video_path（ジョブ登録時に Agent へ渡す絶対パス）</label>
         <div class="cp-preview-row">
           <div class="cp-preview" id="cp-video-preview">-</div>
           <button type="button" class="cp-copy-chip" data-copy-target="cp-video-preview">copy</button>
@@ -209,12 +219,14 @@ export function render() {
 
       <div class="cp-form-grid">
         <div class="cp-form-row">
-          <label for="cp-whisper">whisper_model (Agent ローカル/NAS にあるもの)</label>
+          <label for="cp-whisper">whisper_model</label>
           <select id="cp-whisper"><option value="">(Agent 選択待ち)</option></select>
+          <div class="cp-file-info" id="cp-whisper-hint"></div>
         </div>
         <div class="cp-form-row">
-          <label for="cp-ollama">ollama_model (Mimi と共有)</label>
+          <label for="cp-ollama">ollama_model <span id="cp-ollama-hint" style="color:var(--text-secondary);font-weight:normal;font-size:0.72rem"></span></label>
           <select id="cp-ollama"><option value="">(読込中)</option></select>
+          <div class="cp-file-info">未選択のときは Mimi と同じモデルで実行します。ここで別モデルを選んでも Mimi 側の設定は変わりません。</div>
         </div>
         <div class="cp-form-row" id="cp-output-preview-row">
           <label>output_dir (空なら自動)</label>
@@ -331,7 +343,8 @@ export async function mount() {
   });
 
   restoreNumericFields();
-  await Promise.all([loadCapability(), loadOllamaModels(), loadJobs()]);
+  await Promise.all([loadCapability(), loadOllamaModels(), loadMimiLLMConfig(), loadJobs()]);
+  applyOllamaDefault();
   await loadInputsForSelected();
   connectSSE();
   // Also periodic refresh in case SSE misses
@@ -369,22 +382,46 @@ async function loadOllamaModels() {
   } catch {
     ollamaModels = [];
   }
-  const saved = loadSettings()['cp-ollama'] || '';
-  const opts = ['<option value="">-- 選択 --</option>'];
+  const opts = ['<option value="">-- Mimi と同じ --</option>'];
   for (const m of ollamaModels) {
     opts.push(`<option value="${esc(m)}">${esc(m)}</option>`);
   }
   sel.innerHTML = opts.join('');
+  // 明示的に保存されているときだけ復元。未設定なら "" のまま = Mimi と同じ扱い。
+  const saved = loadSettings()['cp-ollama'];
   if (saved && ollamaModels.includes(saved)) sel.value = saved;
+}
+
+async function loadMimiLLMConfig() {
+  try {
+    const res = await api('/api/llm-config');
+    mimiOllamaModel = res.ollama_model || '';
+  } catch {
+    mimiOllamaModel = '';
+  }
+  const hint = $('cp-ollama-hint');
+  if (hint) hint.textContent = mimiOllamaModel ? `(Mimi: ${mimiOllamaModel})` : '';
+}
+
+/** select の値が未設定かつ localStorage にも明示保存が無い場合、
+ *  表示上の初期値として Mimi のモデルを選んでおく（保存はしない）。 */
+function applyOllamaDefault() {
+  const sel = $('cp-ollama');
+  if (!sel) return;
+  const saved = loadSettings()['cp-ollama'];
+  if (saved) return; // 既に永続化済みの値が適用されている
+  if (mimiOllamaModel && ollamaModels.includes(mimiOllamaModel)) {
+    sel.value = mimiOllamaModel;
+  }
 }
 
 function renderWhisperSelect() {
   const sel = $('cp-whisper');
   if (!sel) return;
+  const hint = $('cp-whisper-hint');
   const cap = currentAgentCap() || {};
   const local = cap.whisper_models_local || [];
   const nas = cap.whisper_models_nas || [];
-  // 重複除去（local 優先でラベルを区別）
   const seen = new Set();
   const opts = ['<option value="">-- 選択 --</option>'];
   for (const m of local) {
@@ -397,9 +434,22 @@ function renderWhisperSelect() {
     seen.add(m);
     opts.push(`<option value="${esc(m)}">${esc(m)} (NAS — 同期必要)</option>`);
   }
+  // 未配置モデルもフォールバックで提示（NAS に配置すれば cache-sync で使える）
+  for (const m of KNOWN_WHISPER_MODELS) {
+    if (seen.has(m)) continue;
+    seen.add(m);
+    opts.push(`<option value="${esc(m)}">${esc(m)} (未配置 — NAS 配置要)</option>`);
+  }
   sel.innerHTML = opts.join('');
   const saved = loadSettings()['cp-whisper'] || '';
   if (saved && seen.has(saved)) sel.value = saved;
+  if (hint) {
+    if (local.length === 0 && nas.length === 0) {
+      hint.textContent = 'このAgent のローカル/NAS にキャッシュ済みモデルはありません。NAS の whisper フォルダ (nas.whisper_base) にモデルディレクトリを配置してください。';
+    } else {
+      hint.textContent = '';
+    }
+  }
 }
 
 export function unmount() {
@@ -423,11 +473,10 @@ function onToggleManual() {
   $('cp-manual-row').style.display = manualMode ? '' : 'none';
   $('cp-output-preview-row').style.display = manualMode ? 'none' : '';
   $('cp-output-manual-row').style.display = manualMode ? '' : 'none';
-  // Reset selection when turning toggle off
   if (!manualMode) {
     $('cp-video-path-manual').value = '';
   } else {
-    selectedFullPath = '';
+    selectedFullPaths = [];
     $('cp-video-preview').textContent = '-';
     $('cp-output-preview').textContent = '(自動)';
     $('cp-video-info').textContent = '';
@@ -437,32 +486,43 @@ function onToggleManual() {
 
 function syncManualVideo() {
   if (!manualMode) return;
-  // manual モードでは preview を input の値と同期（表示のため）
   const v = $('cp-video-path-manual').value.trim();
   $('cp-video-preview').textContent = v || '-';
 }
 
 function onVideoSelect() {
   const sel = $('cp-video-select');
-  const opt = sel.options[sel.selectedIndex];
-  if (!opt || !opt.dataset.fullPath) {
-    selectedFullPath = '';
-    $('cp-video-preview').textContent = '-';
-    $('cp-output-preview').textContent = '(自動)';
-    $('cp-video-info').textContent = '';
-    return;
-  }
-  selectedFullPath = opt.dataset.fullPath;
-  $('cp-video-preview').textContent = selectedFullPath;
+  if (!sel) return;
+  const opts = Array.from(sel.selectedOptions || []).filter(o => o.dataset.fullPath);
+  selectedFullPaths = opts.map(o => o.dataset.fullPath);
 
+  const prev = $('cp-video-preview');
+  const outPrev = $('cp-output-preview');
+  const info = $('cp-video-info');
   const cap = currentAgentCap();
   const outBase = cap?.nas_outputs_base || '';
-  const outDir = computeOutputDir(selectedFullPath, outBase);
-  $('cp-output-preview').textContent = outDir || '(自動)';
 
-  const size = opt.dataset.size ? fmtBytes(opt.dataset.size) : '-';
-  const mtime = opt.dataset.mtime ? fmtTime(opt.dataset.mtime) : '-';
-  $('cp-video-info').textContent = `サイズ: ${size} / 更新: ${mtime}`;
+  if (opts.length === 0) {
+    prev.textContent = '-';
+    outPrev.textContent = '(自動)';
+    info.textContent = '';
+    return;
+  }
+
+  prev.textContent = selectedFullPaths.join('\n');
+
+  if (opts.length === 1) {
+    const o = opts[0];
+    outPrev.textContent = computeOutputDir(o.dataset.fullPath, outBase) || '(自動)';
+    const size = o.dataset.size ? fmtBytes(o.dataset.size) : '-';
+    const mtime = o.dataset.mtime ? fmtTime(o.dataset.mtime) : '-';
+    info.textContent = `サイズ: ${size} / 更新: ${mtime}`;
+  } else {
+    outPrev.textContent = `(各動画で自動生成 — ${opts.length} 件)`;
+    let total = 0;
+    for (const o of opts) total += Number(o.dataset.size || 0);
+    info.textContent = `${opts.length} 件選択 / 合計サイズ: ${fmtBytes(total)}`;
+  }
 }
 
 function renderNasPaths() {
@@ -548,7 +608,10 @@ function renderVideoSelect() {
   const vs = $('cp-video-select');
   if (!vs) return;
   const files = inputsCache.files || [];
-  const opts = ['<option value="">-- ファイルを選択 --</option>'];
+  const opts = [];
+  if (files.length === 0) {
+    opts.push('<option value="" disabled>(inputs フォルダに動画なし)</option>');
+  }
   for (const f of files) {
     const label = `${f.name} (${fmtBytes(f.size)}, ${fmtTime(f.mtime)})`;
     opts.push(
@@ -560,7 +623,7 @@ function renderVideoSelect() {
     );
   }
   vs.innerHTML = opts.join('');
-  selectedFullPath = '';
+  selectedFullPaths = [];
   $('cp-video-preview').textContent = '-';
   $('cp-output-preview').textContent = '(自動)';
   $('cp-video-info').textContent = '';
@@ -568,53 +631,71 @@ function renderVideoSelect() {
 
 async function onSubmit(e) {
   e.preventDefault();
-  let videoPath = '';
-  let outputDir = null;
+
+  // 送信対象の video_path 群を組み立てる
+  let videoPaths = [];
+  let manualOutputDir = null;
   if (manualMode) {
-    videoPath = $('cp-video-path-manual').value.trim();
-    outputDir = $('cp-output-dir').value.trim() || null;
+    const v = $('cp-video-path-manual').value.trim();
+    if (v) videoPaths = [v];
+    manualOutputDir = $('cp-output-dir').value.trim() || null;
   } else {
-    videoPath = selectedFullPath;
-    const outPrev = $('cp-output-preview').textContent.trim();
-    outputDir = (outPrev && outPrev !== '(自動)') ? outPrev : null;
+    videoPaths = [...selectedFullPaths];
   }
-  if (!videoPath) {
+  if (videoPaths.length === 0) {
     alert('video_path が選択されていません');
     return;
   }
-  const body = {
-    video_path: videoPath,
-    whisper_model: $('cp-whisper').value.trim(),
-    ollama_model: $('cp-ollama').value.trim(),
-    output_dir: outputDir,
-    params: {
-      top_n: Number($('cp-top-n').value) || 0,
-      min_clip_sec: Number($('cp-min-clip').value) || 30,
-      max_clip_sec: Number($('cp-max-clip').value) || 180,
-      mic_track: Number($('cp-mic-track').value) || 0,
-      use_demucs: $('cp-use-demucs').checked,
-      do_export_clips: $('cp-do-export-clips').checked,
-    },
+
+  // ollama_model は空のとき Mimi と同じモデルを送信する（backend は受け取った値で動く）
+  const ollamaSel = $('cp-ollama').value.trim();
+  const ollamaModel = ollamaSel || mimiOllamaModel || '';
+
+  const params = {
+    top_n: Number($('cp-top-n').value) || 0,
+    min_clip_sec: Number($('cp-min-clip').value) || 30,
+    max_clip_sec: Number($('cp-max-clip').value) || 180,
+    mic_track: Number($('cp-mic-track').value) || 0,
+    use_demucs: $('cp-use-demucs').checked,
+    do_export_clips: $('cp-do-export-clips').checked,
   };
-  // 送信時にも設定を保存（select 値も確実に永続化）
+  const whisperModel = $('cp-whisper').value.trim();
+
+  // 設定永続化（ユーザー選択値のみ — ollamaSel が空なら空のまま保存し、次回も Mimi 追従）
   saveSettings({
     agent_id: $('cp-agent').value,
-    'cp-whisper': body.whisper_model,
-    'cp-ollama': body.ollama_model,
-    'cp-top-n': body.params.top_n,
-    'cp-min-clip': body.params.min_clip_sec,
-    'cp-max-clip': body.params.max_clip_sec,
-    'cp-mic-track': body.params.mic_track,
-    'cp-use-demucs': body.params.use_demucs,
-    'cp-do-export-clips': body.params.do_export_clips,
+    'cp-whisper': whisperModel,
+    'cp-ollama': ollamaSel,
+    'cp-top-n': params.top_n,
+    'cp-min-clip': params.min_clip_sec,
+    'cp-max-clip': params.max_clip_sec,
+    'cp-mic-track': params.mic_track,
+    'cp-use-demucs': params.use_demucs,
+    'cp-do-export-clips': params.do_export_clips,
   });
-  try {
-    const res = await api('/api/clip-pipeline/jobs', { method: 'POST', body });
-    toast(`ジョブ登録: ${res.job_id.slice(0, 8)}...`, 'success');
-    await loadJobs();
-  } catch (err) {
-    toast(`登録失敗: ${err.message}`, 'error');
+
+  // 複数ある場合は並列に POST（Pi 側 Dispatcher が DB キュー経由で順次発射する）
+  const results = await Promise.allSettled(videoPaths.map(vp => {
+    const body = {
+      video_path: vp,
+      whisper_model: whisperModel,
+      ollama_model: ollamaModel,
+      output_dir: videoPaths.length === 1 ? manualOutputDir : null,
+      params,
+    };
+    return api('/api/clip-pipeline/jobs', { method: 'POST', body });
+  }));
+
+  const ok = results.filter(r => r.status === 'fulfilled');
+  const ng = results.filter(r => r.status === 'rejected');
+  if (ok.length > 0) {
+    toast(`ジョブ登録 ${ok.length} 件${ng.length ? ` / 失敗 ${ng.length} 件` : ''}`, ng.length ? 'warning' : 'success');
   }
+  for (const r of ng) {
+    const msg = r.reason?.message || String(r.reason);
+    toast(`登録失敗: ${msg}`, 'error');
+  }
+  await loadJobs();
 }
 
 async function loadCapability() {
