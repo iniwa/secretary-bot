@@ -154,6 +154,20 @@ class Dispatcher:
                 )
                 return
 
+            # Agent は同時実行 1 本制限。先行ジョブがあれば完了まで待つ
+            # （retry budget を消費せず固定間隔で再試行）。
+            active_on_agent = await self.bot.database \
+                .clip_pipeline_job_count_active_on_agent(
+                    agent["id"], exclude_job_id=job_id,
+                )
+            if active_on_agent > 0:
+                await self._transition_retry(
+                    job, reason="agent_busy",
+                    from_status=STATUS_DISPATCHING,
+                    consume_budget=False,
+                )
+                return
+
             # Whisper モデルのキャッシュ判定
             whisper_model = job.get("whisper_model", "")
             cache_needed = await self._check_whisper_cache_missing(
@@ -256,10 +270,20 @@ class Dispatcher:
             return
         except BotError as e:
             if is_retryable(e):
-                await self._transition_retry(
-                    job, reason="transient",
-                    from_status=STATUS_DISPATCHING, last_error=str(e),
-                )
+                # Agent が「busy」で 423 を返した場合は budget を消費せず待機。
+                # 事前チェックをすり抜けたレース対策（2 本が同時に dispatching）。
+                err_msg = str(e)
+                if "busy" in err_msg.lower():
+                    await self._transition_retry(
+                        job, reason="agent_busy",
+                        from_status=STATUS_DISPATCHING, last_error=err_msg,
+                        consume_budget=False,
+                    )
+                else:
+                    await self._transition_retry(
+                        job, reason="transient",
+                        from_status=STATUS_DISPATCHING, last_error=err_msg,
+                    )
             else:
                 await self._transition_failed(
                     job, str(e), from_status=STATUS_DISPATCHING,
@@ -625,33 +649,49 @@ class Dispatcher:
     async def _transition_retry(
         self, job: dict, *, reason: str, from_status: str,
         last_error: str | None = None,
+        consume_budget: bool = True,
     ) -> None:
+        """非終端 → queued に戻す。
+
+        consume_budget=False のとき retry_count を消費しない。
+        「Agent が別ジョブで busy」のような、このジョブ自体の失敗ではない
+        ケースで永久に待てるようにする（先行ジョブ完了まで固定間隔で再試行）。
+        """
         job_id = job["id"]
         retry_count = int(job.get("retry_count", 0))
         max_retries = int(job.get("max_retries", 2))
-        if retry_count >= max_retries:
+        if consume_budget and retry_count >= max_retries:
             await self._transition_failed(
                 job, f"max retries exceeded: {reason}",
                 from_status=from_status, last_error=last_error,
             )
             return
-        backoff = _compute_backoff(
-            retry_count, self._backoff_base_sec, self._backoff_max_sec,
-        )
+        if consume_budget:
+            backoff = _compute_backoff(
+                retry_count, self._backoff_base_sec, self._backoff_max_sec,
+            )
+            new_retry_count = retry_count + 1
+        else:
+            # 先行ジョブ待ちは固定 30s で軽くポーリング。budget は据え置き。
+            backoff = 30.0
+            new_retry_count = retry_count
+        update_fields: dict = {
+            "expected_from": from_status,
+            "next_attempt_at": _future(backoff),
+            "timeout_at": None,
+            "dispatcher_lock_at": None,
+        }
+        if consume_budget:
+            update_fields["retry_count"] = new_retry_count
+            update_fields["last_error"] = last_error or reason
         await self.bot.database.clip_pipeline_job_update_status(
-            job_id, STATUS_QUEUED,
-            expected_from=from_status,
-            retry_count=retry_count + 1,
-            last_error=last_error or reason,
-            next_attempt_at=_future(backoff),
-            timeout_at=None,
-            dispatcher_lock_at=None,
+            job_id, STATUS_QUEUED, **update_fields,
         )
         await self._broadcast(TransitionEvent(
             job_id=job_id, from_status=from_status, to_status=STATUS_QUEUED,
             event="status",
             detail={
-                "retry_count": retry_count + 1, "reason": reason,
+                "retry_count": new_retry_count, "reason": reason,
                 "next_attempt_in_sec": int(backoff),
             },
         ))

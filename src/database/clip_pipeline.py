@@ -178,6 +178,24 @@ class ClipPipelineMixin:
             finished_at=jst_now(),
         )
 
+    async def clip_pipeline_job_count_active_on_agent(
+        self, agent_id: str, exclude_job_id: str | None = None,
+    ) -> int:
+        """指定 agent で dispatching / warming_cache / running 状態のジョブ数を返す。
+        Dispatcher が先行ジョブの完了を待つかの判定に使う（agent 側は同時実行 1 本制限）。
+        """
+        sql = (
+            "SELECT COUNT(*) AS n FROM clip_pipeline_jobs "
+            "WHERE assigned_agent = ? "
+            "  AND status IN ('dispatching', 'warming_cache', 'running')"
+        )
+        params: list = [agent_id]
+        if exclude_job_id:
+            sql += " AND id != ?"
+            params.append(exclude_job_id)
+        row = await self.fetchone(sql, tuple(params))
+        return int(row["n"]) if row else 0
+
     async def clip_pipeline_job_find_timed_out(self) -> list[dict]:
         """timeout_at < now の非終端ジョブを返す。stuck_reaper が使う。"""
         return await self.fetchall(
