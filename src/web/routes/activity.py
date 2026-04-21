@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 
 from src.web._agent_helpers import agent_request
 from src.web._context import WebContext
@@ -335,3 +335,83 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "limit": limit, "offset": offset,
             "sessions": rows,
         }
+
+    # --- Daily diary（日記） ---
+
+    @app.get("/api/activity/diary", dependencies=[Depends(ctx.verify)])
+    async def activity_diary(date: str = ""):
+        """指定日（YYYY-MM-DD）の日記を返す。未指定なら昨日。未生成なら exists=False。"""
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+        if not date:
+            _JST = _tz(_td(hours=9))
+            date = (_dt.now(tz=_JST) - _td(days=1)).strftime("%Y-%m-%d")
+        row = await bot.database.fetchone(
+            "SELECT date, diary, streaming_detected, total_game_sec, total_stream_sec, created_at "
+            "FROM daily_diaries WHERE date = ?",
+            (date,),
+        )
+        if not row:
+            return {"date": date, "exists": False}
+        return {"exists": True, **dict(row)}
+
+    @app.get("/api/activity/diary/list", dependencies=[Depends(ctx.verify)])
+    async def activity_diary_list(
+        days: int = 30, start: str | None = None, end: str | None = None,
+    ):
+        """日記が存在する日の一覧（新しい順）。カレンダー等で「日記あり」マーク用。"""
+        days = max(0, min(int(days or 30), 3650))
+        where_parts: list[str] = []
+        params: list = []
+        if start:
+            where_parts.append("date >= ?")
+            params.append(start)
+        if end:
+            where_parts.append("date <= ?")
+            params.append(end)
+        if not (start or end):
+            cutoff = _activity_cutoff(days)
+            if cutoff:
+                where_parts.append("date >= ?")
+                params.append(cutoff[:10])
+        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        rows = await bot.database.fetchall(
+            f"SELECT date, streaming_detected, total_game_sec, total_stream_sec, created_at "
+            f"FROM daily_diaries {where} ORDER BY date DESC",
+            tuple(params),
+        )
+        return {"diaries": rows}
+
+    @app.post("/api/activity/diary/regenerate", dependencies=[Depends(ctx.verify)])
+    async def activity_diary_regenerate(request: Request):
+        """指定日の日記を再生成（未生成なら新規生成）。date 省略時は昨日。"""
+        from datetime import date as _date
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
+        from src.activity.daily_diary import run_daily_diary
+
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        target = (payload.get("date") or "").strip()
+        if target:
+            try:
+                _date.fromisoformat(target)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        else:
+            _JST = _tz(_td(hours=9))
+            target = (_dt.now(tz=_JST) - _td(days=1)).strftime("%Y-%m-%d")
+
+        ok = await run_daily_diary(bot, target_date=target)
+        if not ok:
+            return {"ok": False, "date": target, "reason": "no_data_or_llm_failed"}
+        row = await bot.database.fetchone(
+            "SELECT date, diary, streaming_detected, total_game_sec, total_stream_sec, created_at "
+            "FROM daily_diaries WHERE date = ?",
+            (target,),
+        )
+        return {"ok": True, **(dict(row) if row else {"date": target})}

@@ -37,9 +37,11 @@
   - `zzz_character_codex.md` 等を確認しながら自動記入する
 
 ### daily_diary（活動日記）後続タスク
-- [ ] 日記閲覧 WebGUI（過去日付一覧・詳細ページ）
+- [x] 日記閲覧 WebGUI（過去日付一覧・詳細ページ）
   - 2026-04-21 時点で `daily_diaries` テーブル + 日記生成ロジックは実装済（旧 `daily_summary` 置き換え）
-  - 閲覧面（カレンダー/一覧・再生成ボタン等）は未実装。`/api/activity/diary` 系エンドポイントと合わせて整備する想定
+  - 2026-04-21: Activity ページに日記カードを追加（選択日 or 昨日の日記 + 再生成ボタン）。
+    API は `/api/activity/diary` (GET/単件)、`/api/activity/diary/list` (GET/期間一覧)、
+    `/api/activity/diary/regenerate` (POST) の 3 本
 - [ ] 旧 STT 要約（people_memory 上）の掃除スクリプト（任意）
   - A案適用後、STT 要約は ChromaDB の `stt_summaries` コレクションのみに残る方針
   - 切り替え前に people_memory へ保存された STT 要約は放置（自然減衰）でも実害なし。気になる場合のみ掃除

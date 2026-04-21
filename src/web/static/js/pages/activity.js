@@ -1,5 +1,6 @@
 /** Activity page — Main PC のゲームプレイ履歴と Main / Sub PC の作業履歴ビューア。 */
 import { api, apiBatch } from '../api.js';
+import { toast } from '../app.js';
 
 // ------------------------------------------------------------
 // state
@@ -203,6 +204,18 @@ export function render() {
 
   <section class="card">
     <div class="card-header">
+      <h3>日記</h3>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <div id="a-diary-date" class="mono" style="font-size:0.8125rem;color:var(--text-muted)"></div>
+        <button class="btn btn-sm" id="a-diary-regen">再生成</button>
+      </div>
+    </div>
+    <div id="a-diary-meta" style="display:flex;gap:0.75rem;flex-wrap:wrap;font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem"></div>
+    <div id="a-diary-body" style="white-space:pre-wrap;line-height:1.7;font-size:0.875rem;min-height:3rem"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
       <h3>セッション履歴</h3>
       <div id="a-session-meta" style="font-size:0.8125rem;color:var(--text-muted)"></div>
     </div>
@@ -238,7 +251,67 @@ async function refreshAll() {
     loadSummaryAndStats(),
     loadDaily(),
     loadSessions(true),
+    loadDiary(),
   ]);
+}
+
+// 日記表示対象日: _dayFilter が立っていればそれ、無ければ昨日（JST）
+function diaryTargetDate() {
+  if (_dayFilter) return _dayFilter;
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return ymdLocal(d);
+}
+
+async function loadDiary() {
+  const date = diaryTargetDate();
+  const data = await api(`/api/activity/diary?date=${date}`).catch(() => null);
+  renderDiary(date, data);
+}
+
+function renderDiary(date, data) {
+  const dateEl = document.getElementById('a-diary-date');
+  const metaEl = document.getElementById('a-diary-meta');
+  const bodyEl = document.getElementById('a-diary-body');
+  if (!dateEl) return;
+  dateEl.textContent = date;
+  if (!data || !data.exists) {
+    metaEl.innerHTML = '';
+    bodyEl.innerHTML = '<span style="color:var(--text-muted)">この日の日記はまだ生成されていません。右の「再生成」ボタンで生成できます。</span>';
+    return;
+  }
+  const chips = [];
+  if (data.streaming_detected) chips.push('<span class="status-chip chip-ok"><span class="chip-dot"></span>配信検知</span>');
+  if (data.total_game_sec > 0) chips.push(`ゲーム: ${fmtDuration(data.total_game_sec)}`);
+  if (data.total_stream_sec > 0) chips.push(`配信: ${fmtDuration(data.total_stream_sec)}`);
+  if (data.created_at) chips.push(`生成: ${fmtDateTime(data.created_at)}`);
+  metaEl.innerHTML = chips.join('<span style="color:var(--border)">·</span>');
+  bodyEl.textContent = data.diary || '';
+}
+
+async function regenerateDiary() {
+  const date = diaryTargetDate();
+  const btn = document.getElementById('a-diary-regen');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+  try {
+    const res = await api('/api/activity/diary/regenerate', {
+      method: 'POST',
+      body: { date },
+    });
+    if (res?.ok) {
+      toast(`${date} の日記を生成しました`, 'info');
+      renderDiary(date, { exists: true, ...res });
+    } else {
+      const reason = res?.reason === 'no_data_or_llm_failed'
+        ? 'データが無いか、LLM 呼び出しが失敗しました'
+        : '生成に失敗しました';
+      toast(`${date}: ${reason}`, 'error');
+    }
+  } catch (e) {
+    toast(`生成リクエストに失敗しました: ${e?.message || e}`, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '再生成'; }
+  }
 }
 
 async function loadSummaryAndStats() {
@@ -761,6 +834,7 @@ export async function mount() {
     _sessionOffset = 0;
     loadSummaryAndStats();
     loadSessions(true);
+    loadDiary();
     if (_viewMode === 'calendar') loadCalendar();
   };
   document.getElementById('a-cal-grid').addEventListener('click', ev => {
@@ -792,8 +866,12 @@ export async function mount() {
     _dayFilter = '';
     loadSessions(true);
     loadSummaryAndStats();
+    loadDiary();
     if (_viewMode === 'calendar') loadCalendar();
   });
+
+  // 日記再生成
+  document.getElementById('a-diary-regen').addEventListener('click', regenerateDiary);
 
   // ページング
   document.getElementById('a-session-prev').addEventListener('click', () => {
