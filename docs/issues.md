@@ -1,7 +1,7 @@
 ## 改善案
 
 ### リモート開発環境
-- [ ] Remote PC → Sub PC の VS Code Remote-SSH 接続（Claude Code を Sub PC 側で動作させる構成）
+- [x] Remote PC → Sub PC の VS Code Remote-SSH 接続（Claude Code を Sub PC 側で動作させる構成）
   - 手順・残作業は `docs/guides/remote_pc_subpc_vscode_access.md` を参照
   - 2026-04-20: **Cloudflare Tunnel は Pi に集約する構成へ刷新**。Sub PC には cloudflared を入れず、Pi の cloudflared が TCP ingress `subpcssh.iniwach.com → tcp://192.168.1.211:22` で Sub PC sshd に中継する。Sub PC 側 / Pi 側の初期セットアップは完了済
 
@@ -18,7 +18,7 @@
   - [x] 疎通確認: `cloudflared access ssh --hostname subpcssh.iniwach.com` 経由で TCP 成立
   - [x] SSH 疎通: `ssh subpcssh` で `DESKTOP-1GLQ8K9` / user `iniwa` のシェルに入れることを確認（2026-04-21）
   - [x] VS Code 拡張 `Remote - SSH` インストール済み
-  - [ ] `Remote-SSH: Connect to Host... → subpcssh` で接続し、ターミナルで `claude` が起動することを確認（Sub PC 単体では claude 2.1.114 / node v24.14.0 を確認済）
+  - [x] `Remote-SSH: Connect to Host... → subpcssh` で接続し、ターミナルで `claude` が起動することを確認（2026-04-21 に Remote PC → Sub PC の Remote-SSH 接続で claude 起動を確認）
 
 ### image_gen / LoRA 学習 (Phase 4)
 - [ ] LoRA 学習機能の C〜H マイルストーン（WD14 タグ付け / TOML テンプレ / kohya 学習 / 監視 UI / 手動昇格）
