@@ -315,7 +315,7 @@ export async function mount() {
   // form の各入力を localStorage に同期
   const persistFields = [
     'cp-whisper', 'cp-ollama',
-    'cp-top-n', 'cp-min-clip', 'cp-max-clip', 'cp-mic-track',
+    'cp-top-n', 'cp-min-clip', 'cp-mic-track',
     'cp-use-demucs', 'cp-do-export-clips',
   ];
   persistFields.forEach(id => {
@@ -352,7 +352,6 @@ function restoreNumericFields() {
   const numFields = {
     'cp-top-n': 0,
     'cp-min-clip': 30,
-    'cp-max-clip': 180,
     'cp-mic-track': 1,
   };
   for (const [id, def] of Object.entries(numFields)) {
@@ -816,7 +815,12 @@ function handleEvent(ev) {
   const j = jobs[idx];
   if (ev.status) j.status = ev.status;
   if (ev.step) j.step = ev.step;
-  if (typeof ev.progress === 'number') j.progress = Math.round(ev.progress);
+  // progress は progress / result イベントでのみ更新する。
+  // step や log イベントにも progress=0（デフォルト）が乗って来るため、
+  // 無条件に上書きすると step 切替の瞬間にバーが 0% へ潰れる。
+  if ((ev.event === 'progress' || ev.event === 'result') && typeof ev.progress === 'number') {
+    j.progress = Math.round(ev.progress);
+  }
   if (ev.agent_id) j.assigned_agent = ev.agent_id;
   if (ev.detail && ev.detail.message && ev.status === 'failed') j.last_error = ev.detail.message;
   renderJobs();
