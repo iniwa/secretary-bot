@@ -66,6 +66,10 @@ class Dispatcher:
         # 同じ Agent を picks してしまう。job_start の呼び出し中だけ in-memory
         # で追跡して、先行ジョブが掴んでいる Agent を除外する。
         self._dispatching_to: dict[str, str] = {}  # agent_id → job_id
+        # 選定 → 予約 をアトミックにするためのロック。`_select_agent_for_job`
+        # が内部で await するので、ロックなしでは 2 本同時に同じ Agent を
+        # 掴んでしまう（後続は Agent 側 423 Locked を食らう）。
+        self._select_lock = asyncio.Lock()
 
         cfg = (
             bot.config.get("units", {})
@@ -152,20 +156,20 @@ class Dispatcher:
         new_trace_id()
         agent: dict | None = None
         try:
-            agent = await self._select_agent_for_job(job)
-            if agent is None:
-                # 全 Agent が busy or unavailable。budget を消費せず待機。
-                # （他 Agent が空く / agent_pool のメトリクスが回復する）
-                await self._transition_retry(
-                    job, reason="no_agent_available",
-                    from_status=STATUS_DISPATCHING,
-                    consume_budget=False,
-                )
-                return
-
-            # assigned_agent が DB に書かれるまで、他 _handle_dispatching が
-            # 同じ Agent を拾ってしまわないよう in-memory で予約しておく。
-            self._dispatching_to[agent["id"]] = job_id
+            async with self._select_lock:
+                agent = await self._select_agent_for_job(job)
+                if agent is None:
+                    # 全 Agent が busy or unavailable。budget を消費せず待機。
+                    # （他 Agent が空く / agent_pool のメトリクスが回復する）
+                    await self._transition_retry(
+                        job, reason="no_agent_available",
+                        from_status=STATUS_DISPATCHING,
+                        consume_budget=False,
+                    )
+                    return
+                # assigned_agent が DB に書かれるまで、他 _handle_dispatching が
+                # 同じ Agent を拾ってしまわないよう in-memory で予約しておく。
+                self._dispatching_to[agent["id"]] = job_id
 
             # Whisper モデルのキャッシュ判定
             whisper_model = job.get("whisper_model", "")
