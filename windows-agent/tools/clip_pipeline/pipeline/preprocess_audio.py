@@ -53,6 +53,76 @@ def _extract_mixed(video_path: str, output_path: str, log=print):
         log(f"ffmpeg 混合音声抽出エラー (code={result.returncode}): {result.stderr[:300]}")
 
 
+def _separate_chunked_cuda(
+    demucs_model,
+    wav,
+    *,
+    chunk_sec: float = 300.0,
+    overlap_sec: float = 10.0,
+    log=print,
+):
+    """CUDA 実行用の手動チャンキング Demucs 分離。
+
+    apply_model は split=True でも出力テンソル全体を `mix.device` 上に確保するため、
+    mix を GPU に乗せたまま長尺音声を渡すと VRAM 線形膨張で OOM になる。
+    本関数は
+      - 入力を chunk_sec 秒ごとに分割し overlap_sec で重ねる
+      - 各チャンクだけ GPU に転送して apply_model を走らせる
+      - 出力を CPU に戻し、線形クロスフェードでマージする
+    ことで VRAM 使用量をチャンク長ぶんに有界化する。
+    """
+    import torch
+    from demucs.apply import apply_model
+
+    sr = demucs_model.samplerate
+    chunk_samples = int(chunk_sec * sr)
+    overlap_samples = int(overlap_sec * sr)
+    step = chunk_samples - overlap_samples
+    total = wav.shape[-1]
+    total_sec = total / sr
+    log(f"Demucs chunked: total={total_sec:.1f}s, chunk={chunk_sec}s, overlap={overlap_sec}s")
+
+    # チャンク処理
+    chunk_outputs: list[tuple[int, torch.Tensor]] = []
+    k = 0
+    while True:
+        start = k * step
+        if start >= total:
+            break
+        end = min(start + chunk_samples, total)
+        chunk = wav[:, start:end].to("cuda")
+        with torch.no_grad():
+            out = apply_model(demucs_model, chunk[None], progress=False)[0]
+        chunk_outputs.append((start, out.cpu()))
+        del chunk, out
+        torch.cuda.empty_cache()
+        log(f"  chunk {k}: [{start/sr:.1f}s, {end/sr:.1f}s]")
+        k += 1
+        if end >= total:
+            break
+
+    # weighted sum マージ（線形クロスフェード）
+    n_stems, n_ch = chunk_outputs[0][1].shape[:2]
+    output = torch.zeros(n_stems, n_ch, total, dtype=torch.float32)
+    weight = torch.zeros(total, dtype=torch.float32)
+    fade_len = overlap_samples
+    fade_in = torch.linspace(0, 1, fade_len) if fade_len > 0 else None
+    n = len(chunk_outputs)
+    for idx, (start, out) in enumerate(chunk_outputs):
+        length = out.shape[-1]
+        end = start + length
+        w = torch.ones(length, dtype=torch.float32)
+        if idx > 0 and fade_in is not None:
+            w[:fade_len] = fade_in
+        if idx < n - 1 and fade_in is not None:
+            w[-fade_len:] = 1 - fade_in
+        output[:, :, start:end] += out * w.view(1, 1, -1)
+        weight[start:end] += w
+    weight = weight.clamp(min=1e-6)
+    output /= weight.view(1, 1, -1)
+    return output
+
+
 def _run_demucs(wav_path: str, output_dir: str, model: str, log) -> str:
     """Demucs でボーカル分離し、vocals WAV のパスを返す
 
@@ -84,11 +154,17 @@ def _run_demucs(wav_path: str, output_dir: str, model: str, log) -> str:
         std_val = 1.0
     wav = (wav - ref.mean()) / std_val
 
-    # 分離実行（CUDA 実行時に OOM / cuDNN 例外が出たら CPU にフォールバック）
+    # 分離実行
+    # CUDA 時はチャンク単位で GPU へ転送して VRAM 使用量を有界化（2h28min 音声で
+    # 丸ごと GPU に乗せると 16GB クラスでも OOM 寸前まで食う）。チャンク境界は
+    # 線形クロスフェードで継ぎ目を消す。
+    # CPU 時は demucs の内部分割に任せる（CPU メモリは潤沢）。
     try:
-        wav_dev = wav.to(device) if device == "cuda" else wav
-        with torch.no_grad():
-            sources = apply_model(demucs_model, wav_dev[None], progress=True)[0]
+        if device == "cuda":
+            sources = _separate_chunked_cuda(demucs_model, wav, log=log)
+        else:
+            with torch.no_grad():
+                sources = apply_model(demucs_model, wav[None], progress=True)[0]
     except RuntimeError as e:
         if device != "cuda":
             raise
