@@ -25,19 +25,22 @@ class ZzzDiscJobQueue:
     def __init__(self, bot, *, max_concurrent: int = 1,
                  history_retention: int = 200,
                  images_dir: str = "/app/data/zzz_disc_images",
-                 use_capture_and_extract: bool = True,
-                 vlm_model: str | None = None):
+                 use_capture_and_extract: bool = True):
         self.bot = bot
         self.db = bot.database
         self.max_concurrent = max_concurrent
         self.history_retention = history_retention
         self.images_dir = images_dir
         self.use_capture_and_extract = use_capture_and_extract
-        self.vlm_model = vlm_model
         self._queue: asyncio.Queue[int] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
         self._subscribers: set[asyncio.Queue] = set()
         os.makedirs(self.images_dir, exist_ok=True)
+
+    @property
+    def vlm_model(self) -> str:
+        """ミミの LLM モデル設定（WebGUI で動的変更可）に追従する。"""
+        return (self.bot.config.get("llm") or {}).get("ollama_model") or "gemma4:e2b"
 
     # ---------------- Pub/Sub ----------------
 
