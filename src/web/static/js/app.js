@@ -130,6 +130,10 @@ const COLLAPSE_KEY = 'sidebar-collapsed-groups-v2';
 function initCollapsibleGroups() {
   const sidebar = document.getElementById('sidebar');
   if (!sidebar) return;
+  // 二重初期化防止: ブラウザ拡張や ES モジュールの再評価で関数が複数回呼ばれても
+  // delegation handler が重複登録されないようガードする
+  if (sidebar.dataset.collapsibleInit === '1') return;
+  sidebar.dataset.collapsibleInit = '1';
 
   const stored = localStorage.getItem(COLLAPSE_KEY);
   const hasStored = stored !== null;
