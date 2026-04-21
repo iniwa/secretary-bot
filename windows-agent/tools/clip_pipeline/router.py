@@ -109,6 +109,32 @@ def _normalize_path(p: str) -> str:
     return p
 
 
+def _translate_nas_path(p: str) -> str:
+    """他 Agent 視点のパスを本 Agent のマウントドライブに書き換える。
+
+    Pi の Dispatcher は DB に保存された video_path / output_dir をそのまま送って
+    くるが、その値は入稿時に使われた Agent（多くは Sub PC の `N:`）視点のドライブ
+    レターになっている。Main PC では同じ `\\iniwaNAS\\Work` が `W:` にマップさ
+    れているため、ドライブを差し替えないと `os.path.exists` が必ず False を返す。
+
+    subpath（既定 "auto-kirinuki"）の直前までを捨て、本 Agent の mount_drive を
+    付け直すことで、drive-letter 形式でも UNC 形式でも正しく解決できる。
+    """
+    if not p:
+        return p
+    nas_cfg = _ctx.cfg.get("nas") or {}
+    my_drive = (nas_cfg.get("mount_drive") or "").rstrip("\\")
+    subpath = (nas_cfg.get("subpath") or "").strip("\\/")
+    if not my_drive or not subpath:
+        return p
+    p_norm = p.replace("/", "\\")
+    needle = f"\\{subpath}\\".lower()
+    idx = p_norm.lower().find(needle)
+    if idx < 0:
+        return p
+    return f"{my_drive}{p_norm[idx:]}"
+
+
 def _verify(request: Request) -> None:
     if not _SECRET_TOKEN:
         return
@@ -417,8 +443,8 @@ async def jobs_start(request: Request):
             headers={"X-Trace-Id": trace_id},
         )
 
-    video_path = _normalize_path(video_path)
-    output_dir = _normalize_path(output_dir)
+    video_path = _translate_nas_path(_normalize_path(video_path))
+    output_dir = _translate_nas_path(_normalize_path(output_dir))
 
     if not os.path.exists(video_path):
         return _error_response(400, "ValidationError",
