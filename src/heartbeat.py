@@ -209,9 +209,9 @@ class Heartbeat:
         if self._activity_daily_last_date != today_str:
             try:
                 await collector.cleanup_old_samples()
-                from src.activity.daily_summary import run_daily_summary
-                did = await run_daily_summary(self.bot)
-                result["daily_summary"] = did
+                from src.activity.daily_diary import run_daily_diary
+                did = await run_daily_diary(self.bot)
+                result["daily_diary"] = did
                 self._activity_daily_last_date = today_str
             except Exception as e:
                 log.warning("activity daily job failed: %s", e)

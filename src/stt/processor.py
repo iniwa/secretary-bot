@@ -72,21 +72,7 @@ class STTProcessor:
         if not rows:
             return False
 
-        # ギャップ分割: 先頭から走査し、連続する started_at の差が gap_minutes 以上あればそこで切る
-        gap_split = False
-        cutoff = len(rows)
-        prev_dt: datetime | None = None
-        gap_threshold = timedelta(minutes=self._gap_minutes)
-        for i, r in enumerate(rows):
-            cur_dt = _parse_started_at(r["started_at"])
-            if prev_dt is not None and cur_dt is not None:
-                if cur_dt - prev_dt >= gap_threshold:
-                    cutoff = i
-                    gap_split = True
-                    break
-            prev_dt = cur_dt
-        if gap_split:
-            rows = rows[:cutoff]
+        rows, gap_split = self._apply_gap_split(rows)
         if not rows:
             return False
 
@@ -114,20 +100,77 @@ class STTProcessor:
             # もう新しい transcript が挿入される余地がない（=永遠に発火しない）ので、
             # 要約せず summarized=1 を立てて次のチャンクへ進める。
             if gap_split and total_chars < self._min_chunk:
-                ids = [r["id"] for r in rows]
-                placeholders = ",".join("?" * len(ids))
-                await self.bot.database.execute(
-                    f"UPDATE stt_transcripts SET summarized = 1 WHERE id IN ({placeholders})",
-                    tuple(ids),
-                )
+                await self._mark_summarized([r["id"] for r in rows])
                 log.info(
                     "STT pruned %d stuck transcripts (%d chars, gap-closed below min_chunk=%d)",
-                    len(ids), total_chars, self._min_chunk,
+                    len(rows), total_chars, self._min_chunk,
                 )
                 return True
             return False
 
-        # LLM要約
+        return await self._do_summarize(rows, reason=reason)
+
+    async def flush(self, until: str, reason: str) -> bool:
+        """`until` 時刻以前の未要約 transcript を強制要約する（Activity 側トリガーから呼び出し）。
+
+        - min_chunk 未満なら要約せず summarized=1 でマークのみ（LLM 負荷対策）
+        - gap_split が先に効くため、until までに複数チャンクあれば先頭チャンクのみ処理
+          （残りは次回 process/flush で拾われる）
+        """
+        if not self.bot.llm_router.ollama_available:
+            return False
+
+        rows = await self.bot.database.fetchall(
+            "SELECT * FROM stt_transcripts WHERE summarized = 0 AND started_at <= ? ORDER BY started_at",
+            (until,),
+        )
+        if not rows:
+            return False
+
+        rows, _gap_split = self._apply_gap_split(rows)
+        if not rows:
+            return False
+
+        total_chars = sum(len(r["raw_text"]) for r in rows)
+        if total_chars < self._min_chunk:
+            await self._mark_summarized([r["id"] for r in rows])
+            log.info(
+                "STT flush skipped-as-mark: %d transcripts, %d chars < min_chunk=%d (reason=%s)",
+                len(rows), total_chars, self._min_chunk, reason,
+            )
+            return True
+
+        return await self._do_summarize(rows, reason=f"flush:{reason}")
+
+    def _apply_gap_split(self, rows: list[dict]) -> tuple[list[dict], bool]:
+        """時間順 rows の先頭チャンクを gap_minutes で切り出す。(切り出し後, 分割が起きたか)。"""
+        gap_split = False
+        cutoff = len(rows)
+        prev_dt: datetime | None = None
+        gap_threshold = timedelta(minutes=self._gap_minutes)
+        for i, r in enumerate(rows):
+            cur_dt = _parse_started_at(r["started_at"])
+            if prev_dt is not None and cur_dt is not None:
+                if cur_dt - prev_dt >= gap_threshold:
+                    cutoff = i
+                    gap_split = True
+                    break
+            prev_dt = cur_dt
+        if gap_split:
+            rows = rows[:cutoff]
+        return rows, gap_split
+
+    async def _mark_summarized(self, ids: list[int]) -> None:
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        await self.bot.database.execute(
+            f"UPDATE stt_transcripts SET summarized = 1 WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+
+    async def _do_summarize(self, rows: list[dict], reason: str) -> bool:
+        """LLM 要約 + stt_summaries INSERT + stt_transcripts マーク + ChromaDB 保存。"""
         transcript_lines = []
         for r in rows:
             time_str = r["started_at"][:16] if r["started_at"] else "?"
@@ -144,28 +187,20 @@ class STTProcessor:
         )
         try:
             summary = await self.bot.llm_router.generate(
-                prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary"
+                prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary",
             )
         except Exception as e:
             log.warning("STT summary generation failed: %s", e)
             return False
 
-        # DB保存
         ids = [r["id"] for r in rows]
         ids_json = json.dumps(ids)
         await self.bot.database.execute(
             "INSERT INTO stt_summaries (summary, transcript_ids, created_at) VALUES (?, ?, ?)",
             (summary, ids_json, jst_now()),
         )
+        await self._mark_summarized(ids)
 
-        # transcript を要約済みにマーク
-        placeholders = ",".join("?" * len(ids))
-        await self.bot.database.execute(
-            f"UPDATE stt_transcripts SET summarized = 1 WHERE id IN ({placeholders})",
-            tuple(ids),
-        )
-
-        # ChromaDB 保存
         meta_period_start = rows[0]["started_at"] if rows[0]["started_at"] else ""
         meta_period_end = rows[-1]["ended_at"] if rows[-1]["ended_at"] else ""
         try:
@@ -181,23 +216,9 @@ class STTProcessor:
         except Exception as e:
             log.warning("STT summary ChromaDB save failed: %s", e)
 
-        # people_memory にも同じ要約を保存（いにわ本人の発話なので人物メモリーの一次情報として扱う）
-        try:
-            if getattr(self.bot, "people_memory", None):
-                await self.bot.people_memory.save(
-                    summary,
-                    metadata={
-                        "source": "stt",
-                        "period_start": meta_period_start,
-                        "period_end": meta_period_end,
-                    },
-                )
-        except Exception as e:
-            log.warning("STT summary people_memory save failed: %s", e)
-
         log.info(
             "STT summary created from %d transcripts (%d chars, reason=%s)",
-            len(ids), total_chars, reason,
+            len(ids), sum(len(r["raw_text"]) for r in rows), reason,
         )
         return True
 
@@ -267,20 +288,7 @@ class STTProcessor:
         except Exception as e:
             log.warning("STT resummarize ChromaDB update failed for id=%d: %s", summary_id, e)
 
-        # people_memory も上書き（doc_id が別なので過去分が残る点は要約元が同じなので許容）
-        try:
-            if getattr(self.bot, "people_memory", None):
-                await self.bot.people_memory.save(
-                    new_summary,
-                    metadata={
-                        "source": "stt",
-                        "period_start": meta_period_start,
-                        "period_end": meta_period_end,
-                        "resummarized_from": summary_id,
-                    },
-                )
-        except Exception as e:
-            log.warning("STT resummarize people_memory save failed for id=%d: %s", summary_id, e)
+        # NOTE: people_memory への保存は daily_diary 側で一本化（A案）。
 
         log.info("STT summary id=%d resummarized (%d transcripts)", summary_id, len(ids))
         return True

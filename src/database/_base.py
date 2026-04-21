@@ -15,7 +15,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 32
+_SCHEMA_VERSION = 33
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -789,6 +789,28 @@ class DatabaseBase:
                     occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )""",
                 "CREATE INDEX IF NOT EXISTS idx_clip_job_events_job ON clip_pipeline_job_events(job_id, occurred_at)",
+            ],
+            33: [
+                # OBS セッション（streaming / recording / replay_buffer の時間帯）
+                # ActivityCollector が Sub PC /activity の OBS 状態変化を検知して開閉する
+                """CREATE TABLE IF NOT EXISTS obs_sessions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind         TEXT NOT NULL,
+                    start_at     TEXT NOT NULL,
+                    end_at       TEXT,
+                    duration_sec INTEGER
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_obs_sessions_start ON obs_sessions(kind, start_at)",
+                # 日次活動記録（daily_summary 置き換え）
+                # 1日1レコード（date が主キー）。diary は記録調の文章、各種総計を併記。
+                """CREATE TABLE IF NOT EXISTS daily_diaries (
+                    date                TEXT PRIMARY KEY,
+                    diary               TEXT NOT NULL,
+                    streaming_detected  INTEGER NOT NULL DEFAULT 0,
+                    total_game_sec      INTEGER NOT NULL DEFAULT 0,
+                    total_stream_sec    INTEGER NOT NULL DEFAULT 0,
+                    created_at          TEXT NOT NULL
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
