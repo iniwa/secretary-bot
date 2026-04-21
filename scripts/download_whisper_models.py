@@ -6,10 +6,15 @@ Agent 側 `list_nas_models` は `<dest>/<model>/model.bin` の存在でモデル
 このスクリプトでは HuggingFace Hub から `Systran/faster-whisper-*` 相当の CT2 リポジトリを
 `<dest>/<model>/` に展開する。
 
-既定では `windows-agent/config/.env` の NAS_HOST / NAS_SHARE / NAS_USER / NAS_PASS を
-読み、Agent と同じ方式で `\\<HOST>\<SHARE>` を一時 `net use` してから UNC パス
-`\\<HOST>\<SHARE>\auto-kirinuki\models\whisper\<model>\` に書き込む。
-これで `W:` / `N:` のドライブレターが切れていても配置できる。
+配置先の決め方（image_gen の nas_mount.py に揃える）:
+    share    <- agent_config.yaml clip_pipeline.nas.share
+                → 無ければ .env NAS_SHARE → "Work"
+    subpath  <- clip_pipeline.nas.subpath (既定 "auto-kirinuki")
+    whisper  <- clip_pipeline.nas.whisper_subdir (既定 "models/whisper")
+
+認証は `.env` の NAS_HOST / NAS_USER / NAS_PASS。Agent と同じ方式で
+`\\<HOST>\<SHARE>` を一時 `net use` してから UNC 直書きするので、
+`W:` / `N:` のドライブレターが切れていても配置できる。
 
 Usage:
     python scripts/download_whisper_models.py large-v3-turbo large-v3
@@ -17,9 +22,8 @@ Usage:
     python scripts/download_whisper_models.py --dest "W:/auto-kirinuki/models/whisper" large-v3
 
 前提:
-    - pip install huggingface_hub
+    - pip install huggingface_hub pyyaml
     - windows-agent/config/.env に NAS_HOST / NAS_USER / NAS_PASS がある
-      （image_gen の nas_mount.py と同じ設計）
 """
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AGENT_ENV = REPO_ROOT / "windows-agent" / "config" / ".env"
+AGENT_CONFIG = REPO_ROOT / "windows-agent" / "config" / "agent_config.yaml"
 
 # モデル名 → HuggingFace Hub リポジトリ ID
 REPO_MAP: dict[str, str] = {
@@ -42,10 +47,6 @@ REPO_MAP: dict[str, str] = {
     "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
     "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
 }
-
-# NAS 上の whisper 置き場（SHARE 配下）— Agent config の clip_pipeline.nas と一致
-NAS_SUBPATH = r"auto-kirinuki\models\whisper"
-
 
 def _read_env(env_path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
@@ -60,14 +61,47 @@ def _read_env(env_path: Path) -> dict[str, str]:
     return env
 
 
-def ensure_nas_mount() -> str | None:
-    """Agent と同じ認証で `\\<HOST>\<SHARE>` を一時 net use し、UNC パス base を返す。
+def _read_clip_nas_cfg() -> dict:
+    """agent_config.yaml の clip_pipeline.nas を返す。無ければ空 dict。"""
+    if not AGENT_CONFIG.exists():
+        return {}
+    try:
+        import yaml  # lazy
+    except ImportError:
+        print("[warn] PyYAML が無いので agent_config.yaml を読み飛ばします (pip install pyyaml 推奨)")
+        return {}
+    try:
+        data = yaml.safe_load(AGENT_CONFIG.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        print(f"[warn] {AGENT_CONFIG} の読み込みに失敗: {e}")
+        return {}
+    return ((data.get("clip_pipeline") or {}).get("nas")) or {}
 
-    既にマウント済みなら何もせず UNC パスを返す。失敗時は None。
+
+def _resolve_nas_subpath() -> str:
+    """agent_config.yaml から clip_pipeline.nas.subpath + whisper_subdir を組む。
+    既定は `auto-kirinuki\models\whisper`。
+    """
+    cfg = _read_clip_nas_cfg()
+    subpath = (cfg.get("subpath") or "auto-kirinuki").strip("\\/")
+    whisper_sub = (cfg.get("whisper_subdir") or "models/whisper").strip("\\/")
+    return (subpath + "/" + whisper_sub).replace("/", "\\")
+
+
+def ensure_nas_mount() -> str | None:
+    """Agent と同じ share で `\\<HOST>\<SHARE>` を一時 net use し、UNC パス base を返す。
+
+    share の決定順:
+      1. agent_config.yaml の clip_pipeline.nas.share
+      2. .env の NAS_SHARE
+      3. "Work"
+
+    image_gen の nas_mount.py と合わせる。既にマウント済みなら net use はスキップ。
     """
     env = _read_env(AGENT_ENV)
-    host = env.get("NAS_HOST", "").strip()
-    share = env.get("NAS_SHARE", "").strip() or "Work"
+    cfg = _read_clip_nas_cfg()
+    host = (cfg.get("host") or env.get("NAS_HOST") or "").strip()
+    share = (cfg.get("share") or env.get("NAS_SHARE") or "Work").strip()
     user = env.get("NAS_USER", "").strip()
     pw = env.get("NAS_PASS", "").strip() or env.get("NAS_PASSWORD", "").strip()
     if not host:
@@ -139,13 +173,14 @@ def download_model(name: str, dest_base: Path) -> bool:
 
 
 def resolve_dest(arg_dest: str | None) -> Path | None:
-    """--dest の解決。未指定なら `\\<HOST>\<SHARE>\<NAS_SUBPATH>` を自動選択する。"""
+    """--dest の解決。未指定なら `\\<HOST>\<SHARE>\<subpath>\<whisper_subdir>` を
+    agent_config.yaml から組み立てる。"""
     if arg_dest:
         return Path(arg_dest)
     base = ensure_nas_mount()
     if not base:
         return None
-    return Path(base) / NAS_SUBPATH
+    return Path(base) / _resolve_nas_subpath()
 
 
 def main() -> int:
