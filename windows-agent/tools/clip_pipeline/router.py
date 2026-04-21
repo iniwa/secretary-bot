@@ -532,6 +532,51 @@ async def jobs_events(job_id: str, request: Request):
     )
 
 
+# --- /outputs/{stem}/edl ---
+@router.get(f"{_PREFIX}/outputs/{{stem}}/edl")
+async def outputs_edl(stem: str, request: Request):
+    """成果物ディレクトリ配下の timeline.edl を読み出して返す。
+
+    stem は `{outputs_base}/{stem}/timeline.edl` の {stem} 部分。Pi 側 job.output_dir
+    の末端 basename がそのまま入ってくる想定で、path traversal を防ぐために
+    区切り文字・`..` を禁止する。
+    """
+    _verify(request)
+    trace_id = _trace_id(request)
+    gate = _require_enabled(trace_id)
+    if gate:
+        return gate
+
+    if not stem or "/" in stem or "\\" in stem or stem in (".", ".."):
+        return _error_response(400, "ValidationError", "invalid stem", False, trace_id=trace_id)
+
+    try:
+        outputs_base = _nas_outputs_base()
+    except Exception as e:
+        return _error_response(500, "ResourceUnavailableError", f"outputs base unavailable: {e}", True, trace_id=trace_id)
+
+    if not outputs_base or not os.path.isdir(outputs_base):
+        return _error_response(500, "ResourceUnavailableError",
+            f"outputs base not accessible: {outputs_base}", True, trace_id=trace_id)
+
+    edl_path = os.path.join(outputs_base, stem, "timeline.edl")
+    if not os.path.isfile(edl_path):
+        return _error_response(404, "ValidationError",
+            f"edl not found: {edl_path}", False, trace_id=trace_id)
+
+    try:
+        with open(edl_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError as e:
+        return _error_response(500, "ClipPipelineError",
+            f"failed to read edl: {e}", True, trace_id=trace_id)
+
+    return JSONResponse(
+        {"stem": stem, "path": edl_path, "content": content, "size": len(content)},
+        headers={"X-Trace-Id": trace_id},
+    )
+
+
 @router.post(f"{_PREFIX}/jobs/{{job_id}}/cancel")
 async def jobs_cancel(job_id: str, request: Request):
     _verify(request)

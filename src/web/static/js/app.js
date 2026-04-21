@@ -125,7 +125,7 @@ function closeSidebar() {
 // ============================================================
 // Sidebar group collapse (persisted in localStorage)
 // ============================================================
-const COLLAPSE_KEY = 'sidebar-collapsed-groups';
+const COLLAPSE_KEY = 'sidebar-collapsed-groups-v2';
 
 function initCollapsibleGroups() {
   const sidebar = document.getElementById('sidebar');
