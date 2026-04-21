@@ -208,11 +208,11 @@ async def update_character_recommended_team_notes(db, character_id: int,
 
 async def update_character_recommended_main_stats(db, character_id: int,
                                                   main_stats: dict) -> int:
-    """slot (5/6/7) → list[str] の形式で保存。"""
+    """slot (4/5/6) → list[str] の形式で保存。"""
     clean: dict[str, list[str]] = {}
     for k, v in (main_stats or {}).items():
         key = str(k)
-        if key not in ("5", "6", "7"):
+        if key not in ("4", "5", "6"):
             continue
         if not isinstance(v, list):
             continue

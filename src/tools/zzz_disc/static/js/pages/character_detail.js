@@ -53,17 +53,16 @@ const SUB_STAT_CANDIDATES = [
   '会心率%', '会心ダメージ%', '異常マスタリー', '貫通値', '貫通率%',
 ];
 
-// 変動メインステスロット（4/5/6）の候補。内部 disc.slot と一致。
-// UI 上は「5 番 / 6 番 / 7 番ディスク」という慣用表記で表示する。
+// 変動メインステスロット（4/5/6 番）の候補。内部 disc.slot と一致。
 const MAIN_STAT_SLOTS = [
-  { key: '4', label: '4号位', candidates:
-    ['HP%', '攻撃力%', '防御力%', '会心率%', '会心ダメージ%', '異常掌握'] },
-  { key: '5', label: '5号位', candidates:
+  { key: '4', label: '4番', candidates:
+    ['HP%', '攻撃力%', '防御力%', '会心率%', '会心ダメージ%', '異常マスタリー'] },
+  { key: '5', label: '5番', candidates:
     ['HP%', '攻撃力%', '防御力%', '貫通率%',
      '物理属性ダメージ%', '炎属性ダメージ%', '氷属性ダメージ%',
      '電気属性ダメージ%', 'エーテル属性ダメージ%'] },
-  { key: '6', label: '6号位', candidates:
-    ['HP%', '攻撃力%', '防御力%', '異常マスタリー', '異常掌握',
+  { key: '6', label: '6番', candidates:
+    ['HP%', '攻撃力%', '防御力%', '異常掌握',
      '衝撃力%', 'エネルギー自動回復%'] },
 ];
 
@@ -252,12 +251,7 @@ function openRecTeamNotesEditor() {
   const wrap = document.createElement('div');
   wrap.innerHTML = `
     <div class="text-muted text-sm mb-1">
-      おすすめ編成・シナジー・カウンター例などを自由に記入。<br>
-      「コーデックスから取り込み」を押すと <code>docs/zzz_character_codex.md</code> の「編成例」セクションをそのまま貼り付けます。
-    </div>
-    <div class="flex-between mb-1">
-      <button class="btn btn-sm" id="rec-team-notes-import-btn" type="button">📖 コーデックスから取り込み</button>
-      <span class="text-muted text-sm rec-team-notes-import-status"></span>
+      おすすめ編成・シナジー・カウンター例などを自由に記入。
     </div>
     <textarea id="rec-team-notes-text" rows="8" style="width:100%;"
       placeholder="例: 妄想エンジェル編成（千夏 / アリア / 南宮羽）&#10;代替: 強攻編成（千夏 / 葉瞬光 / ダイアリン）など">${escapeHtml(ch?.recommended_team_notes || '')}</textarea>
@@ -267,41 +261,9 @@ function openRecTeamNotesEditor() {
     <button class="btn" data-act="cancel">キャンセル</button>
     <button class="btn btn-primary" data-act="ok">保存</button>
   `;
-
-  const textarea = wrap.querySelector('#rec-team-notes-text');
-  const importBtn = wrap.querySelector('#rec-team-notes-import-btn');
-  const importStatus = wrap.querySelector('.rec-team-notes-import-status');
-
-  importBtn.addEventListener('click', async () => {
-    const existing = (textarea.value || '').trim();
-    if (existing) {
-      const ok = await confirmDialog(
-        '既存のメモをコーデックスの「編成例」で上書きします。よろしいですか？'
-      );
-      if (!ok) return;
-    }
-    importBtn.disabled = true;
-    if (importStatus) importStatus.textContent = '取得中…';
-    try {
-      const res = await api(`/characters/${ch.id}/codex/teams`);
-      if (!res?.found || !res?.text) {
-        if (importStatus) importStatus.textContent = '';
-        toast('コーデックスに「編成例」セクションが見つかりません', 'warning');
-        return;
-      }
-      textarea.value = res.text;
-      if (importStatus) importStatus.textContent = '✓ 取り込み完了（保存で確定）';
-    } catch (err) {
-      if (importStatus) importStatus.textContent = '';
-      toast(`取り込み失敗: ${err.message || err}`, 'error');
-    } finally {
-      importBtn.disabled = false;
-    }
-  });
-
   footerEl.querySelector('[data-act="cancel"]').addEventListener('click', close);
   footerEl.querySelector('[data-act="ok"]').addEventListener('click', async () => {
-    const notes = textarea.value;
+    const notes = wrap.querySelector('#rec-team-notes-text').value;
     try {
       const res = await api(`/characters/${ch.id}/recommended-team-notes`, {
         method: 'PUT', body: { notes: notes || null },
@@ -447,7 +409,7 @@ function renderRecMainStatsSection() {
   }).join('');
   el.innerHTML = `
     <div class="recommended-editor" data-rec-kind="main_stats">
-      <h3 class="mb-1">🎯 推奨メインステ（4/5/6号位） <span class="text-muted text-sm rec-status"></span></h3>
+      <h3 class="mb-1">🎯 推奨メインステ <span class="text-muted text-sm rec-status"></span></h3>
       <div class="text-muted text-sm mb-1">チェックで即時保存。一覧フィルタとスワップモーダルの初期フィルタに反映されます</div>
       ${blocks}
     </div>

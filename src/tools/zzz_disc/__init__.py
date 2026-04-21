@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from src.logger import get_logger
 from src.web.cache_headers import NO_CACHE_HEADERS, NoCacheStaticFiles
 
-from . import models
+from . import codex, models
 from .job_queue import ZzzDiscJobQueue
 from .routes import build_router
 
@@ -30,6 +30,33 @@ def _load_config(bot) -> dict | None:
     cfg = getattr(bot, "config", None) or {}
     tools = cfg.get("tools") or {}
     return tools.get("zzz_disc")
+
+
+async def _seed_from_codex(db) -> None:
+    """docs/zzz_character_codex.md から recommended_team_notes / recommended_main_stats を
+    未設定のキャラに投入する（既存値は上書きしない）。"""
+    try:
+        chars = await models.list_characters(db)
+    except Exception as e:
+        log.warning("codex seed skipped: %s", e)
+        return
+    for ch in chars:
+        name = (ch.get("name_ja") or "").strip()
+        if not name:
+            continue
+        cid = ch["id"]
+        try:
+            if not ch.get("recommended_team_notes"):
+                text = codex.extract_teams(name)
+                if text:
+                    await models.update_character_recommended_team_notes(db, cid, text)
+            existing_ms = ch.get("recommended_main_stats") or {}
+            if not existing_ms or not any(existing_ms.values()):
+                ms = codex.extract_main_stats(name)
+                if ms:
+                    await models.update_character_recommended_main_stats(db, cid, ms)
+        except Exception as e:
+            log.warning("codex seed failed for %s: %s", name, e)
 
 
 async def _seed_master_data(db) -> None:
@@ -79,6 +106,7 @@ def register(app: FastAPI, bot) -> None:
         try:
             await models.init_schema(bot.database)
             await _seed_master_data(bot.database)
+            await _seed_from_codex(bot.database)
             jq = ZzzDiscJobQueue(
                 bot,
                 max_concurrent=max_concurrent,
