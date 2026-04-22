@@ -171,7 +171,7 @@ export function render() {
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table>
+        <table class="table-responsive">
           <thead>
             <tr>
               <th>Time</th>
@@ -201,7 +201,7 @@ export function render() {
     </div>
     <div class="card">
       <div class="table-wrap">
-        <table>
+        <table class="table-responsive">
           <thead>
             <tr>
               <th>Time</th>
@@ -253,11 +253,11 @@ function renderConvRows(logs) {
       : '';
     const channelLabel = l.channel_name || l.channel || '';
     return `<tr>
-      <td class="mono text-xs">${fmtTime(l.timestamp)}</td>
-      <td>${esc(channelLabel)}</td>
-      <td>${roleBadge}</td>
-      <td>${unitBadge}</td>
-      <td class="log-content-cell" title="${esc(l.content)}">${esc(truncate(l.content))}</td>
+      <td class="mono text-xs" data-label="Time">${fmtTime(l.timestamp)}</td>
+      <td data-label="Channel">${esc(channelLabel)}</td>
+      <td data-label="Role">${roleBadge}</td>
+      <td data-label="Unit">${unitBadge}</td>
+      <td class="log-content-cell" data-label="Content" title="${esc(l.content)}">${esc(truncate(l.content))}</td>
     </tr>`;
   }).join('');
 }
@@ -334,16 +334,16 @@ function renderLlmRows(logs) {
     }
 
     const mainRow = `<tr class="clickable-row" data-llm-id="${l.id}">
-      <td class="mono text-xs">${fmtTime(l.timestamp)}</td>
-      <td>${provBadge}</td>
-      <td class="text-xs">${esc(instanceLabel)}</td>
-      <td class="text-xs">${esc(l.model || '---')}</td>
-      <td>${esc(l.purpose || '---')}</td>
-      <td class="mono text-xs">${l.prompt_len ?? '---'}</td>
-      <td class="mono text-xs">${l.response_len ?? '---'}</td>
-      <td class="mono text-xs">${dur}</td>
-      <td class="tps-value">${tps}</td>
-      <td>${statusBadge}</td>
+      <td class="mono text-xs" data-label="Time">${fmtTime(l.timestamp)}</td>
+      <td data-label="Provider">${provBadge}</td>
+      <td class="text-xs" data-label="Instance">${esc(instanceLabel)}</td>
+      <td class="text-xs" data-label="Model">${esc(l.model || '---')}</td>
+      <td data-label="Purpose">${esc(l.purpose || '---')}</td>
+      <td class="mono text-xs" data-label="Prompt">${l.prompt_len ?? '---'}</td>
+      <td class="mono text-xs" data-label="Response">${l.response_len ?? '---'}</td>
+      <td class="mono text-xs" data-label="Duration">${dur}</td>
+      <td class="tps-value" data-label="TPS">${tps}</td>
+      <td data-label="Status">${statusBadge}</td>
     </tr>`;
 
     const expandContent = [];

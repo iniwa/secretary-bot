@@ -227,7 +227,7 @@ export function render() {
     <div class="card-header"><h3>Loaded Units</h3></div>
     <div class="card-body">
       <div class="table-wrap">
-        <table>
+        <table class="table-responsive">
           <thead>
             <tr>
               <th>Name</th>
@@ -409,10 +409,10 @@ async function loadUnits() {
     }
     $('m-units-body').innerHTML = units.map(u => `
       <tr>
-        <td>${esc(u.name)}</td>
-        <td>${esc(u.description || '-')}</td>
-        <td>${delegateBadge(u.delegate_to)}</td>
-        <td>${breakerBadge(u.breaker_state)}</td>
+        <td data-label="Name">${esc(u.name)}</td>
+        <td data-label="Description">${esc(u.description || '-')}</td>
+        <td data-label="Delegate To">${delegateBadge(u.delegate_to)}</td>
+        <td data-label="Circuit Breaker">${breakerBadge(u.breaker_state)}</td>
       </tr>
     `).join('');
   } catch (err) {

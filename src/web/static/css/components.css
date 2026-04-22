@@ -756,6 +756,56 @@ tr:hover td { background: var(--bg-raised); }
   select.form-input,
   .chat-form textarea { font-size: 16px; }
 
+  /* === Responsive table: 横スクロール → カード縦積みに切替 ===
+   * <table class="table-responsive"> を付けると、モバイル時に thead を隠し、
+   * tr をカード、td を「ラベル: 値」形式に変換する。
+   * 各 <td data-label="..."> の data-label がラベル文字列になる。 */
+  .table-responsive,
+  .table-responsive thead,
+  .table-responsive tbody,
+  .table-responsive tr,
+  .table-responsive th,
+  .table-responsive td { display: block; width: 100%; }
+  .table-responsive thead {
+    position: absolute;
+    left: -9999px;
+    top: -9999px;
+  }
+  .table-responsive tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    padding: 0.35rem 0.75rem;
+    margin-bottom: 0.65rem;
+  }
+  .table-responsive tr:hover td { background: transparent; }
+  .table-responsive td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed var(--border);
+    word-break: break-word;
+    text-align: right;
+  }
+  .table-responsive td:last-child { border-bottom: none; }
+  .table-responsive td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-align: left;
+  }
+  /* data-label がない (actions セル等) はラベル非表示 & 左揃え */
+  .table-responsive td:not([data-label])::before { display: none; }
+  .table-responsive td:not([data-label]) { justify-content: flex-start; text-align: left; }
+  /* table-wrap の中で responsive を使う場合、外枠の overflow を解除して縦に伸ばす */
+  .table-wrap:has(.table-responsive) { overflow: visible; }
+
   /* ボタン類: iOS HIG 準拠で最小 44x44 */
   .btn {
     min-height: var(--tap-target);
