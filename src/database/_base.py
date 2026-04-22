@@ -15,7 +15,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 34
+_SCHEMA_VERSION = 35
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -824,6 +824,32 @@ class DatabaseBase:
                 "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-1', 'placeholder_tag_a', NULL, 1, 0)",
                 "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-2', 'placeholder_tag_b', NULL, 1, 0)",
                 "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-3', 'placeholder_tag_c', NULL, 1, 0)",
+            ],
+            35: [
+                # === Gallery 強化: コレクション / プロンプト検索用インデックス / ワークフロー参照 ===
+                # コレクション（ユーザー定義の手動グルーピング）。お気に入り・タグとは別軸。
+                """CREATE TABLE IF NOT EXISTS image_collections (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL UNIQUE,
+                    description  TEXT,
+                    color        TEXT,
+                    pinned       INTEGER NOT NULL DEFAULT 0,
+                    created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )""",
+                # コレクション所属（多対多）。job_id はテキストUUID。
+                """CREATE TABLE IF NOT EXISTS image_collection_items (
+                    collection_id INTEGER NOT NULL,
+                    job_id        TEXT NOT NULL,
+                    added_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (collection_id, job_id),
+                    FOREIGN KEY (collection_id) REFERENCES image_collections(id) ON DELETE CASCADE
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_img_col_items_job ON image_collection_items(job_id)",
+                # プロンプト検索・並び替え高速化
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_finished ON generation_jobs(status, modality, finished_at DESC)",
+                # workflow_id の検索用
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_workflow ON generation_jobs(workflow_id)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

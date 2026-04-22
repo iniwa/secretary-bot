@@ -14,3 +14,4 @@ feedparser>=6.0,<7.0
 rapidfuzz>=3.0,<4.0
 python-multipart>=0.0.9
 genshin>=1.7,<2.0
+Pillow>=10.0,<12.0

@@ -43,63 +43,119 @@ export function isTerminal(s) {
 
 /** 汎用ライトボックス。画像・動画・音声を kind で切替表示。
  *  item: { url, kind, job_id?, positive?, negative?, favorite?, tags? }
- *  opts.onReuse(item): 「この設定で再現」が押されたコールバック
- *  opts.onFavoriteToggle(item, next): ⭐ ボタン押下時のコールバック
- *  opts.onTagsEdit(item): 🏷 ボタン押下時のコールバック（呼び出し側でモーダル表示）
+ *  opts.onReuse(item): 「この設定で再現」
+ *  opts.onFavoriteToggle(item, next): ⭐
+ *  opts.onTagsEdit(item, applyTags): 🏷
+ *  opts.onDelete(item): 🗑 削除
+ *  opts.onSimilar(item): 🔍 類似検索
+ *  opts.onAddToCollection(item): 📁 コレクションへ追加
+ *  opts.onNavigate(delta): ←/→ キーで呼ばれ、新しい item を返す（null で終端）
  */
 export function openLightbox(item, opts = {}) {
+  let current = item;
   const el = document.createElement('div');
   el.className = 'imggen-lightbox';
-  const kind = (item.kind || 'image');
-  let media = '';
-  if (kind === 'video') {
-    media = `<video src="${esc(item.url)}" controls autoplay></video>`;
-  } else if (kind === 'audio') {
-    media = `<audio src="${esc(item.url)}" controls autoplay style="width:60vw"></audio>`;
-  } else {
-    media = `<img src="${esc(item.url)}" alt="">`;
+
+  function renderBody() {
+    const kind = (current.kind || 'image');
+    let media = '';
+    if (kind === 'video') {
+      media = `<video src="${esc(current.url)}" controls autoplay></video>`;
+    } else if (kind === 'audio') {
+      media = `<audio src="${esc(current.url)}" controls autoplay style="width:60vw"></audio>`;
+    } else {
+      media = `<img src="${esc(current.url)}" alt="">`;
+    }
+    const actions = [];
+    if (opts.onNavigate) {
+      actions.push(`<button data-act="prev" title="前へ (←)">◀</button>`);
+    }
+    if (opts.onFavoriteToggle) {
+      const star = current.favorite ? '★' : '☆';
+      actions.push(`<button data-act="fav" title="お気に入り (f)" class="imggen-lb-star ${current.favorite ? 'on' : ''}">${star}</button>`);
+    }
+    if (opts.onTagsEdit) {
+      actions.push(`<button data-act="tags" title="タグ編集 (t)">🏷 タグ</button>`);
+    }
+    if (opts.onExtract) {
+      actions.push(`<button data-act="extract" title="Extract ページでプロンプトを抽出">📝 プロンプト → Extract</button>`);
+    } else if (current.positive || current.negative) {
+      actions.push(`<button data-act="prompt" title="プロンプトを表示 (p)">📝 プロンプト</button>`);
+    }
+    if (opts.onSimilar) {
+      actions.push(`<button data-act="similar" title="類似プロンプトを検索">🔍 類似</button>`);
+    }
+    if (opts.onAddToCollection) {
+      actions.push(`<button data-act="collect" title="コレクションへ追加">📁 保存</button>`);
+    }
+    if (opts.onReuse) {
+      actions.push(`<button data-act="reuse" title="この設定で再現 (r)">この設定で再現</button>`);
+    }
+    actions.push(`<a href="${esc(current.url)}" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none;padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface,#1d1d1d);font-size:0.75rem;">開く ↗</a>`);
+    if (opts.onDelete) {
+      actions.push(`<button data-act="delete" title="削除 (Del)" class="btn-danger">🗑 削除</button>`);
+    }
+    if (opts.onNavigate) {
+      actions.push(`<button data-act="next" title="次へ (→)">▶</button>`);
+    }
+    actions.push(`<button data-act="close" title="閉じる (Esc)">閉じる</button>`);
+    const tagsLine = (current.tags && current.tags.length)
+      ? `<div class="imggen-lb-tags">${current.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>`
+      : '';
+    el.innerHTML = `
+      ${media}
+      ${tagsLine}
+      <div class="imggen-lightbox-actions">${actions.join('')}</div>
+    `;
   }
-  const actions = [];
-  if (opts.onFavoriteToggle) {
-    const star = item.favorite ? '★' : '☆';
-    actions.push(`<button data-act="fav" title="お気に入り" class="imggen-lb-star ${item.favorite ? 'on' : ''}">${star}</button>`);
+
+  renderBody();
+
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    el.remove();
+  };
+
+  async function navigate(delta) {
+    if (!opts.onNavigate) return;
+    const next = await opts.onNavigate(delta);
+    if (next) {
+      current = next;
+      renderBody();
+    }
   }
-  if (opts.onTagsEdit) {
-    actions.push(`<button data-act="tags" title="タグ編集">🏷 タグ</button>`);
-  }
-  if (opts.onExtract) {
-    // Extract ページへ遷移して PNG メタデータ抽出を行うフック
-    actions.push(`<button data-act="extract" title="Extract ページでプロンプトを抽出">📝 プロンプト → Extract</button>`);
-  } else if (item.positive || item.negative) {
-    actions.push(`<button data-act="prompt" title="プロンプトを表示">📝 プロンプト</button>`);
-  }
-  if (opts.onReuse) {
-    actions.push(`<button data-act="reuse">この設定で再現</button>`);
-  }
-  actions.push(`<a href="${esc(item.url)}" target="_blank" rel="noopener" style="color:var(--text-primary);text-decoration:none;padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface,#1d1d1d);font-size:0.75rem;">開く ↗</a>`);
-  actions.push(`<button data-act="close">閉じる</button>`);
-  const tagsLine = (item.tags && item.tags.length)
-    ? `<div class="imggen-lb-tags">${item.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>`
-    : '';
-  el.innerHTML = `
-    ${media}
-    ${tagsLine}
-    <div class="imggen-lightbox-actions">${actions.join('')}</div>
-  `;
-  const close = () => el.remove();
+
   el.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('button');
     if (btn?.dataset.act === 'close') return close();
+    if (btn?.dataset.act === 'prev') { ev.stopPropagation(); return navigate(-1); }
+    if (btn?.dataset.act === 'next') { ev.stopPropagation(); return navigate(+1); }
     if (btn?.dataset.act === 'reuse') {
-      opts.onReuse?.(item);
+      opts.onReuse?.(current);
       return close();
+    }
+    if (btn?.dataset.act === 'delete') {
+      ev.stopPropagation();
+      const ok = await opts.onDelete?.(current);
+      if (ok) await navigate(+1) || close();
+      return;
+    }
+    if (btn?.dataset.act === 'similar') {
+      ev.stopPropagation();
+      opts.onSimilar?.(current);
+      return close();
+    }
+    if (btn?.dataset.act === 'collect') {
+      ev.stopPropagation();
+      await opts.onAddToCollection?.(current);
+      return;
     }
     if (btn?.dataset.act === 'fav') {
       ev.stopPropagation();
-      const next = !item.favorite;
-      const ok = await opts.onFavoriteToggle?.(item, next);
+      const next = !current.favorite;
+      const ok = await opts.onFavoriteToggle?.(current, next);
       if (ok !== false) {
-        item.favorite = next;
+        current.favorite = next;
         btn.textContent = next ? '★' : '☆';
         btn.classList.toggle('on', next);
       }
@@ -107,18 +163,18 @@ export function openLightbox(item, opts = {}) {
     }
     if (btn?.dataset.act === 'prompt') {
       ev.stopPropagation();
-      openPromptModal(item);
+      openPromptModal(current);
       return;
     }
     if (btn?.dataset.act === 'extract') {
       ev.stopPropagation();
-      opts.onExtract?.(item);
+      opts.onExtract?.(current);
       return close();
     }
     if (btn?.dataset.act === 'tags') {
       ev.stopPropagation();
-      opts.onTagsEdit?.(item, (newTags) => {
-        item.tags = newTags;
+      opts.onTagsEdit?.(current, (newTags) => {
+        current.tags = newTags;
         const cur = el.querySelector('.imggen-lb-tags');
         const html = newTags.length
           ? newTags.map(t => `<span class="tag">${esc(t)}</span>`).join('')
@@ -137,12 +193,48 @@ export function openLightbox(item, opts = {}) {
     }
     if (ev.target === el) close();
   });
-  document.addEventListener('keydown', function onKey(e) {
-    if (e.key === 'Escape') {
-      close();
-      document.removeEventListener('keydown', onKey);
+
+  function onKey(e) {
+    // 入力フィールドにフォーカスがあるときはスキップ
+    const tag = (document.activeElement?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable) {
+      if (e.key === 'Escape') close();
+      return;
     }
-  });
+    switch (e.key) {
+      case 'Escape': close(); break;
+      case 'ArrowLeft': e.preventDefault(); navigate(-1); break;
+      case 'ArrowRight': e.preventDefault(); navigate(+1); break;
+      case 'f': case 'F':
+        if (opts.onFavoriteToggle) {
+          const next = !current.favorite;
+          Promise.resolve(opts.onFavoriteToggle(current, next)).then((ok) => {
+            if (ok !== false) {
+              current.favorite = next;
+              const btn = el.querySelector('[data-act="fav"]');
+              if (btn) {
+                btn.textContent = next ? '★' : '☆';
+                btn.classList.toggle('on', next);
+              }
+            }
+          });
+        }
+        break;
+      case 't': case 'T':
+        el.querySelector('[data-act="tags"]')?.click();
+        break;
+      case 'p': case 'P':
+        el.querySelector('[data-act="prompt"]')?.click();
+        break;
+      case 'r': case 'R':
+        el.querySelector('[data-act="reuse"]')?.click();
+        break;
+      case 'Delete':
+        el.querySelector('[data-act="delete"]')?.click();
+        break;
+    }
+  }
+  document.addEventListener('keydown', onKey, true);
   document.body.appendChild(el);
   return close;
 }

@@ -19,15 +19,30 @@ export const GenerationAPI = {
       method: 'POST',
     });
   },
-  gallery({ limit = 50, offset = 0, favorite = false, tag = null, nsfw = false } = {}) {
-    const params = { limit, offset };
+  gallery({
+    limit = 60, offset = 0, favorite = false,
+    tags = null, nsfw = false, q = '',
+    workflow = null, collectionId = null,
+    dateFrom = null, dateTo = null, order = 'new',
+  } = {}) {
+    const params = { limit, offset, order };
     if (favorite) params.favorite = 1;
-    if (tag) params.tag = tag;
     if (nsfw) params.nsfw = 1;
+    if (q) params.q = q;
+    if (workflow) params.workflow = workflow;
+    if (collectionId) params.collection_id = collectionId;
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    if (tags && tags.length) params.tags = tags.join(',');
     return api('/api/generation/gallery', { params });
   },
   galleryTags() {
     return api('/api/generation/gallery/tags');
+  },
+  gallerySimilar(jobId, limit = 20) {
+    return api(`/api/generation/gallery/similar/${encodeURIComponent(jobId)}`, {
+      params: { limit },
+    });
   },
   setJobFavorite(jobId, favorite) {
     return api(`/api/generation/jobs/${encodeURIComponent(jobId)}/favorite`, {
@@ -37,6 +52,51 @@ export const GenerationAPI = {
   setJobTags(jobId, tags) {
     return api(`/api/generation/jobs/${encodeURIComponent(jobId)}/tags`, {
       method: 'PATCH', body: { tags },
+    });
+  },
+  deleteJob(jobId, { keepFiles = false } = {}) {
+    const qs = keepFiles ? '?keep_files=1' : '';
+    return api(`/api/generation/jobs/${encodeURIComponent(jobId)}${qs}`, {
+      method: 'DELETE',
+    });
+  },
+  bulkDelete(jobIds, { keepFiles = false } = {}) {
+    return api('/api/generation/jobs/bulk-delete', {
+      method: 'POST', body: { job_ids: jobIds, keep_files: keepFiles },
+    });
+  },
+  bulkFavorite(jobIds, favorite) {
+    return api('/api/generation/jobs/bulk-favorite', {
+      method: 'POST', body: { job_ids: jobIds, favorite },
+    });
+  },
+  bulkTags(jobIds, tags, mode = 'add') {
+    return api('/api/generation/jobs/bulk-tags', {
+      method: 'POST', body: { job_ids: jobIds, tags, mode },
+    });
+  },
+
+  // Collections
+  listCollections() {
+    return api('/api/generation/collections');
+  },
+  createCollection(body) {
+    return api('/api/generation/collections', { method: 'POST', body });
+  },
+  updateCollection(id, body) {
+    return api(`/api/generation/collections/${id}`, { method: 'PATCH', body });
+  },
+  deleteCollection(id) {
+    return api(`/api/generation/collections/${id}`, { method: 'DELETE' });
+  },
+  addJobsToCollection(id, jobIds) {
+    return api(`/api/generation/collections/${id}/jobs`, {
+      method: 'POST', body: { job_ids: jobIds },
+    });
+  },
+  removeJobsFromCollection(id, jobIds) {
+    return api(`/api/generation/collections/${id}/jobs`, {
+      method: 'DELETE', body: { job_ids: jobIds },
     });
   },
 

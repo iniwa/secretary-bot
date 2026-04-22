@@ -464,18 +464,30 @@ class ImageGenUnit(BaseUnit):
         self, limit: int = 50, offset: int = 0,
         favorite_only: bool = False, tag: str | None = None,
         nsfw: bool | None = False,
+        q: str | None = None,
+        tags_all: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        workflow_name: str | None = None,
+        collection_id: int | None = None,
+        order: str = "new",
     ) -> list[dict]:
-        """完了ジョブの result_paths を日付降順で列挙する。
+        """完了ジョブの result_paths を列挙する。
 
-        Phase1 は DB の generation_jobs.result_paths を参照する簡易実装。
-        Phase2 で NAS outputs/ を直接走査する実装に差し替える。
-
-        favorite_only=True で ⭐ のみ、tag 指定で当該タグを含むジョブのみ返す。
+        favorite_only=True で ⭐ のみ、tag/tags_all で絞り込み、q は prompt 検索。
         nsfw=False (既定) で SFW のみ、True で NSFW のみ、None で両方。
         """
+        # 後方互換: tag 単数 → tags_all へ合流
+        if tag and not tags_all:
+            tags_all = [tag]
         rows = await self.bot.database.generation_job_list(
             status=STATUS_DONE, modality="image", limit=limit, offset=offset,
-            nsfw=nsfw,
+            nsfw=nsfw, favorite_only=favorite_only,
+            q=q, tags_all=tags_all,
+            date_from=date_from, date_to=date_to,
+            workflow_name=workflow_name,
+            collection_id=collection_id,
+            order=order,
         )
         out: list[dict] = []
         for r in rows:
@@ -499,14 +511,11 @@ class ImageGenUnit(BaseUnit):
             except Exception:
                 tags = []
             favorite = bool(r.get("favorite"))
-            if favorite_only and not favorite:
-                continue
-            if tag and tag not in tags:
-                continue
             out.append({
                 "job_id": r["id"],
                 "user_id": r["user_id"],
                 "finished_at": r.get("finished_at"),
+                "workflow_id": r.get("workflow_id"),
                 "result_paths": paths,
                 "result_kinds": kinds,
                 "positive": r.get("positive"),

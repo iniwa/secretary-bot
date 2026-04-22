@@ -93,9 +93,35 @@ class GenerationJobMixin:
         modality: str | None = None,
         limit: int = 50, offset: int = 0,
         nsfw: bool | None = None,
+        favorite_only: bool = False,
+        q: str | None = None,
+        tags_all: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        workflow_name: str | None = None,
+        collection_id: int | None = None,
+        order: str = "new",
     ) -> list[dict]:
+        """generation_jobs の絞り込み + 検索 + 並び替え。
+
+        - q: positive/negative/tags への部分一致（スペース区切り AND）
+        - tags_all: すべて含むタグ配列（JSON 文字列への LIKE）
+        - date_from/date_to: finished_at の範囲（JST "YYYY-MM-DD" 想定、inclusive）
+        - workflow_name: 参照する workflows.name（JOIN）
+        - collection_id: image_collection_items に存在するジョブのみ
+        - order: 'new' (finished_at DESC) / 'old' (ASC) / 'fav' (favorite DESC, finished_at DESC)
+        """
         conditions: list[str] = []
         params: list = []
+        join = ""
+        if workflow_name:
+            join = " JOIN workflows w ON w.id = generation_jobs.workflow_id"
+            conditions.append("w.name = ?")
+            params.append(workflow_name)
+        if collection_id is not None:
+            join += " JOIN image_collection_items ci ON ci.job_id = generation_jobs.id"
+            conditions.append("ci.collection_id = ?")
+            params.append(int(collection_id))
         if user_id:
             conditions.append("user_id = ?")
             params.append(user_id)
@@ -108,13 +134,51 @@ class GenerationJobMixin:
         if nsfw is not None:
             conditions.append("is_nsfw = ?")
             params.append(1 if nsfw else 0)
+        if favorite_only:
+            conditions.append("favorite = 1")
+        if date_from:
+            conditions.append("finished_at >= ?")
+            params.append(f"{date_from} 00:00:00")
+        if date_to:
+            conditions.append("finished_at <= ?")
+            params.append(f"{date_to} 23:59:59")
+        if q:
+            for token in [t for t in q.split() if t]:
+                like = f"%{token}%"
+                conditions.append(
+                    "(positive LIKE ? OR negative LIKE ? OR tags LIKE ?)"
+                )
+                params.extend([like, like, like])
+        if tags_all:
+            for t in tags_all:
+                conditions.append("tags LIKE ?")
+                # JSON 配列なので ["tag"] 境界込みで検索
+                params.append(f'%"{t}"%')
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        order_sql = {
+            "new": "finished_at DESC, created_at DESC",
+            "old": "finished_at ASC, created_at ASC",
+            "fav": "favorite DESC, finished_at DESC",
+        }.get(order, "finished_at DESC, created_at DESC")
         params.extend([limit, offset])
         return await self.fetchall(
-            f"SELECT * FROM generation_jobs{where} "
-            f"ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT generation_jobs.* FROM generation_jobs{join}{where} "
+            f"ORDER BY {order_sql} LIMIT ? OFFSET ?",
             tuple(params),
         )
+
+    async def generation_job_delete(self, job_id: str) -> bool:
+        """ジョブ 1 件を物理削除。events と collection_items も CASCADE 相当で削除。"""
+        await self.execute(
+            "DELETE FROM generation_job_events WHERE job_id = ?", (job_id,),
+        )
+        await self.execute(
+            "DELETE FROM image_collection_items WHERE job_id = ?", (job_id,),
+        )
+        rc = await self.execute_returning_rowcount(
+            "DELETE FROM generation_jobs WHERE id = ?", (job_id,),
+        )
+        return rc > 0
 
     async def generation_job_claim_queued(self) -> dict | None:
         """楽観ロックで 1 件 queued → dispatching へ遷移させ、該当行を返す。
@@ -319,3 +383,120 @@ class GenerationJobMixin:
 
     async def image_job_events_list(self, job_id: str) -> list[dict]:
         return await self.generation_job_events_list(job_id)
+
+    # === Gallery: コレクション（手動グルーピング）===
+
+    async def image_collection_list(self) -> list[dict]:
+        """コレクション一覧。pinned 優先、updated_at 降順。item_count 同梱。"""
+        return await self.fetchall(
+            "SELECT c.*, ("
+            "  SELECT COUNT(*) FROM image_collection_items i "
+            "   WHERE i.collection_id = c.id"
+            ") AS item_count "
+            "FROM image_collections c "
+            "ORDER BY c.pinned DESC, c.updated_at DESC"
+        )
+
+    async def image_collection_get(self, collection_id: int) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM image_collections WHERE id = ?", (int(collection_id),),
+        )
+
+    async def image_collection_get_by_name(self, name: str) -> dict | None:
+        return await self.fetchone(
+            "SELECT * FROM image_collections WHERE name = ?", (name,),
+        )
+
+    async def image_collection_insert(
+        self, *, name: str, description: str | None = None,
+        color: str | None = None, pinned: bool = False,
+    ) -> int:
+        await self.execute(
+            "INSERT INTO image_collections (name, description, color, pinned, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, color, 1 if pinned else 0, jst_now(), jst_now()),
+        )
+        row = await self.fetchone(
+            "SELECT id FROM image_collections WHERE name = ?", (name,),
+        )
+        return int(row["id"]) if row else 0
+
+    async def image_collection_update(
+        self, collection_id: int, **fields,
+    ) -> bool:
+        allowed = {"name", "description", "color", "pinned"}
+        sets: list[str] = []
+        params: list = []
+        for k, v in fields.items():
+            if k not in allowed or v is None:
+                continue
+            if k == "pinned":
+                v = 1 if v else 0
+            sets.append(f"{k} = ?")
+            params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at = ?")
+        params.append(jst_now())
+        params.append(int(collection_id))
+        rc = await self.execute_returning_rowcount(
+            f"UPDATE image_collections SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+        return rc > 0
+
+    async def image_collection_delete(self, collection_id: int) -> bool:
+        await self.execute(
+            "DELETE FROM image_collection_items WHERE collection_id = ?",
+            (int(collection_id),),
+        )
+        rc = await self.execute_returning_rowcount(
+            "DELETE FROM image_collections WHERE id = ?", (int(collection_id),),
+        )
+        return rc > 0
+
+    async def image_collection_add_jobs(
+        self, collection_id: int, job_ids: list[str],
+    ) -> int:
+        """複数 job_id を一括でコレクションに追加。追加件数を返す。"""
+        if not job_ids:
+            return 0
+        added = 0
+        for jid in job_ids:
+            rc = await self.execute_returning_rowcount(
+                "INSERT OR IGNORE INTO image_collection_items "
+                "(collection_id, job_id, added_at) VALUES (?, ?, ?)",
+                (int(collection_id), jid, jst_now()),
+            )
+            added += rc
+        if added:
+            await self.execute(
+                "UPDATE image_collections SET updated_at = ? WHERE id = ?",
+                (jst_now(), int(collection_id)),
+            )
+        return added
+
+    async def image_collection_remove_jobs(
+        self, collection_id: int, job_ids: list[str],
+    ) -> int:
+        if not job_ids:
+            return 0
+        placeholders = ",".join("?" for _ in job_ids)
+        rc = await self.execute_returning_rowcount(
+            f"DELETE FROM image_collection_items "
+            f"WHERE collection_id = ? AND job_id IN ({placeholders})",
+            tuple([int(collection_id), *job_ids]),
+        )
+        if rc:
+            await self.execute(
+                "UPDATE image_collections SET updated_at = ? WHERE id = ?",
+                (jst_now(), int(collection_id)),
+            )
+        return rc
+
+    async def image_collection_jobs_of(self, job_id: str) -> list[int]:
+        rows = await self.fetchall(
+            "SELECT collection_id FROM image_collection_items WHERE job_id = ?",
+            (job_id,),
+        )
+        return [int(r["collection_id"]) for r in rows]

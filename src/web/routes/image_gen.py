@@ -272,19 +272,55 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         return {"ok": bool(ok)}
 
     @app.get("/api/generation/gallery", dependencies=[Depends(ctx.verify)])
-    async def generation_gallery(
-        limit: int = 50, offset: int = 0,
-        favorite: int = 0, tag: str | None = None,
-        nsfw: int = 0,
-    ):
+    async def generation_gallery(request: Request):
+        """ギャラリー一覧。検索・フィルタ・並び替え対応。
+
+        クエリ（全て任意）:
+          q            : prompt 部分一致（スペース区切り AND）
+          tag          : 単一タグ（後方互換）
+          tags         : 複数タグ（カンマ区切り or 繰り返し指定）
+          favorite     : 1 で ⭐ のみ
+          nsfw         : 1 で NSFW のみ
+          workflow     : workflows.name
+          collection_id: コレクション所属ジョブのみ
+          date_from    : YYYY-MM-DD
+          date_to      : YYYY-MM-DD
+          order        : new / old / fav
+          limit, offset: ページング（limit は 1-200）
+        """
+        qs = request.query_params
         unit = _get_image_gen_unit()
-        limit = max(1, min(200, int(limit)))
-        offset = max(0, int(offset))
-        # nsfw=0（既定）→ SFW のみ、nsfw=1 → NSFW のみ
+        limit = max(1, min(200, int(qs.get("limit") or 50)))
+        offset = max(0, int(qs.get("offset") or 0))
+        q = (qs.get("q") or "").strip() or None
+        favorite = qs.get("favorite") in ("1", "true")
+        nsfw = qs.get("nsfw") in ("1", "true")
+        workflow_name = (qs.get("workflow") or "").strip() or None
+        collection_id_raw = qs.get("collection_id")
+        collection_id = int(collection_id_raw) if collection_id_raw else None
+        date_from = (qs.get("date_from") or "").strip() or None
+        date_to = (qs.get("date_to") or "").strip() or None
+        order = (qs.get("order") or "new").strip()
+        # tags: `tags=a,b` or `tags=a&tags=b`、加えて単数 `tag=a`
+        tags_all: list[str] = []
+        single_tag = (qs.get("tag") or "").strip()
+        if single_tag:
+            tags_all.append(single_tag)
+        for raw in qs.getlist("tags"):
+            for t in (raw or "").split(","):
+                s = t.strip()
+                if s and s not in tags_all:
+                    tags_all.append(s)
         rows = await unit.list_gallery(
             limit=limit, offset=offset,
-            favorite_only=bool(favorite), tag=(tag or None),
-            nsfw=bool(nsfw),
+            favorite_only=favorite,
+            tags_all=tags_all or None,
+            nsfw=nsfw,
+            q=q,
+            date_from=date_from, date_to=date_to,
+            workflow_name=workflow_name,
+            collection_id=collection_id,
+            order=order,
         )
         items: list[dict] = []
         for r in rows:
@@ -292,21 +328,259 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             kinds = r.get("result_kinds") or []
             if len(kinds) != len(paths):
                 kinds = ["image"] * len(paths)
+            from urllib.parse import quote
             for p, kind in zip(paths, kinds, strict=False):
+                base_qs = f"path={quote(p, safe='')}"
                 items.append({
                     "job_id": r.get("job_id"),
                     "path": p,
                     "kind": kind,
-                    "thumb_url": f"/api/image/file?path={p}",
-                    "url": f"/api/image/file?path={p}",
+                    "thumb_url": f"/api/image/file?{base_qs}&size=thumb" if kind == "image" else f"/api/image/file?{base_qs}",
+                    "preview_url": f"/api/image/file?{base_qs}&size=medium" if kind == "image" else f"/api/image/file?{base_qs}",
+                    "url": f"/api/image/file?{base_qs}",
                     "created_at": r.get("finished_at"),
+                    "workflow_id": r.get("workflow_id"),
                     "positive": r.get("positive"),
                     "negative": r.get("negative"),
                     "favorite": r.get("favorite", False),
                     "tags": r.get("tags") or [],
                     "is_nsfw": bool(r.get("is_nsfw", False)),
                 })
-        return {"items": items}
+        return {"items": items, "has_more": len(rows) == limit}
+
+    @app.delete("/api/generation/jobs/{job_id}", dependencies=[Depends(ctx.verify)])
+    async def generation_job_delete(job_id: str, request: Request):
+        """ジョブの物理削除。既定で NAS 上の result_paths も削除する。
+
+        Query:
+          keep_files=1 で DB 行のみ削除（ファイルは残す）
+        """
+        unit = _get_image_gen_unit()
+        row = await bot.database.generation_job_get(job_id)
+        if not row:
+            raise HTTPException(404, "job not found")
+        keep_files = request.query_params.get("keep_files") in ("1", "true")
+        # 実行中はまずキャンセル
+        if row["status"] not in ("done", "failed", "cancelled"):
+            try:
+                await unit.cancel_job(job_id)
+            except Exception:
+                pass
+        removed_files = 0
+        if not keep_files:
+            paths: list[str] = []
+            try:
+                paths = json.loads(row.get("result_paths") or "[]")
+            except Exception:
+                paths = []
+            if paths:
+                from pathlib import Path
+                mount_real = None
+                try:
+                    mount_real = Path(_get_nas_mount_point()).resolve()
+                except Exception:
+                    mount_real = None
+                for p in paths:
+                    try:
+                        raw = Path(p)
+                        target = raw if raw.is_absolute() else (mount_real / raw)
+                        real = target.resolve(strict=False)
+                        if mount_real is not None:
+                            real.relative_to(mount_real)  # path traversal ガード
+                        if real.is_file():
+                            real.unlink()
+                            removed_files += 1
+                    except Exception:
+                        # 個別失敗は無視（すでに消えてる・別マウント等）
+                        pass
+        ok = await bot.database.generation_job_delete(job_id)
+        if not ok:
+            raise HTTPException(500, "db delete failed")
+        return {"ok": True, "removed_files": removed_files}
+
+    @app.post("/api/generation/jobs/bulk-delete", dependencies=[Depends(ctx.verify)])
+    async def generation_jobs_bulk_delete(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ids = body.get("job_ids") or []
+        if not isinstance(ids, list) or not all(isinstance(s, str) for s in ids):
+            raise HTTPException(400, "job_ids must be list[str]")
+        keep_files = bool(body.get("keep_files"))
+        deleted = 0
+        removed_files = 0
+        unit = _get_image_gen_unit()
+        from pathlib import Path
+        mount_real = None
+        try:
+            mount_real = Path(_get_nas_mount_point()).resolve()
+        except Exception:
+            pass
+        for jid in ids:
+            row = await bot.database.generation_job_get(jid)
+            if not row:
+                continue
+            if row["status"] not in ("done", "failed", "cancelled"):
+                try:
+                    await unit.cancel_job(jid)
+                except Exception:
+                    pass
+            if not keep_files:
+                try:
+                    paths = json.loads(row.get("result_paths") or "[]")
+                except Exception:
+                    paths = []
+                for p in paths:
+                    try:
+                        raw = Path(p)
+                        target = raw if raw.is_absolute() else (mount_real / raw)
+                        real = target.resolve(strict=False)
+                        if mount_real is not None:
+                            real.relative_to(mount_real)
+                        if real.is_file():
+                            real.unlink()
+                            removed_files += 1
+                    except Exception:
+                        pass
+            if await bot.database.generation_job_delete(jid):
+                deleted += 1
+        return {"ok": True, "deleted": deleted, "removed_files": removed_files}
+
+    @app.post("/api/generation/jobs/bulk-favorite", dependencies=[Depends(ctx.verify)])
+    async def generation_jobs_bulk_favorite(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ids = body.get("job_ids") or []
+        favorite = bool(body.get("favorite"))
+        if not isinstance(ids, list) or not all(isinstance(s, str) for s in ids):
+            raise HTTPException(400, "job_ids must be list[str]")
+        updated = 0
+        for jid in ids:
+            if await bot.database.generation_job_set_favorite(jid, favorite):
+                updated += 1
+        return {"ok": True, "updated": updated, "favorite": favorite}
+
+    @app.post("/api/generation/jobs/bulk-tags", dependencies=[Depends(ctx.verify)])
+    async def generation_jobs_bulk_tags(request: Request):
+        """複数ジョブに対してタグを付与/除去。
+
+        mode=add: 既存タグにマージ
+        mode=remove: 指定タグを除去
+        mode=set: 指定タグで上書き
+        """
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ids = body.get("job_ids") or []
+        tags = body.get("tags") or []
+        mode = str(body.get("mode") or "add")
+        if not isinstance(ids, list) or not all(isinstance(s, str) for s in ids):
+            raise HTTPException(400, "job_ids must be list[str]")
+        if not isinstance(tags, list):
+            raise HTTPException(400, "tags must be array")
+        tags = [str(t).strip() for t in tags if str(t).strip()]
+        updated = 0
+        for jid in ids:
+            row = await bot.database.generation_job_get(jid)
+            if not row:
+                continue
+            try:
+                cur = json.loads(row.get("tags") or "[]") or []
+            except Exception:
+                cur = []
+            if mode == "set":
+                new = list(tags)
+            elif mode == "remove":
+                new = [t for t in cur if t not in tags]
+            else:  # add
+                seen = set(cur)
+                new = list(cur)
+                for t in tags:
+                    if t not in seen:
+                        new.append(t)
+                        seen.add(t)
+            tags_json = json.dumps(new, ensure_ascii=False) if new else None
+            if await bot.database.generation_job_set_tags(jid, tags_json):
+                updated += 1
+        return {"ok": True, "updated": updated}
+
+    @app.get("/api/generation/gallery/similar/{job_id}", dependencies=[Depends(ctx.verify)])
+    async def generation_gallery_similar(job_id: str, limit: int = 20):
+        """プロンプト類似ジョブを Jaccard 係数で返す軽量実装。"""
+        base = await bot.database.generation_job_get(job_id)
+        if not base:
+            raise HTTPException(404, "job not found")
+
+        def tokenize(pos: str | None) -> set[str]:
+            if not pos:
+                return set()
+            out = set()
+            for part in str(pos).replace("\n", ",").split(","):
+                s = part.strip().lower()
+                # 重み記法 (tag:1.2) を剥がす
+                if s.startswith("("):
+                    s = s.strip("()")
+                    if ":" in s:
+                        s = s.split(":", 1)[0]
+                if s and len(s) >= 2:
+                    out.add(s)
+            return out
+
+        base_tokens = tokenize(base.get("positive"))
+        if not base_tokens:
+            return {"items": []}
+        # 同一モダリティの直近ジョブを広めに取得してスコアリング
+        limit = max(1, min(100, int(limit)))
+        rows = await bot.database.generation_job_list(
+            modality=base.get("modality") or "image",
+            status="done",
+            limit=500, offset=0,
+        )
+        scored: list[tuple[float, dict]] = []
+        for r in rows:
+            if r["id"] == job_id:
+                continue
+            toks = tokenize(r.get("positive"))
+            if not toks:
+                continue
+            inter = len(base_tokens & toks)
+            if inter == 0:
+                continue
+            union = len(base_tokens | toks) or 1
+            score = inter / union
+            scored.append((score, r))
+        scored.sort(key=lambda kv: kv[0], reverse=True)
+        from urllib.parse import quote
+        out = []
+        for score, r in scored[:limit]:
+            paths: list[str] = []
+            kinds: list[str] = []
+            try:
+                paths = json.loads(r.get("result_paths") or "[]")
+            except Exception:
+                pass
+            try:
+                kinds = json.loads(r.get("result_kinds") or "[]")
+            except Exception:
+                pass
+            if not paths:
+                continue
+            if len(kinds) != len(paths):
+                kinds = ["image"] * len(paths)
+            p = paths[0]
+            kind = kinds[0]
+            base_qs = f"path={quote(p, safe='')}"
+            out.append({
+                "job_id": r["id"],
+                "score": round(score, 4),
+                "thumb_url": f"/api/image/file?{base_qs}&size=thumb" if kind == "image" else f"/api/image/file?{base_qs}",
+                "url": f"/api/image/file?{base_qs}",
+                "kind": kind,
+                "positive": r.get("positive"),
+                "finished_at": r.get("finished_at"),
+            })
+        return {"items": out}
 
     @app.patch(
         "/api/generation/jobs/{job_id}/favorite",
@@ -987,9 +1261,47 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             pass
         return {"ok": True}
 
+    # サムネイルキャッシュの最大辺（px）。256/640 以外の指定は無視する。
+    _THUMB_SIZES = {"thumb": 256, "medium": 640}
+
+    def _thumb_cache_path(src: "Path", max_side: int) -> "Path":  # noqa: F821
+        """サムネイル WebP キャッシュのフルパス。
+        data/thumbnails/<sha1-of-path-mtime>_<size>.webp に置く。"""
+        import hashlib
+        from pathlib import Path as _P
+        try:
+            st = src.stat()
+        except FileNotFoundError:
+            st = None
+        key = f"{src.as_posix()}|{st.st_mtime_ns if st else 0}|{st.st_size if st else 0}"
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+        base_dir = _P("data") / "thumbnails"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        return base_dir / f"{digest}_{max_side}.webp"
+
+    def _build_thumbnail(src: "Path", dst: "Path", max_side: int) -> bool:  # noqa: F821
+        """Pillow で WebP サムネイル生成。成功なら True。"""
+        try:
+            from PIL import Image
+        except ImportError:
+            return False
+        try:
+            with Image.open(str(src)) as im:
+                im.thumbnail((max_side, max_side))
+                mode = im.mode if im.mode in ("RGB", "RGBA") else "RGB"
+                im = im.convert(mode)
+                im.save(str(dst), format="WEBP", quality=82, method=4)
+            return True
+        except Exception:
+            return False
+
     @app.get("/api/image/file", dependencies=[Depends(ctx.verify)])
-    async def image_file(path: str):
-        """NAS 配下の画像ファイルを配信（path traversal ガード付き）。"""
+    async def image_file(path: str, size: str | None = None):
+        """NAS 配下の画像ファイルを配信（path traversal ガード付き）。
+
+        size=thumb (256px) / medium (640px) 指定で WebP サムネイルを返す。
+        生成に失敗した場合は原寸を返す（graceful degradation）。
+        """
         from pathlib import Path
 
         from fastapi.responses import FileResponse
@@ -1003,7 +1315,6 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except Exception:
             raise HTTPException(500, "invalid nas mount_point")
 
-        # 入力パス解釈: 絶対パス（mount_point 配下）または mount_point 相対
         raw = Path(path)
         target = raw if raw.is_absolute() else (mount_real / raw)
         try:
@@ -1011,13 +1322,11 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except Exception:
             raise HTTPException(400, "invalid path")
 
-        # mount_point 配下チェック
         try:
             real.relative_to(mount_real)
         except ValueError:
             raise HTTPException(403, "path outside nas mount")
 
-        # outputs/ 配下のみ許可
         outputs_subdir = (
             bot.config.get("units", {}).get("image_gen", {})
             .get("nas", {}).get("outputs_subdir", "outputs")
@@ -1035,6 +1344,20 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         if ext not in _IMG_ALLOWED_EXTS:
             raise HTTPException(415, f"unsupported extension: {ext}")
 
+        # サムネイル要求（画像のみ対象）
+        if size and ext in (".png", ".jpg", ".jpeg", ".webp"):
+            max_side = _THUMB_SIZES.get(size)
+            if max_side:
+                cache = _thumb_cache_path(real, max_side)
+                if not cache.is_file():
+                    _build_thumbnail(real, cache, max_side)
+                if cache.is_file():
+                    return FileResponse(
+                        str(cache), media_type="image/webp",
+                        headers={"Cache-Control": "private, max-age=86400"},
+                    )
+                # サムネ生成失敗時はそのまま原寸にフォールスルー
+
         media_map = {
             ".png": "image/png", ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg", ".webp": "image/webp",
@@ -1043,3 +1366,97 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             str(real), media_type=media_map.get(ext, "application/octet-stream"),
             headers={"Cache-Control": "private, max-age=300"},
         )
+
+    # --- Collections (ギャラリー手動グルーピング) ---
+
+    def _collection_to_dict(row: dict) -> dict:
+        return {
+            "id": int(row["id"]),
+            "name": row.get("name"),
+            "description": row.get("description") or "",
+            "color": row.get("color") or "",
+            "pinned": bool(row.get("pinned")),
+            "item_count": int(row.get("item_count") or 0),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    @app.get("/api/generation/collections", dependencies=[Depends(ctx.verify)])
+    async def collections_list():
+        rows = await bot.database.image_collection_list()
+        return {"collections": [_collection_to_dict(r) for r in rows]}
+
+    @app.post("/api/generation/collections", dependencies=[Depends(ctx.verify)])
+    async def collections_create(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        name = (body.get("name") or "").strip()
+        if not name or len(name) > 64:
+            raise HTTPException(400, "name is required (1-64)")
+        if await bot.database.image_collection_get_by_name(name):
+            raise HTTPException(409, "name already exists")
+        cid = await bot.database.image_collection_insert(
+            name=name,
+            description=(body.get("description") or None),
+            color=(body.get("color") or None),
+            pinned=bool(body.get("pinned")),
+        )
+        return {"id": cid}
+
+    @app.patch("/api/generation/collections/{collection_id}", dependencies=[Depends(ctx.verify)])
+    async def collections_update(collection_id: int, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        existing = await bot.database.image_collection_get(int(collection_id))
+        if not existing:
+            raise HTTPException(404, "collection not found")
+        if "name" in body:
+            new_name = (body.get("name") or "").strip()
+            if not new_name or len(new_name) > 64:
+                raise HTTPException(400, "name must be 1-64")
+            if new_name != existing["name"]:
+                if await bot.database.image_collection_get_by_name(new_name):
+                    raise HTTPException(409, "name already exists")
+        ok = await bot.database.image_collection_update(
+            int(collection_id),
+            name=body.get("name"),
+            description=body.get("description"),
+            color=body.get("color"),
+            pinned=body.get("pinned"),
+        )
+        if not ok:
+            raise HTTPException(400, "no fields to update")
+        return {"ok": True}
+
+    @app.delete("/api/generation/collections/{collection_id}", dependencies=[Depends(ctx.verify)])
+    async def collections_delete(collection_id: int):
+        ok = await bot.database.image_collection_delete(int(collection_id))
+        if not ok:
+            raise HTTPException(404, "collection not found")
+        return {"ok": True}
+
+    @app.post("/api/generation/collections/{collection_id}/jobs", dependencies=[Depends(ctx.verify)])
+    async def collections_add_jobs(collection_id: int, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ids = body.get("job_ids") or []
+        if not isinstance(ids, list) or not all(isinstance(s, str) for s in ids):
+            raise HTTPException(400, "job_ids must be list[str]")
+        if not await bot.database.image_collection_get(int(collection_id)):
+            raise HTTPException(404, "collection not found")
+        added = await bot.database.image_collection_add_jobs(int(collection_id), ids)
+        return {"ok": True, "added": added}
+
+    @app.delete("/api/generation/collections/{collection_id}/jobs", dependencies=[Depends(ctx.verify)])
+    async def collections_remove_jobs(collection_id: int, request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be an object")
+        ids = body.get("job_ids") or []
+        if not isinstance(ids, list) or not all(isinstance(s, str) for s in ids):
+            raise HTTPException(400, "job_ids must be list[str]")
+        removed = await bot.database.image_collection_remove_jobs(int(collection_id), ids)
+        return {"ok": True, "removed": removed}
