@@ -58,11 +58,11 @@ body { display: flex; }
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   text-align: left;
   font-family: inherit;
   transition: color var(--ease);
 }
+.nav-group-label .nav-group-chevron { margin-left: auto; }
 .nav-group-label:hover { color: var(--text-secondary); }
 .nav-group-chevron {
   flex-shrink: 0;
@@ -73,7 +73,9 @@ body { display: flex; }
 .nav-group.collapsed .nav-group-items { display: none; }
 
 .nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   padding: 0.45rem 1rem 0.45rem 1.25rem;
   color: var(--text-secondary);
   font-size: 0.875rem;
@@ -81,6 +83,18 @@ body { display: flex; }
   transition: all var(--ease);
   text-decoration: none;
 }
+.nav-item-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.nav-item:hover .nav-item-icon,
+.nav-item.active .nav-item-icon { opacity: 1; }
+.nav-group-label-icon {
+  flex-shrink: 0;
+  margin-right: 0.5rem;
+  opacity: 0.7;
+}
+.nav-group-label { gap: 0; /* chevron を右端に維持 */ }
 .nav-item:hover {
   color: var(--text-primary);
   background: var(--bg-raised);
