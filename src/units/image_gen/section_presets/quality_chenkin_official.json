@@ -1,0 +1,8 @@
+{
+  "category_key": "quality",
+  "name": "quality_chenkin_official",
+  "description": "ChenkinNoob-XL v0.5 作者公式の推奨タグ。NoobAI 1.1 ベースで aesthetic + excellent パーセンタイル + year 2026 を重視",
+  "positive": "masterpiece, best quality, newest, high resolution, aesthetic, excellent, year 2026",
+  "negative": null,
+  "tags": "chenkin,noobxl,quality,official"
+}

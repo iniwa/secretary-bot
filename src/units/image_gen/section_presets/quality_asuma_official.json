@@ -1,0 +1,8 @@
+{
+  "category_key": "quality",
+  "name": "quality_asuma_official",
+  "description": "AsumaXL-Illustrious v4 向け。Illustrious XL 系コミュニティ推奨の品質タグを採用（先頭に masterpiece 群、末尾に absurdres/highres）",
+  "positive": "masterpiece, best quality, amazing quality, very aesthetic, newest, absurdres, highres",
+  "negative": null,
+  "tags": "asumaxl,illustrious,quality,official"
+}

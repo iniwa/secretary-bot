@@ -42,11 +42,12 @@ export function render() {
   </ul>
   <div class="pc-label" style="margin-top:0.8rem;">section_preset 推奨セット</div>
   <ul class="ig-ref-list">
-    <li>quality: <code>quality_illustrious_newest</code>（id=21, Illustrious 系ならそのまま有効）</li>
+    <li>quality: <code>quality_asuma_official</code>（id=44, <strong>Illustrious コミュニティ推奨</strong>）または <code>quality_illustrious_newest</code>（id=21, 拡張版）</li>
     <li>character: <strong>使わない</strong>（<code>character_iniwa_vrc</code> は LoRA 前提）</li>
-    <li>negative: <code>negative_general</code>（id=1）</li>
+    <li>negative: <code>negative_asuma_official</code>（id=45, <strong>Illustrious 用拡張</strong>: displeasing / oldest / artistic failure 含む）または <code>negative_general</code>（id=1, NoobAI 寄り）</li>
     <li>artist: 必要に応じて <code>artist_ciloranko</code> 等を混ぜる（検証推奨）</li>
   </ul>
+  <div class="pc-note">Illustrious 特有の <code>displeasing</code> / <code>very displeasing</code> / <code>oldest</code> タグを使いたければ公式版。</div>
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">

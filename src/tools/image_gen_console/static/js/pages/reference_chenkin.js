@@ -43,10 +43,11 @@ export function render() {
   </ul>
   <div class="pc-label" style="margin-top:0.8rem;">section_preset 推奨セット</div>
   <ul class="ig-ref-list">
-    <li>quality: <code>quality_illustrious_newest</code>（id=21, NoobAI 公式タグ含む）</li>
+    <li>quality: <code>quality_chenkin_official</code>（id=42, <strong>作者公式タグ</strong>）または <code>quality_illustrious_newest</code>（id=21, 汎用拡張版）</li>
     <li>character: <code>character_iniwa_vrc</code>（id=9, LoRA トリガー <code>Iniwa_VRC</code> 含む）</li>
-    <li>negative: <code>negative_general</code>（id=1, NoobAI 拡張版）</li>
+    <li>negative: <code>negative_chenkin_official</code>（id=43, <strong>作者公式</strong>）または <code>negative_general</code>（id=1, 拡張版）</li>
   </ul>
+  <div class="pc-note">公式版はタグ数が少なく "作者の意図通りに出やすい"、拡張版は破綻除去を強めに効かせたい時向け。</div>
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">
