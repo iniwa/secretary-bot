@@ -899,6 +899,24 @@ body[data-nsfw="on"] .ig-topbar-status {
 .pc-note { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.3rem; }
 
 /* ============================================================
+ * Reference page — プロンプト参考メモ
+ * ============================================================ */
+.ig-ref-list {
+  margin: 0.3rem 0 0.3rem 1.2rem;
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+.ig-ref-list li { margin: 0.2rem 0; }
+.ig-ref-list code {
+  background: var(--bg-base); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0.05em 0.3em;
+  font-family: ui-monospace, monospace; font-size: 0.85em;
+}
+.ig-ref-list a { color: var(--accent); }
+
+/* ============================================================
  * Extract page
  * ============================================================ */
 .ex-dropzone {

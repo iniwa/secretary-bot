@@ -17,6 +17,7 @@ import * as prompts from './pages/prompts.js';
 import * as extract from './pages/extract.js';
 import * as wildcards from './pages/wildcards.js';
 import * as lora from './pages/lora.js';
+import * as reference from './pages/reference.js';
 import { toast } from './lib/toast.js';
 
 const routes = [
@@ -27,6 +28,7 @@ const routes = [
   { hash: '#/extract',   module: extract,   nav: 'extract',   title: 'Extract' },
   { hash: '#/wildcards', module: wildcards, nav: 'wildcards', title: 'Wildcards' },
   { hash: '#/lora',      module: lora,      nav: 'lora',      title: 'LoRA' },
+  { hash: '#/reference', module: reference, nav: 'reference', title: 'プリセット参考' },
 ];
 
 const DEFAULT_HASH = '#/generate';
