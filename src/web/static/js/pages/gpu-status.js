@@ -5,6 +5,8 @@ import { toast } from '../app.js';
 
 let agents = [];
 let loading = false;
+let liveAgents = [];
+let liveLoading = false;
 
 function $(id) { return document.getElementById(id); }
 
@@ -125,14 +127,94 @@ export function render() {
     padding: 3rem 1rem;
     color: var(--text-muted);
   }
+  .gpu-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 1.5rem 0 0.75rem;
+  }
+  .gpu-section-title:first-child { margin-top: 0; }
+  .gpu-live-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+    font-family: monospace;
+    font-size: 0.8125rem;
+  }
+  .gpu-live-metric {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+  }
+  .gpu-live-metric-label {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .gpu-live-metric-value {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .gpu-live-bar {
+    flex: 1;
+    min-width: 180px;
+    height: 8px;
+    background: var(--bg-raised);
+    border-radius: 999px;
+    overflow: hidden;
+    align-self: center;
+  }
+  .gpu-live-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width var(--ease);
+  }
+  .gpu-live-bar-fill.warn { background: #f39c12; }
+  .gpu-live-bar-fill.danger { background: #e74c3c; }
+  .gpu-ps-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: monospace;
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .gpu-ps-table th, .gpu-ps-table td {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .gpu-ps-table th {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+  }
+  .gpu-ps-empty {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 0.5rem 0;
+  }
 </style>
 
 <div class="gpu-page">
   <div class="gpu-desc">
-    各 Windows Agent の <code>windows-agent/logs/gpu_status.log</code> を表示します。<br>
-    このログは <code>start_agent.bat</code> が Ollama 起動直後に <code>nvidia-smi</code> と <code>ollama ps</code> の出力を追記したものです。
-    <code>ollama ps</code> の <code>PROCESSOR</code> 列が <code>100% GPU</code> なら OK、<code>CPU</code> を含む場合は VRAM 不足 or CUDA 問題の可能性あり。
+    Live Status は <code>nvidia-smi</code> と <code>ollama ps</code> を毎回実行して現在の状態を取得します。
+    Ollama はデフォルト <code>keep_alive=5m</code> でモデルを保持するので、Discord や Chat でリクエストを送った直後に更新すると GPU/CPU 配分が確認できます。
   </div>
+
+  <div class="gpu-section-title">Live Status</div>
+  <div class="gpu-toolbar">
+    <button class="btn btn-sm btn-primary" id="gpu-live-refresh">Refresh Live Status</button>
+    <span id="gpu-live-time" style="font-size:0.75rem;color:var(--text-muted)"></span>
+  </div>
+  <div id="gpu-live-container">
+    <div class="gpu-empty">Live status を取得するには Refresh を押してください。</div>
+  </div>
+
+  <div class="gpu-section-title">Boot Logs (gpu_status.log)</div>
   <div class="gpu-toolbar">
     <button class="btn btn-sm" id="gpu-refresh">更新</button>
     <label style="font-size:0.8125rem;color:var(--text-muted)">
@@ -149,6 +231,163 @@ export function render() {
     <div class="gpu-empty">Loading...</div>
   </div>
 </div>`;
+}
+
+// ============================================================
+// Live Status
+// ============================================================
+/** nvidia-smi CSV 行をパース（"name, mem_used, mem_total, util, temp"）。 */
+function parseNvidiaCsv(text) {
+  if (!text) return null;
+  const firstLine = text.split(/\r?\n/)[0]?.trim();
+  if (!firstLine) return null;
+  const parts = firstLine.split(',').map(s => s.trim());
+  if (parts.length < 5) return null;
+  const [name, memUsed, memTotal, util, temp] = parts;
+  const used = parseInt(memUsed, 10);
+  const total = parseInt(memTotal, 10);
+  return {
+    name,
+    memUsed: used,
+    memTotal: total,
+    memPct: total > 0 ? Math.round(used / total * 100) : 0,
+    util: parseInt(util, 10),
+    temp: parseInt(temp, 10),
+  };
+}
+
+/** `ollama ps` のテキストを行配列にパースする。1行目はヘッダ想定。 */
+function parseOllamaPs(text) {
+  if (!text) return { headers: [], rows: [] };
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return { headers: [], rows: [] };
+  // Ollama ps は空白区切り（タブまたは複数空白）。ヘッダ: NAME ID SIZE PROCESSOR CONTEXT UNTIL
+  const headerCols = ['NAME', 'ID', 'SIZE', 'PROCESSOR', 'CONTEXT', 'UNTIL'];
+  // 1行目がヘッダなら捨てて残りをデータとみなす
+  const dataLines = /^NAME\s+ID\s+SIZE/i.test(lines[0]) ? lines.slice(1) : lines;
+  const rows = dataLines.map(line => {
+    // 複数空白で分割するが、最後の "UNTIL" が "5 minutes from now" のように空白を含むので
+    // 最初の5カラムまで正規分割 → 残りを最後のカラムに結合
+    const m = line.trim().split(/\s{2,}|\t/);
+    return m;
+  }).filter(r => r.length > 0 && r[0]);
+  return { headers: headerCols, rows };
+}
+
+function memBarClass(pct) {
+  if (pct >= 90) return 'danger';
+  if (pct >= 70) return 'warn';
+  return '';
+}
+
+function renderLiveAgentCard(agent) {
+  const name = agent.agent_name || agent.agent_id || agent.agent || 'Agent';
+  const role = agent.role || 'unknown';
+  const host = agent.host ? `${agent.host}:${agent.port}` : '';
+
+  if (!agent.alive) {
+    return `
+      <div class="card gpu-agent-card">
+        <div class="gpu-agent-header">
+          <div><span class="gpu-agent-name">${esc(name)}</span><span class="gpu-agent-role">${esc(role)}</span></div>
+          <div class="gpu-agent-meta">${esc(host)}</div>
+        </div>
+        <div class="gpu-error">Offline${agent.error ? ` — ${esc(agent.error)}` : ''}</div>
+      </div>`;
+  }
+
+  const nvidia = agent.nvidia_smi || {};
+  const ollama = agent.ollama_ps || {};
+  const gpu = parseNvidiaCsv(nvidia.stdout || '');
+  const ps = parseOllamaPs(ollama.stdout || '');
+
+  let gpuHtml = '';
+  if (gpu) {
+    const cls = memBarClass(gpu.memPct);
+    gpuHtml = `
+      <div class="gpu-live-row">
+        <div class="gpu-live-metric"><span class="gpu-live-metric-label">GPU</span>
+          <span class="gpu-live-metric-value">${esc(gpu.name)}</span></div>
+        <div class="gpu-live-metric"><span class="gpu-live-metric-label">Temp</span>
+          <span class="gpu-live-metric-value">${gpu.temp}°C</span></div>
+        <div class="gpu-live-metric"><span class="gpu-live-metric-label">Util</span>
+          <span class="gpu-live-metric-value">${gpu.util}%</span></div>
+      </div>
+      <div class="gpu-live-row">
+        <div class="gpu-live-metric"><span class="gpu-live-metric-label">VRAM</span>
+          <span class="gpu-live-metric-value">${gpu.memUsed} / ${gpu.memTotal} MiB (${gpu.memPct}%)</span></div>
+        <div class="gpu-live-bar"><div class="gpu-live-bar-fill ${cls}" style="width:${gpu.memPct}%"></div></div>
+      </div>`;
+  } else if (nvidia.stderr) {
+    gpuHtml = `<div class="gpu-error">nvidia-smi: ${esc(nvidia.stderr)}</div>`;
+  } else {
+    gpuHtml = `<div class="gpu-ps-empty">nvidia-smi 取得失敗</div>`;
+  }
+
+  let psHtml = '';
+  if (ps.rows.length === 0) {
+    psHtml = `<div class="gpu-ps-empty">No model loaded (Ollama idle or keep_alive expired)</div>`;
+  } else {
+    const bodyRows = ps.rows.map(r => {
+      const cells = ps.headers.map((_, i) => {
+        const v = r[i] ?? '';
+        // PROCESSOR 列（index 3）に CPU が含まれていれば警告色
+        if (i === 3 && /CPU/i.test(v)) {
+          return `<td style="color:#e74c3c;font-weight:600">${esc(v)}</td>`;
+        }
+        if (i === 3 && /GPU/i.test(v) && !/CPU/i.test(v)) {
+          return `<td style="color:#2ecc71;font-weight:600">${esc(v)}</td>`;
+        }
+        return `<td>${esc(v)}</td>`;
+      }).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+    psHtml = `
+      <table class="gpu-ps-table">
+        <thead><tr>${ps.headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+  }
+
+  return `
+    <div class="card gpu-agent-card">
+      <div class="gpu-agent-header">
+        <div><span class="gpu-agent-name">${esc(name)}</span><span class="gpu-agent-role">${esc(role)}</span></div>
+        <div class="gpu-agent-meta">${esc(host)}</div>
+      </div>
+      ${gpuHtml}
+      ${psHtml}
+    </div>`;
+}
+
+async function loadLive() {
+  if (liveLoading) return;
+  liveLoading = true;
+  const container = $('gpu-live-container');
+  const btn = $('gpu-live-refresh');
+  const timeEl = $('gpu-live-time');
+  if (btn) btn.disabled = true;
+  container.innerHTML = `<div class="gpu-empty">取得中...</div>`;
+  try {
+    const data = await api('/api/gpu-status/live');
+    liveAgents = data?.agents || [];
+    if (!liveAgents.length) {
+      container.innerHTML = `<div class="gpu-empty">Agent が登録されていません。</div>`;
+    } else {
+      container.innerHTML = liveAgents.map(renderLiveAgentCard).join('');
+    }
+    if (timeEl) {
+      const now = new Date();
+      timeEl.textContent = `取得: ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+    }
+  } catch (err) {
+    console.error('Load gpu live:', err);
+    container.innerHTML = `<div class="gpu-empty" style="color:var(--error)">取得失敗: ${esc(err.message)}</div>`;
+    toast('Live status 取得失敗', 'error');
+  } finally {
+    liveLoading = false;
+    if (btn) btn.disabled = false;
+  }
 }
 
 function badgeFor(summary) {
@@ -238,10 +477,13 @@ async function load() {
 export async function mount() {
   $('gpu-refresh')?.addEventListener('click', () => load());
   $('gpu-lines')?.addEventListener('change', () => load());
-  await load();
+  $('gpu-live-refresh')?.addEventListener('click', () => loadLive());
+  await Promise.all([load(), loadLive()]);
 }
 
 export function unmount() {
   agents = [];
   loading = false;
+  liveAgents = [];
+  liveLoading = false;
 }

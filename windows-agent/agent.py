@@ -627,6 +627,55 @@ async def gpu_logs(request: Request, lines: int = 200):
     return {"logs": log_lines, "exists": exists}
 
 
+_OLLAMA_CLI_CANDIDATES = [
+    "ollama",
+    r"C:\Users\iniwa\AppData\Local\Programs\Ollama\ollama.exe",
+]
+
+
+def _run_ollama(args: list[str], timeout: int = 10) -> dict:
+    for exe in _OLLAMA_CLI_CANDIDATES:
+        try:
+            r = subprocess.run(
+                [exe, *args], capture_output=True, text=True, errors="replace", timeout=timeout,
+            )
+            return {"ok": r.returncode == 0, "stdout": r.stdout, "stderr": (r.stderr or "").strip()}
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            return {"ok": False, "stdout": "", "stderr": str(e)}
+    return {"ok": False, "stdout": "", "stderr": "ollama CLI not found"}
+
+
+@app.get("/gpu/status")
+async def gpu_status_live(request: Request):
+    """リアルタイム GPU 状態: nvidia-smi (GPU 使用量) + ollama ps (ロード済みモデル)。"""
+    _verify_token(request)
+    # nvidia-smi: CSV 出力で簡潔に取得（name, memory.used, memory.total, GPU util, temp）
+    nvidia_csv = {"ok": False, "stdout": "", "stderr": ""}
+    try:
+        r = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True, text=True, errors="replace", timeout=10,
+        )
+        nvidia_csv = {
+            "ok": r.returncode == 0,
+            "stdout": r.stdout.strip(),
+            "stderr": (r.stderr or "").strip(),
+        }
+    except FileNotFoundError:
+        nvidia_csv["stderr"] = "nvidia-smi not found"
+    except Exception as e:
+        nvidia_csv["stderr"] = str(e)
+
+    ollama = _run_ollama(["ps"])
+    return {"nvidia_smi": nvidia_csv, "ollama_ps": ollama}
+
+
 @app.get("/obs/logs")
 async def obs_logs(request: Request, lines: int = 100):
     """OBSManager関連のログを返す。"""
