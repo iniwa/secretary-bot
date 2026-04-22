@@ -18,17 +18,21 @@ import * as extract from './pages/extract.js';
 import * as wildcards from './pages/wildcards.js';
 import * as lora from './pages/lora.js';
 import * as reference from './pages/reference.js';
+import * as referenceChenkin from './pages/reference_chenkin.js';
+import * as referenceAsuma from './pages/reference_asuma.js';
 import { toast } from './lib/toast.js';
 
 const routes = [
-  { hash: '#/generate',  module: generate,  nav: 'generate',  title: 'Generate' },
-  { hash: '#/jobs',      module: jobs,      nav: 'jobs',      title: 'Jobs' },
-  { hash: '#/gallery',   module: gallery,   nav: 'gallery',   title: 'Gallery' },
-  { hash: '#/prompts',   module: prompts,   nav: 'prompts',   title: 'Prompts' },
-  { hash: '#/extract',   module: extract,   nav: 'extract',   title: 'Extract' },
-  { hash: '#/wildcards', module: wildcards, nav: 'wildcards', title: 'Wildcards' },
-  { hash: '#/lora',      module: lora,      nav: 'lora',      title: 'LoRA' },
-  { hash: '#/reference', module: reference, nav: 'reference', title: 'プリセット参考' },
+  { hash: '#/generate',          module: generate,         nav: 'generate',          title: 'Generate' },
+  { hash: '#/jobs',              module: jobs,             nav: 'jobs',              title: 'Jobs' },
+  { hash: '#/gallery',           module: gallery,          nav: 'gallery',           title: 'Gallery' },
+  { hash: '#/prompts',           module: prompts,          nav: 'prompts',           title: 'Prompts' },
+  { hash: '#/extract',           module: extract,          nav: 'extract',           title: 'Extract' },
+  { hash: '#/wildcards',         module: wildcards,        nav: 'wildcards',         title: 'Wildcards' },
+  { hash: '#/lora',              module: lora,             nav: 'lora',              title: 'LoRA' },
+  { hash: '#/reference',         module: reference,        nav: 'reference',         title: 'プリセット参考（共通）' },
+  { hash: '#/reference/chenkin', module: referenceChenkin, nav: 'reference-chenkin', title: '参考 / ChenkinNoob-XL' },
+  { hash: '#/reference/asuma',   module: referenceAsuma,   nav: 'reference-asuma',   title: '参考 / AsumaXL' },
 ];
 
 const DEFAULT_HASH = '#/generate';

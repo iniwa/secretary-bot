@@ -101,6 +101,15 @@ body[data-nsfw="on"] .ig-topbar-status {
   width: 1.2rem;
   text-align: center;
 }
+.ig-nav-sub {
+  padding-left: 2.25rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.ig-nav-sub .ig-nav-icon {
+  font-size: 0.8rem;
+  width: 1rem;
+}
 
 /* === Main content === */
 .ig-main-content {
