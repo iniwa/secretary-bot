@@ -100,6 +100,43 @@
   <div id="main-content"></div>
 </main>
 
+<!-- Bottom-sheet (mobile Tools navigation) -->
+<div id="nav-sheet-overlay"></div>
+<aside id="nav-sheet" aria-hidden="true">
+  <div class="sheet-handle" aria-hidden="true"></div>
+  <div class="sheet-header">
+    <h3>すべての機能</h3>
+    <button class="sheet-close" type="button" aria-label="閉じる">×</button>
+  </div>
+  <div class="sheet-body">
+    <!-- 内容は app.js で sidebar から複製 -->
+  </div>
+</aside>
+
+<!-- Mobile bottom tab bar -->
+<nav id="bottom-tabs" aria-label="主要ナビゲーション">
+  <a href="#dashboard" class="tab" data-page="dashboard" aria-label="Dashboard">
+    <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+    <span class="tab-label">Home</span>
+  </a>
+  <a href="#chat" class="tab" data-page="chat" aria-label="Chat">
+    <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <span class="tab-label">Chat</span>
+  </a>
+  <a href="#activity" class="tab" data-page="activity" aria-label="Activity">
+    <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    <span class="tab-label">Activity</span>
+  </a>
+  <button class="tab" id="tab-tools" type="button" aria-label="ツールを開く" aria-haspopup="dialog">
+    <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    <span class="tab-label">Tools</span>
+  </button>
+  <button class="tab" id="tab-more" type="button" aria-label="メニューを開く" aria-haspopup="menu">
+    <svg class="tab-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    <span class="tab-label">More</span>
+  </button>
+</nav>
+
 <!-- Toast -->
 <div id="toast-container"></div>
 

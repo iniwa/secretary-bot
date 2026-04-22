@@ -77,8 +77,11 @@ async function navigate(pageName) {
   currentModule = page.module;
   const gen = ++_navGen;  // この navigate 呼び出しの世代を記録
 
-  // Update nav
+  // Update nav (sidebar items + bottom tabs)
   document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === pageName);
+  });
+  document.querySelectorAll('#bottom-tabs .tab[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === pageName);
   });
 
@@ -105,8 +108,9 @@ async function navigate(pageName) {
       </div>`;
   }
 
-  // Close mobile sidebar
+  // Close mobile sidebar / bottom-sheet
   closeSidebar();
+  closeNavSheet();
 
   // Update hash without triggering hashchange
   history.replaceState(null, '', '#' + pageName);
@@ -122,6 +126,45 @@ function openSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebar-overlay').classList.remove('open');
+}
+
+// ============================================================
+// Bottom-sheet (mobile Tools navigation)
+// ============================================================
+function openNavSheet() {
+  const sheet = document.getElementById('nav-sheet');
+  const overlay = document.getElementById('nav-sheet-overlay');
+  if (!sheet || !overlay) return;
+
+  // 初回開封時にサイドバーのナビ階層を複製（参照同期は行わず、ボディだけ複製）
+  const body = sheet.querySelector('.sheet-body');
+  if (body && body.childElementCount === 0) {
+    const sourceNav = document.querySelector('#sidebar .sidebar-nav');
+    if (sourceNav) {
+      const clone = sourceNav.cloneNode(true);
+      // active 状態は更新しないので一旦剥がしておく（navigate 時に同期されない）
+      clone.querySelectorAll('.nav-item.active').forEach(el => el.classList.remove('active'));
+      // クローン側のリンクからもページ遷移できるよう delegation を追加
+      clone.addEventListener('click', (e) => {
+        const item = e.target.closest('.nav-item[data-page]');
+        if (!item) return;
+        e.preventDefault();
+        navigate(item.dataset.page);
+      });
+      body.appendChild(clone);
+    }
+  }
+  sheet.classList.add('open');
+  overlay.classList.add('open');
+  sheet.setAttribute('aria-hidden', 'false');
+}
+function closeNavSheet() {
+  const sheet = document.getElementById('nav-sheet');
+  const overlay = document.getElementById('nav-sheet-overlay');
+  if (!sheet || !overlay) return;
+  sheet.classList.remove('open');
+  overlay.classList.remove('open');
+  sheet.setAttribute('aria-hidden', 'true');
 }
 
 // ============================================================
@@ -254,6 +297,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // Mobile menu
   document.getElementById('menu-btn').addEventListener('click', openSidebar);
   document.getElementById('sidebar-overlay').addEventListener('click', closeSidebar);
+
+  // Bottom tabs (mobile)
+  document.querySelectorAll('#bottom-tabs .tab[data-page]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigate(el.dataset.page);
+    });
+  });
+  document.getElementById('tab-tools')?.addEventListener('click', openNavSheet);
+  document.getElementById('tab-more')?.addEventListener('click', openSidebar);
+  document.getElementById('nav-sheet-overlay')?.addEventListener('click', closeNavSheet);
+  document.querySelector('#nav-sheet .sheet-close')?.addEventListener('click', closeNavSheet);
 
   // Collapsible nav groups
   initCollapsibleGroups();
