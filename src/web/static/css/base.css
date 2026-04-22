@@ -35,6 +35,13 @@
   /* Layout */
   --sidebar-width: 240px;
   --topbar-height: 56px;
+  --tap-target: 44px;
+
+  /* Safe-area (iOS notch / home indicator) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 
   /* Radius */
   --radius-sm: 6px;
@@ -61,6 +68,7 @@ body {
   background: var(--bg-base);
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
 }
 a { color: var(--accent-hover); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -84,3 +92,17 @@ h3 { font-size: 1rem; font-weight: 600; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* === Mobile baseline ===
+ * iOS Safari は input の font-size が 16px 未満だとフォーカス時にズームしてしまうため、
+ * 入力系をスマホでは 16px に格上げ。本文フォントもやや大きくして可読性を確保。
+ */
+@media (max-width: 768px) {
+  body { font-size: 15px; }
+  /* iOS ズーム回避: input 系は最低 16px。.form-input クラスにも明示適用する */
+  input, textarea, select,
+  .form-input,
+  .chat-form textarea { font-size: 16px; }
+  .text-sm { font-size: 0.875rem; }
+  .text-xs { font-size: 0.8125rem; }
+}

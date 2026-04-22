@@ -68,21 +68,21 @@ export function render() {
     </div>
   </section>
 
-  <section class="card" id="d-game-card" style="margin-bottom:1rem">
+  <section class="card activity-card" id="d-game-card">
     <div class="card-header">
       <h3>Main PC Activity</h3>
       <span class="status-dot" id="d-game-dot" title="Main PC agent status"></span>
     </div>
-    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;padding:0.25rem 0">
-      <div style="flex:1;min-width:180px">
-        <div class="stat-label" style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Playing</div>
-        <div class="stat-value" id="d-game-name" style="font-size:1.25rem;font-weight:600">---</div>
+    <div class="activity-row">
+      <div class="activity-cell">
+        <div class="stat-label">Playing</div>
+        <div class="activity-value" id="d-game-name">---</div>
       </div>
-      <div style="flex:2;min-width:220px">
-        <div class="stat-label" style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Foreground Process</div>
-        <div class="mono" id="d-game-fg" style="font-size:0.8125rem;color:var(--text-secondary);word-break:break-all">---</div>
+      <div class="activity-cell-wide">
+        <div class="stat-label">Foreground Process</div>
+        <div class="mono activity-value" id="d-game-fg">---</div>
       </div>
-      <div id="d-game-fs-wrap" style="display:none">
+      <div id="d-game-fs-wrap" hidden>
         <span class="badge badge-info" id="d-game-fs">Fullscreen</span>
       </div>
     </div>
@@ -140,7 +140,7 @@ async function refreshMainActivity() {
       if (dot) dot.className = 'status-dot error';
       nameEl.textContent = '---';
       fgEl.textContent = data?.error || 'Main PC agent not reachable';
-      if (fsWrap) fsWrap.style.display = 'none';
+      if (fsWrap) fsWrap.hidden = true;
       return;
     }
     if (dot) dot.className = 'status-dot online';
@@ -150,12 +150,12 @@ async function refreshMainActivity() {
     nameEl.textContent = game || 'No Game';
     nameEl.style.color = game ? 'var(--text-primary)' : 'var(--text-muted)';
     fgEl.textContent = fg || '(none)';
-    if (fsWrap) fsWrap.style.display = isFs ? '' : 'none';
+    if (fsWrap) fsWrap.hidden = !isFs;
   } catch (err) {
     if (dot) dot.className = 'status-dot error';
     nameEl.textContent = '---';
     fgEl.textContent = 'Error: ' + (err?.message || 'fetch failed');
-    if (fsWrap) fsWrap.style.display = 'none';
+    if (fsWrap) fsWrap.hidden = true;
   }
 }
 

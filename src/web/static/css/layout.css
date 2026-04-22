@@ -7,6 +7,7 @@ body { display: flex; }
 #sidebar {
   width: var(--sidebar-width);
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-surface);
   border-right: 1px solid var(--border);
   display: flex;
@@ -15,6 +16,7 @@ body { display: flex; }
   overflow: hidden;
   transition: transform var(--ease);
   z-index: 100;
+  padding-left: var(--safe-left);
 }
 
 .sidebar-brand {
@@ -110,10 +112,12 @@ body { display: flex; }
 /* === Topbar === */
 
 #topbar {
-  height: var(--topbar-height);
+  height: calc(var(--topbar-height) + var(--safe-top));
+  padding-top: var(--safe-top);
   display: flex;
   align-items: center;
-  padding: 0 1.25rem;
+  padding-left: max(1.25rem, var(--safe-left));
+  padding-right: max(1.25rem, var(--safe-right));
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
   flex-shrink: 0;
@@ -127,6 +131,10 @@ body { display: flex; }
   color: var(--text-secondary);
   padding: 0.35rem;
   border-radius: var(--radius-sm);
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  align-items: center;
+  justify-content: center;
 }
 #menu-btn:hover { background: var(--bg-raised); color: var(--text-primary); }
 #menu-btn svg { display: block; }
@@ -180,6 +188,9 @@ body { display: flex; }
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
+  padding-left: max(1.5rem, var(--safe-left));
+  padding-right: max(1.5rem, var(--safe-right));
+  padding-bottom: max(1.5rem, var(--safe-bottom));
 }
 
 /* === Mobile Overlay === */
@@ -200,9 +211,35 @@ body { display: flex; }
     left: 0;
     top: 0;
     transform: translateX(-100%);
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
   }
   #sidebar.open { transform: translateX(0); }
   #sidebar-overlay.open { display: block; }
-  #menu-btn { display: block; }
-  #main-content { padding: 1rem; }
+  #menu-btn { display: inline-flex; }
+
+  /* タッチ快適化: ナビ項目を最低 44px、ラベル類も同様 */
+  .nav-item {
+    min-height: var(--tap-target);
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 1rem 0.6rem 1.25rem;
+    font-size: 0.9375rem;
+  }
+  .nav-group-label {
+    min-height: var(--tap-target);
+    padding: 0.5rem 1rem;
+  }
+
+  /* topbar はモバイルではタイトル + メニューに集中させる
+   * ステータス情報は Dashboard カードで確認できるため、狭幅では非表示 */
+  .topbar-status { display: none; }
+  #page-title { font-size: 1.0625rem; }
+
+  #main-content {
+    padding: 1rem;
+    padding-left: max(1rem, var(--safe-left));
+    padding-right: max(1rem, var(--safe-right));
+    padding-bottom: max(1rem, var(--safe-bottom));
+  }
 }
