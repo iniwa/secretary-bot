@@ -647,6 +647,34 @@ def _run_ollama(args: list[str], timeout: int = 10) -> dict:
     return {"ok": False, "stdout": "", "stderr": "ollama CLI not found"}
 
 
+@app.get("/ollama/server-log")
+async def ollama_server_log(request: Request, lines: int = 500):
+    """Ollama サーバー本体のログ（%LOCALAPPDATA%\\Ollama\\server.log）の末尾を返す。
+    起動時 GPU 検出結果（CUDA 認識可否）がここに記録される。"""
+    _verify_token(request)
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Ollama\server.log"),
+        r"C:\Users\iniwa\AppData\Local\Ollama\server.log",
+    ]
+    # 重複 / 空を除外
+    seen: set[str] = set()
+    paths = []
+    for p in candidates:
+        if p and p not in seen and "%" not in p:
+            seen.add(p)
+            paths.append(p)
+    log_path = next((p for p in paths if os.path.exists(p)), None)
+    if not log_path:
+        return {"logs": [], "path": None, "exists": False, "tried": paths}
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = [ln.rstrip() for ln in all_lines[-lines:]]
+        return {"logs": tail, "path": log_path, "exists": True}
+    except Exception as e:
+        return {"logs": [], "path": log_path, "exists": True, "error": str(e)}
+
+
 @app.get("/gpu/status")
 async def gpu_status_live(request: Request):
     """リアルタイム GPU 状態: nvidia-smi (GPU 使用量) + ollama ps (ロード済みモデル)。"""

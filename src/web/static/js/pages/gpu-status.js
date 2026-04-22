@@ -7,6 +7,9 @@ let agents = [];
 let loading = false;
 let liveAgents = [];
 let liveLoading = false;
+let serverLogAgents = [];
+let serverLogLoading = false;
+let serverLogGpuOnly = true;
 
 function $(id) { return document.getElementById(id); }
 
@@ -197,6 +200,19 @@ export function render() {
     font-style: italic;
     padding: 0.5rem 0;
   }
+  .gpu-server-log-line {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .gpu-server-log-line.hl-good { color: #2ecc71; }
+  .gpu-server-log-line.hl-bad  { color: #e74c3c; font-weight: 600; }
+  .gpu-server-log-line.hl-gpu  { color: var(--accent); }
+  .gpu-log-path {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: monospace;
+    margin-bottom: 0.4rem;
+  }
 </style>
 
 <div class="gpu-page">
@@ -212,6 +228,22 @@ export function render() {
   </div>
   <div id="gpu-live-container">
     <div class="gpu-empty">Live status を取得するには Refresh を押してください。</div>
+  </div>
+
+  <div class="gpu-section-title">Ollama Server Log</div>
+  <div class="gpu-desc" style="margin-bottom:0.75rem">
+    Ollama 本体のサーバーログ（<code>%LOCALAPPDATA%\\Ollama\\server.log</code>）。
+    起動時に CUDA / GPU 検出結果がここに出力される。
+    <code>"no compatible GPUs were discovered"</code> や <code>"looking for compatible GPUs"</code> などのキーワードに注目。
+  </div>
+  <div class="gpu-toolbar">
+    <button class="btn btn-sm btn-primary" id="gpu-server-log-refresh">Refresh Server Log</button>
+    <label class="gpu-checkbox-label" style="font-size:0.8125rem;color:var(--text-muted);display:flex;align-items:center;gap:0.3rem">
+      <input type="checkbox" id="gpu-server-log-gpu-only" checked> GPU 関連行のみ
+    </label>
+  </div>
+  <div id="gpu-server-log-container">
+    <div class="gpu-empty">Loading...</div>
   </div>
 
   <div class="gpu-section-title">Boot Logs (gpu_status.log)</div>
@@ -360,6 +392,110 @@ function renderLiveAgentCard(agent) {
     </div>`;
 }
 
+// ============================================================
+// Ollama Server Log
+// ============================================================
+const GPU_KEYWORDS = [
+  'gpu', 'cuda', 'nvidia', 'nvml', 'rocm', 'vulkan', 'compute',
+  'vram', 'layer', 'inference', 'cpu-only', 'no compatible',
+  'looking for compatible',
+];
+
+function isGpuRelated(line) {
+  const low = line.toLowerCase();
+  return GPU_KEYWORDS.some(k => low.includes(k));
+}
+
+function classifyLogLine(line) {
+  const low = line.toLowerCase();
+  if (/no compatible gpus|cpu[- ]only|failed to initialize|error.*(cuda|gpu|nvml)/i.test(line)) return 'hl-bad';
+  if (/found.*gpu|inference compute.*cuda|using.*gpu|cuda.*v\d|nvidia.*driver|\d+\s*mib free/i.test(line)) return 'hl-good';
+  if (isGpuRelated(line)) return 'hl-gpu';
+  return '';
+}
+
+function renderServerLogAgent(agent) {
+  const name = agent.agent_name || agent.agent_id || agent.agent || 'Agent';
+  const role = agent.role || 'unknown';
+  const host = agent.host ? `${agent.host}:${agent.port}` : '';
+
+  if (!agent.alive) {
+    return `
+      <div class="card gpu-agent-card">
+        <div class="gpu-agent-header">
+          <div><span class="gpu-agent-name">${esc(name)}</span><span class="gpu-agent-role">${esc(role)}</span></div>
+          <div class="gpu-agent-meta">${esc(host)}</div>
+        </div>
+        <div class="gpu-error">Offline${agent.error ? ` — ${esc(agent.error)}` : ''}</div>
+      </div>`;
+  }
+
+  const pathHtml = agent.path
+    ? `<div class="gpu-log-path">${esc(agent.path)}</div>`
+    : `<div class="gpu-log-path" style="color:var(--error)">server.log not found (tried: ${esc((agent.tried || []).join(', '))})</div>`;
+
+  const allLines = Array.isArray(agent.logs) ? agent.logs : [];
+  const filtered = serverLogGpuOnly ? allLines.filter(isGpuRelated) : allLines;
+
+  let body = '';
+  if (!agent.exists) {
+    body = `<div class="gpu-log-empty">server.log が見つかりませんでした。Ollama がまだ起動していないか、パスが異なります。</div>`;
+  } else if (!filtered.length) {
+    body = `<div class="gpu-log-empty">${serverLogGpuOnly ? 'GPU 関連行は見つかりませんでした。「GPU 関連行のみ」を外して全文確認してください。' : 'ログは空です。'}</div>`;
+  } else {
+    const html = filtered.map(line => {
+      const cls = classifyLogLine(line);
+      return `<div class="gpu-server-log-line ${cls}">${esc(line)}</div>`;
+    }).join('');
+    body = `<div class="gpu-log" style="max-height:500px">${html}</div>`;
+  }
+
+  const count = serverLogGpuOnly
+    ? `<span class="gpu-agent-meta">${filtered.length} / ${allLines.length} 行（フィルタ後）</span>`
+    : `<span class="gpu-agent-meta">${allLines.length} 行</span>`;
+
+  return `
+    <div class="card gpu-agent-card">
+      <div class="gpu-agent-header">
+        <div><span class="gpu-agent-name">${esc(name)}</span><span class="gpu-agent-role">${esc(role)}</span></div>
+        <div>${count}</div>
+      </div>
+      ${pathHtml}
+      ${body}
+    </div>`;
+}
+
+async function loadServerLog() {
+  if (serverLogLoading) return;
+  serverLogLoading = true;
+  const container = $('gpu-server-log-container');
+  const btn = $('gpu-server-log-refresh');
+  if (btn) btn.disabled = true;
+  if (container) container.innerHTML = `<div class="gpu-empty">取得中...</div>`;
+  try {
+    const data = await api('/api/gpu-status/ollama-server-log', { params: { lines: 500 } });
+    serverLogAgents = data?.agents || [];
+    if (!serverLogAgents.length) {
+      container.innerHTML = `<div class="gpu-empty">Agent が登録されていません。</div>`;
+    } else {
+      container.innerHTML = serverLogAgents.map(renderServerLogAgent).join('');
+    }
+  } catch (err) {
+    console.error('Load ollama server log:', err);
+    container.innerHTML = `<div class="gpu-empty" style="color:var(--error)">取得失敗: ${esc(err.message)}</div>`;
+    toast('Ollama server log 取得失敗', 'error');
+  } finally {
+    serverLogLoading = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function rerenderServerLog() {
+  const container = $('gpu-server-log-container');
+  if (!container || !serverLogAgents.length) return;
+  container.innerHTML = serverLogAgents.map(renderServerLogAgent).join('');
+}
+
 async function loadLive() {
   if (liveLoading) return;
   liveLoading = true;
@@ -478,7 +614,12 @@ export async function mount() {
   $('gpu-refresh')?.addEventListener('click', () => load());
   $('gpu-lines')?.addEventListener('change', () => load());
   $('gpu-live-refresh')?.addEventListener('click', () => loadLive());
-  await Promise.all([load(), loadLive()]);
+  $('gpu-server-log-refresh')?.addEventListener('click', () => loadServerLog());
+  $('gpu-server-log-gpu-only')?.addEventListener('change', (e) => {
+    serverLogGpuOnly = e.target.checked;
+    rerenderServerLog();
+  });
+  await Promise.all([load(), loadLive(), loadServerLog()]);
 }
 
 export function unmount() {
@@ -486,4 +627,7 @@ export function unmount() {
   loading = false;
   liveAgents = [];
   liveLoading = false;
+  serverLogAgents = [];
+  serverLogLoading = false;
+  serverLogGpuOnly = true;
 }

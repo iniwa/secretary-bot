@@ -314,3 +314,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         """全 Windows Agent のリアルタイム GPU 状態（nvidia-smi + ollama ps）を並列取得。"""
         results = await agent_request(bot, "GET", "/gpu/status")
         return {"agents": results}
+
+    @app.get("/api/gpu-status/ollama-server-log")
+    async def gpu_status_ollama_server_log(lines: int = 500):
+        """全 Windows Agent の Ollama server.log（GPU 検出結果含む）を並列取得。"""
+        results = await agent_request(bot, "GET", f"/ollama/server-log?lines={lines}")
+        return {"agents": results}
