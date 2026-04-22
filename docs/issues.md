@@ -63,3 +63,11 @@ OLLAMA_MAX_LOADED_MODELS:0
   - Live Status: `nvidia-smi` + `ollama ps` リアルタイム取得
   - Ollama Server Log: server.log の GPU 関連行ハイライト表示
   - Boot Logs: `start_agent.bat` が起動時に書く `gpu_status.log`
+
+
+### SubPCが遠隔起動できなかった
+- [ ] SubPCのWoLが効かなかった
+
+
+### （案）AI-ASMR
+- [ ] irodoriTTSを使って
