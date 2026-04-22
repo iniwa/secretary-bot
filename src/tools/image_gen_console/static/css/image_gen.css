@@ -288,13 +288,122 @@ body[data-nsfw="on"] .ig-topbar-status {
     gap: 0.3rem;
   }
 
-  /* Gallery フィルタ行: 検索入力を全幅化・タグセレクトを折返し */
-  #gal-filter {
+  /* === Gallery v2 モバイル === */
+  /* ツールバー: 2段構成のボタン/セレクトをコンパクトに折返し */
+  .imggen-gallery-toolbar { gap: 0.4rem; padding-bottom: 0.5rem; }
+  .imggen-gallery-toolbar-row {
+    gap: 0.3rem;
+  }
+  #gal-q {
     flex: 1 1 100% !important;
     width: 100% !important;
     font-size: 16px !important;
+    min-height: 40px;
   }
-  #gal-tag { flex: 1 1 auto; }
+  /* 並び順・期間・WF・コレクション・タグ追加は 2列 grid 風に等幅で並べる */
+  .imggen-gallery-toolbar select.form-input {
+    flex: 1 1 calc(50% - 0.15rem);
+    min-width: 0;
+    font-size: 16px !important;
+    min-height: 40px;
+  }
+  #gal-reload { min-height: 40px; flex: 0 0 auto; }
+  .imggen-fav-toggle { flex: 1 1 auto; min-height: 40px; padding: 0 0.5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-raised); }
+
+  /* density / 全開閉 / 選択モード は小さめで並べる */
+  .imggen-gallery-density { flex: 1 1 auto; justify-content: space-evenly; }
+  .imggen-gallery-density .btn { flex: 1 1 auto; min-height: 36px; font-size: 0.78rem; padding: 0.3rem 0; }
+  #gal-collapse-all, #gal-expand-all, #gal-select-mode, #gal-new-col {
+    min-height: 36px; font-size: 0.78rem; padding: 0.3rem 0.55rem;
+    flex: 1 1 auto;
+  }
+
+  /* chips の × をタップしやすく */
+  .imggen-chip {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    min-height: 32px;
+  }
+  .imggen-chip-x { font-size: 1.05rem; padding: 0 0.15rem; }
+
+  /* 日付範囲カスタム: 縦積み */
+  .imggen-gallery-date-range {
+    flex-wrap: wrap;
+    padding: 0.4rem;
+  }
+  .imggen-gallery-date-range input[type="date"] {
+    flex: 1 1 calc(50% - 0.5rem);
+    font-size: 16px !important;
+    min-height: 40px;
+  }
+  #gal-date-apply { flex: 1 1 100%; min-height: 40px; }
+
+  /* 選択モードバー: ボタンを等幅で折返し */
+  .imggen-gallery-selbar {
+    padding: 0.4rem;
+    gap: 0.3rem;
+  }
+  #gal-sel-count { flex: 1 1 100%; text-align: center; font-weight: 600; }
+  .imggen-gallery-selbar button {
+    flex: 1 1 calc(33.333% - 0.3rem);
+    min-height: 38px;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.25rem;
+  }
+
+  /* グリッド: 密度に応じてモバイル向けに --gal-min を上書き */
+  .imggen-gallery-grid { gap: 0.3rem; }
+  .imggen-gallery-grid[data-density="sm"] { --gal-min: 84px; }
+  .imggen-gallery-grid[data-density="md"] { --gal-min: 110px; }
+  .imggen-gallery-grid[data-density="lg"] { --gal-min: 150px; }
+
+  /* 日付ヘッダ: タップしやすく */
+  .imggen-gallery-day-head {
+    padding: 0.55rem 0.3rem;
+    font-size: 0.85rem;
+    min-height: 40px;
+  }
+
+  /* Compare overlay: 2カラム → 1カラム（縦積み） */
+  .imggen-compare-card {
+    width: 100vw; height: 100dvh; max-height: 100dvh;
+    border-radius: 0;
+  }
+  .imggen-compare-body {
+    grid-template-columns: 1fr;
+    padding: 0.4rem;
+  }
+  .imggen-compare-pane img { max-height: 35vh; }
+  .imggen-compare-prompt-pair {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+  }
+  .imggen-compare-prompts,
+  .imggen-compare-params {
+    max-height: 40vh;
+    padding: 0.4rem;
+  }
+
+  /* Similar overlay */
+  .imggen-similar-card {
+    width: 100vw; height: 100dvh; max-height: 100dvh;
+    border-radius: 0;
+  }
+  .imggen-similar-grid {
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 0.3rem;
+    padding: 0.4rem;
+  }
+
+  /* Collection picker */
+  .imggen-pick-card {
+    width: 100vw; max-height: 80dvh;
+    border-radius: 0;
+  }
+  .imggen-pick-item { min-height: 40px; padding: 0.6rem 0.7rem; font-size: 0.9rem; }
+  .imggen-pick-new { flex-wrap: wrap; }
+  .imggen-pick-new input { flex: 1 1 100%; font-size: 16px !important; min-height: 40px; }
+  .imggen-pick-new .btn { flex: 1 1 100%; min-height: 40px; }
 
   /* Jobs 行: 3 列 grid → 2 行にしてボタン列を下段フル幅 */
   .imggen-job-row {
@@ -557,7 +666,7 @@ body[data-nsfw="on"] .ig-topbar-status {
 /* Gallery */
 .imggen-gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--gal-min, 140px), 1fr));
   gap: 0.4rem;
 }
 .imggen-gallery-day {

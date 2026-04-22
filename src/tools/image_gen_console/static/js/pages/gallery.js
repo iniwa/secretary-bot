@@ -170,7 +170,7 @@ function renderGallery() {
   el.innerHTML = grouped.map(([day, list]) => {
     const collapsed = state.collapsedDays.has(day);
     const bodyHtml = collapsed ? '' : `
-      <div class="imggen-gallery-grid" style="grid-template-columns:repeat(auto-fill,minmax(${minPx}px,1fr));">
+      <div class="imggen-gallery-grid" data-density="${state.density}" style="--gal-min:${minPx}px;">
         ${list.map(g => renderItem(g)).join('')}
       </div>
     `;
