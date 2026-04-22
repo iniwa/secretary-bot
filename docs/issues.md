@@ -91,7 +91,35 @@ OLLAMA_MAX_LOADED_MODELS:0
 
 
 ### SubPCが遠隔起動できなかった
-- [ ] SubPCのWoLが効かなかった
+- [x] SubPCのWoLが効かなかった
+
+#### 2026-04-22 原因調査と対応
+
+**症状**: `2026-04-22 02:42` に power-unit 経由で SubPC をシャットダウン → 次回起動（18:03）まで約 15 時間空き、WoL で起こせず物理電源で起動した形跡。
+
+**診断結果**（SubPC）:
+- `HiberbootEnabled=0`（Fast Startup 無効）は前回対応通り維持されていた
+- `*WakeOnMagicPacket` / `S5WakeOnLan` / `*WakeOnPattern` はすべて `1`（有効）
+- `powercfg /devicequery wake_armed` に Realtek 2.5GbE が含まれている
+- **`WolShutdownLinkSpeed=0`（10 Mbps 優先）** ← 本命の容疑者。シャットダウン時に NIC が 10Mbps へネゴシエーションし直す際、スイッチ側が 10Mbps リンクを維持できないとマジックパケットが届かない
+- `EnableWakeOnLan` キー値が空（Realtek 独自キー、明示未設定）
+- Realtek ドライバが 2019-05-10 版（`rt640x64.sys` v10.35.510.2019）と古い
+
+**適用済み対応**:
+1. Sub/Main 両 PC で `WolShutdownLinkSpeed` を `2`（Not Speed Down）に変更
+2. `HiberbootEnabled=0` を両 PC で再明示（Main PC 側は今回キー値が 0 でなかったため予防的に修正）
+3. `windows-agent/agent.py` に `_ensure_wol_ready()` を追加、lifespan 起動時と `/shutdown` 直前に必須 WoL 設定を自動是正（Windows Update / ドライバ更新による設定ドリフト対策）
+
+**残タスク（手動）**:
+- [ ] BIOS/UEFI 側の WoL 設定を両 PC で確認（SubPC / MainPC）
+  - `Power > ErP Ready` = **Disabled**（Enabled だと S5 で AC カット相当になり WoL 不可）
+  - `Wake On LAN` / `Power On By PCI-E / PCI` = **Enabled**
+  - `Deep Sleep` / `Deep Sleep Control` = **Disabled**
+- [ ] Realtek NIC ドライバを最新版に更新（任意・影響範囲大）
+  - SubPC: RTL8125（2.5GbE）、MainPC: RTL8126 相当（5GbE）
+  - https://www.realtek.com/Download/List?cate_id=584 から最新 `Win10 Auto Installation Program` を取得
+  - 更新後は `_ensure_wol_ready()` が自動で NIC 設定を復元するが、念のため `Get-NetAdapterAdvancedProperty` で検証
+  - 現ドライバ（2019 年版）は `Get-NetAdapterPowerManagement` が System Error 31 を返すため電源管理 API 連携が壊れており、GUI の電源管理タブからの制御が不安定な可能性がある
 
 
 ### （案）AI-ASMR

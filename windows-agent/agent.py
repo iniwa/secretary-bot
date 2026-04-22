@@ -78,6 +78,54 @@ def _mount_nas() -> None:
         print(f"[Agent] NAS mount exception: {e}")
 
 
+def _ensure_wol_ready() -> None:
+    """shutdown→WoL 起動の信頼性を確保するための OS/NIC 設定を毎回起動時に強制する。
+
+    - HiberbootEnabled=0: Fast Startup 無効（S5 WoL に必須）
+    - WolShutdownLinkSpeed=2: Not Speed Down（10Mbps 降下によるリンクロス対策）
+    - *WakeOnMagicPacket / S5WakeOnLan / *WakeOnPattern = 1
+    - EnableWakeOnLan = 1（Realtek 系独自キー、未サポート時は無視）
+
+    start_agent.bat が管理者昇格済みで Agent を起動している前提。
+    Windows Update / ドライバ更新で値がリセットされるケースがあるため、
+    毎起動時にドリフト検出＋自動是正する。
+    """
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$c=@();"
+        "$hb=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled).HiberbootEnabled;"
+        "if ($hb -ne 0) { Set-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -Value 0 -Type DWord; $c+='HiberbootEnabled' };"
+        "$a=Get-NetAdapter -Physical | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -notmatch 'Wi-?Fi|Wireless|Bluetooth' } | Select-Object -First 1;"
+        "if ($a) {"
+        "  $t=[ordered]@{'WolShutdownLinkSpeed'=2;'EnableWakeOnLan'=1;'*WakeOnMagicPacket'=1;'S5WakeOnLan'=1;'*WakeOnPattern'=1};"
+        "  foreach ($kw in $t.Keys) {"
+        "    $p=Get-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $kw -AllProperties -ErrorAction SilentlyContinue;"
+        "    if ($p -and $p.RegistryValue -ne $t[$kw]) {"
+        "      try { Set-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $kw -RegistryValue $t[$kw] -NoRestart -ErrorAction Stop; $c+=$kw } catch {}"
+        "    }"
+        "  }"
+        "}"
+        "if ($c.Count -gt 0) { 'WOL_FIXED:' + ($c -join ',') } else { 'WOL_OK' }"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, errors="replace", timeout=30,
+        )
+        out = (result.stdout or "").strip()
+        if out.startswith("WOL_FIXED:"):
+            print(f"[Agent] WoL preflight applied: {out[len('WOL_FIXED:'):]}")
+        elif out == "WOL_OK":
+            print("[Agent] WoL preflight: OK (no drift)")
+        else:
+            print(f"[Agent] WoL preflight unexpected output: {out!r}")
+        err = (result.stderr or "").strip()
+        if err:
+            print(f"[Agent] WoL preflight stderr: {err}")
+    except Exception as e:
+        print(f"[Agent] WoL preflight exception: {e}")
+
+
 def _load_agent_config() -> dict:
     """windows-agent/config/agent_config.yaml があれば読み込む。なければ空 dict。"""
     import yaml
@@ -123,6 +171,8 @@ async def lifespan(app: FastAPI):
     _agent_role = role
     _agent_config = config
     print(f"[Agent] Role: {role}")
+    # WoL プリフライト（shutdown→WoL 起動の信頼性確保、全ロールで実行）
+    _ensure_wol_ready()
     # NAS 認証（Sub PC で OBS ファイル整理時に必要）
     if role == "sub":
         _mount_nas()
@@ -732,6 +782,8 @@ async def shutdown_pc(request: Request):
     _verify_token(request)
     body = await request.json()
     delay = max(body.get("delay", 60), 10)
+    # shutdown 直前にも WoL 設定を再確認（セッション中にドリフトした場合の保険）
+    _ensure_wol_ready()
     subprocess.Popen(
         ["shutdown", "/s", "/t", str(delay)],
         creationflags=subprocess.CREATE_NO_WINDOW,
