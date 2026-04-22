@@ -87,7 +87,24 @@ export function render() {
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">
-  <h3>4. リポ内プリセットの状態</h3>
+  <h3>4. AsumaXL-Illustrious v4（導入済みの代替チェックポイント）</h3>
+  <ul class="ig-ref-list">
+    <li>ファイル: <code>asumaxlIllustrious_v4.safetensors</code>（6.46 GB, fp16, SHA256 <code>6553ad47...010f0</code>）</li>
+    <li>ベース: <strong>Illustrious XL</strong>（NoobAI と同系、プロンプト知見は 1〜3 節がそのまま流用可）</li>
+    <li>推奨設定: Sampler <code>Euler a</code>, Steps <code>25–30</code>（NoobXL と同一）</li>
+    <li>LoRA 互換性: <code>INIWA_NOOBXL</code> は NoobXL 用で、AsumaXL とは塗りがずれる可能性。キャラ LoRA を使わない立ち絵・背景生成用として使用するのが無難</li>
+  </ul>
+  <div class="pc-label" style="margin-top:0.8rem;">使い分けの指針</div>
+  <ul class="ig-ref-list">
+    <li><strong>Iniwa_VRC キャラを描くとき</strong> → <code>chenkinNoobXLCKXL_v05</code> + <code>t2i_default</code>（LoRA 付）</li>
+    <li><strong>汎用イラスト / 風景 / オリキャラ（Iniwa_VRC 以外）</strong> → <code>asumaxlIllustrious_v4</code> + <code>t2i_default_vanilla</code>（LoRA 無）</li>
+    <li>Generate 画面の Checkpoint プルダウンと Preset プルダウンで切替可能</li>
+  </ul>
+  <div class="pc-note">model_sync が 30 分おきに Agent キャッシュを更新するので、NAS に配置後は自動で選択肢に現れる。</div>
+</div>
+
+<div class="pc-card" style="margin-top:1rem;">
+  <h3>5. リポ内プリセットの状態</h3>
   <div class="pc-label">quality_illustrious_newest（id 21, builtin, 更新済み）</div>
   <div class="pc-prompt">masterpiece, best quality, amazing quality, very aesthetic, very awa, absurdres, highres, newest, year 2026</div>
 
@@ -108,7 +125,7 @@ export function render() {
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">
-  <h3>5. 実戦テンプレ（Iniwa_VRC 想定）</h3>
+  <h3>6. 実戦テンプレ（Iniwa_VRC 想定）</h3>
   <div class="pc-label">A. 日常系ポートレート（カフェ・教室・自室）</div>
   <div class="pc-prompt">sections: quality_illustrious_newest, character_iniwa_vrc, scene_cafe, composition_cowboy_shot, style_anime_modern, negative_general
 user追加: (detailed eyes:1.2), sitting at window seat, holding a latte cup, autumn afternoon, sunlight from window
@@ -133,7 +150,7 @@ params: 832x1216, 28 steps, CFG 5.5
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">
-  <h3>6. 運用上のハマり所</h3>
+  <h3>7. 運用上のハマり所</h3>
   <ul class="ig-ref-list">
     <li>NoobAI 系は Danbooru タグベース。自然文より <strong>タグ列挙</strong>が効く（短い自然文の補助は OK）</li>
     <li>weight は <code>1.4</code> を超えると高確率で破綻（指・目・構図）</li>
@@ -146,9 +163,10 @@ params: 832x1216, 28 steps, CFG 5.5
 </div>
 
 <div class="pc-card" style="margin-top:1rem;">
-  <h3>7. Sources / 出典</h3>
+  <h3>8. Sources / 出典</h3>
   <ul class="ig-ref-list">
     <li><a href="https://civitai.com/models/2167995/chenkin-noob-xl-ckxl" target="_blank" rel="noopener">Chenkin Noob XL (CKXL) v0.5 | Civitai</a></li>
+    <li><a href="https://civitai.com/models/1177258/asumaxl-illustrious" target="_blank" rel="noopener">AsumaXL-Illustrious v4 | Civitai</a></li>
     <li><a href="https://docs.seaart.ai/guide-1/6-permanent-events/high-quality-models-recommendation/noobai-xl" target="_blank" rel="noopener">NoobAI XL | SeaArt Guide</a></li>
     <li><a href="https://github.com/regiellis/ComfyUI-EasyNoobai" target="_blank" rel="noopener">ComfyUI-EasyNoobai (GitHub)</a></li>
     <li><a href="https://civitai.com/articles/9158/negative-prompt-for-noobai-xl-nai-xl-or-illustrious" target="_blank" rel="noopener">Negative prompt for NoobAI-XL / Illustrious | Civitai</a></li>
