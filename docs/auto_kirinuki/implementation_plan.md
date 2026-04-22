@@ -13,7 +13,7 @@
 | D. Windows Agent 側 | 完了 | router / runner / whisper_cache + 旧コード移植。実機疎通は Main/Sub PC で |
 | E. WebGUI | 完了 | `/api/clip-pipeline/*` + `#clip-pipeline` SPA ページ（capability / job CRUD / SSE） |
 | F. 設定 / ドキュメント | 完了 | design / implementation_plan / nas_migration / api / README + issues.md |
-| G. クリーンアップ | 未着手 | 実機疎通前提（Main/Sub PC で再開） |
+| G. クリーンアップ | 静的作業完了 / 実機疎通のみ残 | G1/G2/G4 完了。D8・G3 は Main/Sub PC 起動時の実機確認 |
 
 最終更新: 2026-04-20 / 担当: Claude Code + iniwa
 
@@ -125,11 +125,11 @@
 
 ## G. クリーンアップ / 検証
 
-- [ ] G1: ローカル型チェック / import 整合
-- [ ] G2: ユニットテスト（Pi 側ユニット / Dispatcher ロジック）
+- [x] G1: ローカル型チェック / import 整合（2026-04-23: Pi 側 + Agent 側 + agent.py + web/app.py 全 import が解決。Database のクリップ関連メソッド 12 個も揃っている）
+- [x] G2: ユニットテスト（Pi 側ユニット / Dispatcher ロジック）（2026-04-23: `tests/units/clip_pipeline/` に 35 テスト追加 — 純粋関数 9 / Dispatcher 状態遷移 13 / Unit ロジック 13）
 - [ ] G3: 実機疎通（Main/Sub PC 上で Agent 起動 + Pi から enqueue）
   - 注: リモート PC では実施不可。Sub PC / Main PC で再開時にチェック
-- [ ] G4: 旧リポジトリ `streamarchive-auto-kirinuki` の参考用コメント追加（削除しない）
+- [x] G4: 旧リポジトリ `streamarchive-auto-kirinuki` の参考用コメント追加（2026-04-23: `CLAUDE.md` / `CLAUDE_ja.md` / `clip-pipeline-design.md` / `memo.md` の先頭に移行バナーを追加。未コミット — 旧リポは削除しない）
 
 ---
 
@@ -162,3 +162,4 @@ G1→G2→G4 (静的検証、G3 は実機環境で別途)
 - 2026-04-20 Phase D 完了: `windows-agent/tools/clip_pipeline/` を新設。旧 `streamarchive-auto-kirinuki/clip-pipeline/` の pipeline / preprocess_audio / transcribe / analyze_audio / emotion / highlight / export_edl / export_clips / config を `pipeline/` サブパッケージへ移植（明示相対 import 化、`transcribe` に `download_root`、`run_pipeline` に `step_callback` / `cancel_flag` / 戻り値追加）。`runner.py` で asyncio.to_thread 駆動 + SSE イベントキュー、`whisper_cache.py` で NAS → ローカル SSD への chunked copy（atomic replace）、`router.py` で `/clip-pipeline/capability` / `/whisper/cache-sync` / `/jobs/start` の HTTP + SSE を実装。`windows-agent/agent.py` に init + include_router を追加、`windows-agent/requirements.txt` に faster-whisper / librosa / demucs / funasr / requests を追加。実機疎通は Main/Sub PC で再開時に実施。
 - 2026-04-20 Phase F 完了: `docs/auto_kirinuki/api.md`（Agent API 仕様書）と `docs/auto_kirinuki/README.md`（目次 + 全体構成）を新設。`implementation_plan.md` / `docs/issues.md` を Phase C/D/F 完了状態に更新。
 - 2026-04-20 Phase E 完了: `src/web/routes/clip_pipeline.py` に 6 エンドポイント（jobs POST/GET/detail/cancel、jobs/stream SSE、capability）を実装し、`src/web/routes/__init__.py` に登録。`AgentClient` は `discord.py` 依存経路を避けるため capability ハンドラ内で遅延 import。WebGUI は `src/web/static/js/pages/clip-pipeline.js` に SPA ページを新設（SSE ライブ更新 + 15s ポーリング fallback + 取消ボタン + capability パネル）、`index.html` の Tools グループにナビ追加、`app.js` の pages レジストリに登録。残タスクは Phase G（ローカル型チェック / 実機疎通）。
+- 2026-04-23 Phase G 静的作業完了: G1（全 import 解決確認 — Pi 側 `src/units/clip_pipeline/` + Agent 側 `tools/clip_pipeline/` + `windows-agent/agent.py` + `src/web/app.py`。`Database` に `clip_pipeline_job_*` 系 12 メソッドが揃っていることも確認）、G2（`tests/units/clip_pipeline/` に 35 テスト追加 — 純粋関数 9 / Dispatcher 状態遷移 13 / Unit ロジック 13、全体 pytest 75 passed）、G4（旧リポジトリ `streamarchive-auto-kirinuki` の `CLAUDE.md` / `CLAUDE_ja.md` / `clip-pipeline-design.md` / `memo.md` の先頭に移行バナーを追加）。残るは G3（実機疎通 — Main/Sub PC 上で Agent 起動 + Pi から enqueue）と D8（`nas_mount.py` が `secretary-bot` 共有を再利用する確認）のみ。どちらも実機動作が必要なので、Main/Sub PC セッション再開時に検証する。

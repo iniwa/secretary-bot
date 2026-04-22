@@ -7,10 +7,10 @@
 
 ### auto-kirinuki（配信切り抜き / Phase 1）
 - [ ] D8: 実機で `nas_mount.py` が `secretary-bot` 共有を再利用することの確認（Main/Sub PC 再開時）
-- [ ] G1: ローカル型チェック / import 整合
-- [ ] G2: ユニットテスト（Pi 側ユニット / Dispatcher ロジック）
+- [x] G1: ローカル型チェック / import 整合（2026-04-23 完了 — Pi/Agent/agent.py/web.app 全 import OK、Database メソッド揃いを確認）
+- [x] G2: ユニットテスト（Pi 側ユニット / Dispatcher ロジック）（2026-04-23 完了 — `tests/units/clip_pipeline/` に 35 テスト追加、全体 pytest 75 passed）
 - [ ] G3: 実機疎通（Main/Sub PC 上で Agent 起動 + Pi から enqueue → NAS outputs に EDL/MP4/transcript/highlights が揃うこと）
-- [ ] G4: 旧リポジトリ `streamarchive-auto-kirinuki` への参考用コメント追加（削除しない）
+- [x] G4: 旧リポジトリ `streamarchive-auto-kirinuki` への参考用コメント追加（2026-04-23 完了 — `CLAUDE.md` / `CLAUDE_ja.md` / `clip-pipeline-design.md` / `memo.md` の先頭に移行バナーを追加。旧リポは削除せず読み取り専用で残置、コミットは未実施）
   - コード実装（Phase A〜F）は 2026-04-20 に完了済
   - 詳細は `docs/auto_kirinuki/implementation_plan.md` Phase G セクション参照
 
