@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_chibi_sd",
+  "description": "ミニキャラ SD（スーパーデフォルメ）2〜3頭身・大きな頭・短い手足（強めウェイト）",
+  "positive": "(chibi:1.3), (sd character:1.2), mini character, big head, small body, short limbs, simplified proportions, soft round face, cute",
+  "negative": "realistic proportions, adult proportions, tall body, long limbs",
+  "tags": "style,chibi,sd,super_deformed,mini"
+}
