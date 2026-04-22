@@ -42,7 +42,7 @@ OLLAMA_FLASH_ATTENTION:true / OLLAMA_KV_CACHE_TYPE:q8_0 / OLLAMA_MAX_LOADED_MODE
 
 ---
 
-#### 2026-04-22 診断結果（Remote PC から調査）
+#### 2026-04-22 診断結果（Remote PC から調査）— 参考用（上の解決セクションで対処済み）
 
 **症状**: `ollama ps` の PROCESSOR 列が `100% CPU`。モデル `gemma4:e2b` (7.7GB)、VRAM 空きは 8.5GB あるのに GPU を使わない。
 
@@ -68,7 +68,7 @@ OLLAMA_MAX_LOADED_MODELS:0
 2. **Ollama のバンドル CUDA ランタイム（`Ollama/lib/ollama/cuda_v12` 配下）が壊れているか不在**
    - `library=cpu` / `total_vram="0 B"` は CUDA DLL 未ロード時に出るパターン
 
-**帰宅後の対処手順**（優先順）:
+**帰宅後の対処手順**（優先順・実際は SSH で実施）:
 1. **タスクマネージャー → スタートアップ**タブで `Ollama` が有効になっていないか確認 → 有効なら無効化
 2. システムトレイ（通知領域）のラマアイコンを右クリック → Quit で Ollama デスクトップアプリを完全終了
 3. `start_agent.bat` を再実行し、WebGUI の **GPU Status → Ollama Server Log** を確認
