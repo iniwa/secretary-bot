@@ -172,6 +172,38 @@ function setupNsfwToggle() {
 }
 
 // ============================================================
+// モバイル用サイドバー drawer 制御
+// ============================================================
+function setupMobileDrawer() {
+  const btn = document.getElementById('ig-menu-toggle');
+  const sidebar = document.getElementById('ig-sidebar');
+  const backdrop = document.getElementById('ig-sidebar-backdrop');
+  if (!btn || !sidebar || !backdrop) return;
+
+  const open = () => {
+    sidebar.classList.add('open');
+    backdrop.classList.add('open');
+  };
+  const close = () => {
+    sidebar.classList.remove('open');
+    backdrop.classList.remove('open');
+  };
+  const toggle = () => {
+    if (sidebar.classList.contains('open')) close();
+    else open();
+  };
+
+  btn.addEventListener('click', toggle);
+  backdrop.addEventListener('click', close);
+  // ナビ項目タップで自動で閉じる（モバイル only 動作だが PC でも害なし）
+  sidebar.addEventListener('click', (e) => {
+    if (e.target.closest('.ig-nav-item')) close();
+  });
+  // hashchange でも閉じる（「← Bot」以外の遷移保険）
+  window.addEventListener('hashchange', close);
+}
+
+// ============================================================
 // Init
 // ============================================================
 window.addEventListener('hashchange', navigate);
@@ -180,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // NSFW モードを DOM 確定直後に body に反映しておく
   applyNsfwAttr(isNsfwOn());
   setupNsfwToggle();
+  setupMobileDrawer();
   navigate();
   refreshTopbarStatus();
   setInterval(refreshTopbarStatus, 60000);

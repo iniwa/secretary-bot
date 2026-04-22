@@ -12,13 +12,15 @@
 <body>
   <div id="ig-app">
     <header class="ig-topbar">
+      <button id="ig-menu-toggle" class="ig-menu-toggle" type="button" aria-label="メニュー">☰</button>
       <a href="/" class="ig-back-link" title="Bot に戻る">&larr; Bot</a>
       <h1 id="ig-topbar-title" class="ig-topbar-title">🎨 Image Gen Console</h1>
       <div id="ig-topbar-status" class="ig-topbar-status"></div>
     </header>
 
     <div class="ig-layout">
-      <nav class="ig-sidebar">
+      <div id="ig-sidebar-backdrop" class="ig-sidebar-backdrop"></div>
+      <nav id="ig-sidebar" class="ig-sidebar">
         <a href="#/generate" class="ig-nav-item" data-page="generate">
           <span class="ig-nav-icon">🎨</span><span>Generate</span>
         </a>

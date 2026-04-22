@@ -1,12 +1,38 @@
 /* === Image Gen Console — 独立 SPA レイアウト === */
 /* base.css / components.css は /static/css/ から流用。本ファイルは固有スタイルのみ。 */
 
-html, body { height: 100vh; overflow: hidden; }
+html, body { height: 100vh; height: 100dvh; overflow: hidden; }
 
 #ig-app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+}
+
+/* ハンバーガーボタン（モバイルのみ表示） */
+.ig-menu-toggle {
+  display: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ig-menu-toggle:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-overlay);
+}
+
+/* サイドバー バックドロップ（モバイル drawer 用。既定で非表示） */
+.ig-sidebar-backdrop {
+  display: none;
 }
 
 /* === Topbar === */
@@ -119,14 +145,218 @@ body[data-nsfw="on"] .ig-topbar-status {
   min-width: 0;
 }
 
-/* === Mobile === */
-@media (max-width: 700px) {
-  .ig-sidebar {
-    width: 56px;
+/* === Mobile（≤720px）===
+ *  PC レイアウトには影響させず、このブロック内で完結させる。
+ */
+@media (max-width: 720px) {
+  /* Topbar はハンバーガー + 戻る + タイトル + バージョン */
+  .ig-topbar {
+    padding: 0 0.6rem;
+    gap: 0.5rem;
   }
-  .ig-nav-item span:not(.ig-nav-icon) { display: none; }
-  .ig-nav-item { justify-content: center; padding: 0.6rem 0; }
-  .ig-main-content { padding: 0.75rem; }
+  .ig-menu-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .ig-back-link { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+  .ig-topbar-title { font-size: 0.95rem; }
+
+  /* サイドバーを左からのドロワーへ */
+  .ig-layout { position: relative; }
+  .ig-sidebar {
+    position: fixed;
+    top: var(--topbar-height);
+    left: 0;
+    width: 240px;
+    height: calc(100dvh - var(--topbar-height));
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.5);
+    padding: 0.5rem 0;
+  }
+  .ig-sidebar.open { transform: translateX(0); }
+  .ig-nav-item {
+    padding: 0.75rem 1rem 0.75rem 1.1rem;
+    font-size: 0.95rem;
+    min-height: 44px;
+  }
+  .ig-nav-sub { padding-left: 2.25rem; }
+
+  .ig-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    top: var(--topbar-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 55;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .ig-sidebar-backdrop.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .ig-main-content { padding: 0.65rem; }
+
+  /* iOS Safari は focus 時に font-size < 16px の input で zoom する。
+   * textarea / select / input すべて 16px を下回らないようにする。 */
+  .form-input,
+  .pc-input,
+  .imggen-form textarea,
+  .imggen-form select,
+  .imggen-form input,
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="password"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* タップ領域拡大 */
+  .btn, .btn-sm { min-height: 40px; padding: 0.45rem 0.8rem; }
+  .imggen-toggle { min-height: 32px; padding: 0.2rem 0.55rem; font-size: 0.8rem; }
+  .imggen-section-chip {
+    padding: 0.5rem 0.7rem 0.5rem 0.85rem;
+    font-size: 0.85rem;
+  }
+  .imggen-chosen-chip { padding: 0.35rem 0.6rem; font-size: 0.8rem; }
+  .imggen-section-cat .cat-label { padding: 0.5rem 0.55rem; }
+  .imggen-section-cat .cat-label .cat-toggle {
+    width: 1.8rem; height: 1.8rem; font-size: 0.85rem;
+  }
+  .imggen-section-cat .cat-label .add-btn {
+    min-height: 32px; padding: 0.3rem 0.55rem;
+  }
+
+  /* Generate: プリセット行の 4 ボタンを折り返し可能に */
+  .imggen-secpreset-row {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .imggen-secpreset-row select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .imggen-secpreset-row .btn { flex: 1 1 auto; }
+
+  /* Generate: LoRA 行はスライダ + 数値入力を 2 段目に */
+  .imggen-lora-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "toggle name"
+      "slider num";
+    row-gap: 0.3rem;
+  }
+  .imggen-lora-toggle { grid-area: toggle; }
+  .imggen-lora-name { grid-area: name; white-space: normal; }
+  .imggen-lora-strength { grid-area: slider; width: 100%; }
+  .imggen-lora-strength-num { grid-area: num; width: 100%; }
+
+  /* Generate: セクションヘッダのボタン群が溢れないように */
+  .imggen-sections-block h4 {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .imggen-sections-block h4 > span:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  /* Generate: Wildcard 行の seed input を広げる */
+  .imggen-wildcard-row input[type="number"] {
+    flex: 1 1 100%;
+    max-width: none !important;
+  }
+
+  /* Generate: 投入行の幅調整 */
+  .imggen-submit-row #ig-batch-count { width: 5.5rem; }
+
+  /* Header を縦積み気味に */
+  .imggen-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  /* Gallery: 小画面では 1 行により多く並ぶよう minmax を詰める */
+  .imggen-gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 0.3rem;
+  }
+
+  /* Gallery フィルタ行: 検索入力を全幅化・タグセレクトを折返し */
+  #gal-filter {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    font-size: 16px !important;
+  }
+  #gal-tag { flex: 1 1 auto; }
+
+  /* Jobs 行: 3 列 grid → 2 行にしてボタン列を下段フル幅 */
+  .imggen-job-row {
+    grid-template-columns: 90px 1fr;
+    grid-template-areas:
+      "status info"
+      "actions actions";
+    gap: 0.35rem 0.5rem;
+  }
+  .imggen-job-row > *:nth-child(1) { grid-area: status; }
+  .imggen-job-row > *:nth-child(2) { grid-area: info; }
+  .imggen-job-row > *:nth-child(3) {
+    grid-area: actions;
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    gap: 0.35rem !important;
+  }
+  .imggen-job-row > *:nth-child(3) .btn { flex: 1 1 auto; }
+
+  /* Lightbox: 画像は少し小さめに、アクション行は横スクロールを許容 */
+  .imggen-lightbox img,
+  .imggen-lightbox video {
+    max-width: 100vw;
+    max-height: 70vh;
+  }
+  .imggen-lightbox .imggen-lightbox-actions {
+    max-width: 100vw;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding: 0 0.5rem;
+    -webkit-overflow-scrolling: touch;
+  }
+  .imggen-lightbox .imggen-lightbox-actions button,
+  .imggen-lightbox .imggen-lightbox-actions a {
+    flex-shrink: 0;
+    min-height: 40px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  /* Lightbox の prompt モーダルを広めに */
+  .imggen-lb-prompt-card { width: 96vw; max-height: 92dvh; }
+
+  /* 共通 modal */
+  .imggen-modal { width: 96vw; max-height: 92dvh; }
+  .imggen-modal-body { padding: 0.7rem; }
+  .imggen-modal-footer .btn { flex: 1 1 auto; }
+
+  /* Extract: drop zone を上下薄めに */
+  .ex-dropzone { padding: 1rem 0.8rem; }
+  .ex-dropzone-icon { font-size: 1.6rem; }
+  .ex-actions .btn { flex: 1 1 auto; }
+
+  /* pc-card の padding を少し詰める */
+  .pc-card { padding: 0.8rem; }
+  .pc-btn-row .btn { flex: 1 1 auto; }
+
+  /* LoRA dataset グリッドを小さく */
+  .lora-ds-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 0.4rem;
+  }
 }
 
 /* ========================================================================
