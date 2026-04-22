@@ -47,6 +47,9 @@ export const GenerationAPI = {
   workflowLoras(name) {
     return api(`/api/generation/workflows/${encodeURIComponent(name)}/loras`);
   },
+  listCheckpoints() {
+    return api('/api/generation/checkpoints');
+  },
 
   // Section categories
   listCategories() {

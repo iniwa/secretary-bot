@@ -26,6 +26,11 @@ let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
 let loraNodes = [];
 const LORA_LS_PREFIX = 'imggen:lora:';   // + workflow_name → JSON
 
+// Checkpoint 選択（Agent キャッシュ集計から）
+let checkpoints = [];            // [{filename, agents: [agent_id, ...]}, ...]
+let defaultCheckpoint = '';      // config の default_base_model
+const LAST_CKPT_KEY = 'imggen:last_ckpt';
+
 // セクションプリセット（DB 由来）
 let sectionPresets = [];
 
@@ -86,6 +91,12 @@ export function render() {
     <div class="imggen-form">
       <label for="ig-workflow">Workflow</label>
       <select id="ig-workflow" class="form-input"><option value="">Loading...</option></select>
+
+      <label for="ig-ckpt" style="display:flex;align-items:center;gap:0.4rem;">
+        <span>Checkpoint</span>
+        <button id="ig-ckpt-reload" class="imggen-toggle" title="キャッシュ一覧を再読込" type="button">↻</button>
+      </label>
+      <select id="ig-ckpt" class="form-input"><option value="">Loading...</option></select>
 
       <div id="ig-lora-block" class="imggen-lora-block" hidden>
         <h4 style="margin:0.5rem 0 0.3rem;font-size:0.8rem;">LoRA</h4>
@@ -341,6 +352,60 @@ function persistWorkflowSelection() {
 function handleWorkflowChange() {
   persistWorkflowSelection();
   loadLoras();
+}
+
+// ============================================================
+// Checkpoint selector（Agent キャッシュ集計）
+// ============================================================
+async function loadCheckpoints() {
+  const sel = $('ig-ckpt');
+  if (!sel) return;
+  try {
+    const data = await GenerationAPI.listCheckpoints();
+    checkpoints = data?.items || [];
+    defaultCheckpoint = data?.default || '';
+  } catch (err) {
+    console.error('checkpoints load failed', err);
+    checkpoints = [];
+    defaultCheckpoint = '';
+  }
+  renderCheckpointOptions();
+}
+
+function renderCheckpointOptions() {
+  const sel = $('ig-ckpt');
+  if (!sel) return;
+  if (!checkpoints.length) {
+    const note = defaultCheckpoint
+      ? `(既定: ${defaultCheckpoint})`
+      : '(キャッシュ情報なし — Agent 起動後に ↻ で再読込)';
+    sel.innerHTML = `<option value="">${esc(note)}</option>`;
+    return;
+  }
+  let saved = '';
+  try { saved = localStorage.getItem(LAST_CKPT_KEY) || ''; } catch { /* ignore */ }
+  const opts = checkpoints.map(c => {
+    const isDefault = c.filename === defaultCheckpoint;
+    const agentsNote = (c.agents && c.agents.length)
+      ? ` (${c.agents.join(', ')})` : '';
+    const mark = isDefault ? '★ ' : '';
+    return `<option value="${esc(c.filename)}">${mark}${esc(c.filename)}${esc(agentsNote)}</option>`;
+  }).join('');
+  sel.innerHTML = `<option value="">— 未指定（既定 ${esc(defaultCheckpoint || 'なし')}）—</option>${opts}`;
+  // 復元優先: localStorage → default
+  if (saved && checkpoints.some(c => c.filename === saved)) {
+    sel.value = saved;
+  } else if (defaultCheckpoint && checkpoints.some(c => c.filename === defaultCheckpoint)) {
+    sel.value = defaultCheckpoint;
+  }
+}
+
+function persistCheckpointSelection() {
+  const v = $('ig-ckpt')?.value || '';
+  try {
+    if (v) localStorage.setItem(LAST_CKPT_KEY, v);
+    else localStorage.removeItem(LAST_CKPT_KEY);
+  } catch { /* ignore */ }
 }
 
 // ============================================================
@@ -938,6 +1003,7 @@ async function checkStashPrefill() {
     const map = {
       WIDTH: 'ig-width', HEIGHT: 'ig-height', STEPS: 'ig-steps', CFG: 'ig-cfg',
       SEED: 'ig-seed', SAMPLER: 'ig-sampler', SCHEDULER: 'ig-scheduler',
+      CKPT: 'ig-ckpt',
     };
     for (const [k, id] of Object.entries(map)) {
       if (p[k] !== undefined && $(id)) $(id).value = p[k];
@@ -1017,6 +1083,7 @@ async function handleSubmit() {
   if (seedSpecified !== null) baseParams.SEED = seedSpecified;
   const sp = readStr('ig-sampler');   if (sp) baseParams.SAMPLER = sp;
   const sc = readStr('ig-scheduler'); if (sc) baseParams.SCHEDULER = sc;
+  const ck = readStr('ig-ckpt');      if (ck) baseParams.CKPT = ck;
 
   // バッチ枚数。seed が指定されていれば +1 ずつ加算、未指定/-1 なら毎回ランダム任せ
   let count = parseInt($('ig-batch-count')?.value, 10);
@@ -1479,6 +1546,8 @@ export async function mount() {
   $('ig-prompt-crafter')?.addEventListener('click', handlePromptCrafterClick);
   $('ig-preview-show')?.addEventListener('click', runPreview);
   $('ig-workflow')?.addEventListener('change', handleWorkflowChange);
+  $('ig-ckpt')?.addEventListener('change', persistCheckpointSelection);
+  $('ig-ckpt-reload')?.addEventListener('click', loadCheckpoints);
 
   $('ig-secpreset-load')?.addEventListener('click', handleSectionPresetLoad);
   $('ig-secpreset-save')?.addEventListener('click', handleSectionPresetSave);
@@ -1504,6 +1573,7 @@ export async function mount() {
     loadComfyPanel(),
     loadPresets(),
     loadSectionPresets(),
+    loadCheckpoints(),
   ]);
   // workflows ロード後に初期 LoRA も読み込む
   await loadLoras();
