@@ -385,7 +385,7 @@ function reflectFiltersToUI() {
     if ($('gal-date-from')) $('gal-date-from').value = state.filters.dateFrom || '';
     if ($('gal-date-to')) $('gal-date-to').value = state.filters.dateTo || '';
   }
-  document.querySelectorAll('[data-density]').forEach(btn => {
+  document.querySelectorAll('.imggen-gallery-density [data-density]').forEach(btn => {
     btn.classList.toggle('btn-primary', btn.dataset.density === state.density);
   });
   renderActiveFilters();
