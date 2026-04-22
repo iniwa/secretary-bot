@@ -741,8 +741,102 @@ tr:hover td { background: var(--bg-raised); }
 }
 .acc-sub-title { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.04em; }
 .acc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.85rem 1rem; }
-@media (max-width: 860px) { .acc-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) { .acc-grid { grid-template-columns: 1fr; } }
 .acc-grid .form-group { margin-bottom: 0; }
+
+/* === Shared form / toggle widgets ===
+ * これらのクラスは複数ページ (settings, innermind, maintenance, pending, clip-pipeline,
+ * memo) から参照される。以前は innermind.js / maintenance.js の <style> 内でのみ
+ * 定義されていたため、該当ページを経由せずに settings を直接開くとスタイルが失われて
+ * トグルが素の checkbox になる不具合があった。共通 CSS に移設して常に有効化する。 */
+
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.form-row .form-input {
+  width: auto;
+  max-width: 180px;
+}
+.form-hint {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+.card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+/* Toggle switch (checkbox wrapper) */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: all var(--ease);
+  cursor: pointer;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: all var(--ease);
+}
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+}
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+/* 注意喚起ブロック（settings の Gemini, maintenance 等で使用） */
+.warning-text {
+  font-size: 0.75rem;
+  color: var(--warning);
+  background: var(--warning-muted);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.85rem;
+}
+
+/* 弱い説明テキスト（pending.js などで多用） */
+.muted {
+  color: var(--text-muted);
+}
+
+/* Persona (settings の長文テキストエリア) */
+.persona-textarea {
+  min-height: 12rem;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
 
 /* === Mobile (≤768px): タッチ最適化 ===
  * Phase A: 既存 DOM はそのままに、タッチターゲットと余白を整える。

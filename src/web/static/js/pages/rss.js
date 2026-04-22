@@ -258,7 +258,7 @@ export function render() {
     font-size: 0.9rem;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .rss-add-form {
       flex-direction: column;
     }

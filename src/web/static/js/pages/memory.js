@@ -279,7 +279,7 @@ export function render() {
     opacity: 1;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .mem-card {
       padding: 0.75rem;
     }

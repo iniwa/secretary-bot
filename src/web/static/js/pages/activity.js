@@ -109,6 +109,69 @@ export function render() {
   ).join('');
 
   return `
+<style>
+  /* 期間選択ツールバー: モバイルでは縦積みにして日付入力を横幅いっぱいに伸ばす */
+  .a-range-bar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .a-range-inputs {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    margin-left: auto;
+  }
+  .a-range-inputs input[type="date"] {
+    width: 130px;
+    padding: 0.25rem 0.4rem;
+    font-size: 0.8125rem;
+  }
+  .a-view-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .a-rank-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+
+  @media (max-width: 768px) {
+    /* 期間セクション: pills と日付入力を縦積み、日付は横半分ずつ */
+    .a-range-inputs {
+      margin-left: 0;
+      width: 100%;
+      flex-wrap: wrap;
+    }
+    .a-range-inputs input[type="date"] {
+      flex: 1 1 calc(50% - 0.25rem);
+      width: auto;
+      min-width: 0;
+      font-size: 16px;  /* iOS zoom 回避 */
+      padding: 0.45rem 0.55rem;
+    }
+    .a-range-inputs .btn {
+      flex: 1 1 auto;
+    }
+    /* グラフ行の PC/Mode 切替が縦積みにならないよう pill は小さく */
+    .a-view-toolbar .pill {
+      padding: 0.3rem 0.7rem;
+      font-size: 0.75rem;
+    }
+    /* ランキング 2カラム → 1カラム */
+    .a-rank-grid {
+      grid-template-columns: 1fr;
+    }
+    /* 棒グラフ高さを抑える */
+    #a-daily-chart { height: 140px; }
+    /* カレンダーのセルを低く */
+    .activity-calendar .cal-cell { min-height: 52px; }
+  }
+</style>
 <div class="activity-page" style="display:flex;flex-direction:column;gap:1rem">
 
   <section class="card">
@@ -116,12 +179,12 @@ export function render() {
       <h3>期間</h3>
       <div id="a-range-info" class="mono" style="font-size:0.8125rem;color:var(--text-muted)"></div>
     </div>
-    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+    <div class="a-range-bar">
       <div id="a-period-pills" style="display:flex;gap:0.5rem;flex-wrap:wrap">${pills}</div>
-      <div style="display:flex;gap:0.25rem;align-items:center;margin-left:auto">
-        <input type="date" id="a-range-start" class="form-input" style="width:130px;padding:0.25rem 0.4rem;font-size:0.8125rem">
+      <div class="a-range-inputs">
+        <input type="date" id="a-range-start" class="form-input">
         <span style="color:var(--text-muted);font-size:0.8125rem">〜</span>
-        <input type="date" id="a-range-end" class="form-input" style="width:130px;padding:0.25rem 0.4rem;font-size:0.8125rem">
+        <input type="date" id="a-range-end" class="form-input">
         <button class="btn btn-sm" id="a-range-apply">適用</button>
         <button class="btn btn-sm" id="a-range-clear" style="display:none">解除</button>
       </div>
@@ -140,14 +203,14 @@ export function render() {
   <section class="card">
     <div class="card-header">
       <h3>日別アクティビティ</h3>
-      <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+      <div class="a-view-toolbar">
         <div id="a-bar-pc-toggle" style="display:flex;gap:0.25rem">
           <button class="pill" data-pc="main">Main</button>
           <button class="pill" data-pc="sub">Sub</button>
           <button class="pill" data-pc="both">両方</button>
         </div>
         <div id="a-view-toggle" style="display:flex;gap:0.25rem">
-          <button class="pill" data-view="bar">棒グラフ</button>
+          <button class="pill" data-view="bar">棒</button>
           <button class="pill" data-view="calendar">カレンダー</button>
         </div>
       </div>
@@ -181,7 +244,7 @@ export function render() {
     </div>
   </section>
 
-  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem">
+  <section class="a-rank-grid">
     <div class="card">
       <div class="card-header">
         <h3>ゲーム別ランキング</h3>
@@ -219,8 +282,8 @@ export function render() {
       <h3>セッション履歴</h3>
       <div id="a-session-meta" style="font-size:0.8125rem;color:var(--text-muted)"></div>
     </div>
-    <div style="overflow-x:auto">
-      <table class="data-table" id="a-session-table" style="width:100%;font-size:0.8125rem">
+    <div class="table-wrap">
+      <table class="data-table table-responsive" id="a-session-table" style="width:100%;font-size:0.8125rem">
         <thead>
           <tr>
             <th style="text-align:left">ゲーム</th>
@@ -690,10 +753,10 @@ function renderSessions(data) {
   } else {
     tbody.innerHTML = sessions.map(s => `
       <tr>
-        <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${gameColor(s.game_name)};margin-right:6px;vertical-align:middle"></span>${escapeHtml(s.game_name)}</td>
-        <td class="mono">${fmtDateTime(s.start_at)}</td>
-        <td class="mono">${fmtDateTime(s.end_at)}</td>
-        <td class="mono" style="text-align:right">${fmtDuration(s.duration_sec)}</td>
+        <td data-label="ゲーム"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${gameColor(s.game_name)};margin-right:6px;vertical-align:middle"></span>${escapeHtml(s.game_name)}</td>
+        <td class="mono" data-label="開始">${fmtDateTime(s.start_at)}</td>
+        <td class="mono" data-label="終了">${fmtDateTime(s.end_at)}</td>
+        <td class="mono" data-label="時間" style="text-align:right">${fmtDuration(s.duration_sec)}</td>
       </tr>
     `).join('');
   }

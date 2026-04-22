@@ -1495,3 +1495,118 @@ h3 { font-size: 1rem; font-weight: 600; }
 .active-tag.element-phys  { border-color: color-mix(in srgb, #b0b0b8 50%, transparent); background: color-mix(in srgb, #b0b0b8 18%, transparent); }
 .active-tag.element-ether { border-color: color-mix(in srgb, #c062e8 50%, transparent); background: color-mix(in srgb, #c062e8 18%, transparent); }
 .active-tag.element-frost { border-color: color-mix(in srgb, #88d8f0 50%, transparent); background: color-mix(in srgb, #88d8f0 18%, transparent); }
+
+/* =====================================================================
+ * Mobile adjustments (≤768px)
+ * ハンバーガーメニュー + ドロワーサイドバー + iOS zoom 回避 + 汎用 grid の1列化
+ * ===================================================================== */
+
+.sidebar-toggle {
+  display: none;  /* デスクトップでは非表示 */
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover { background: var(--bg-raised); border-color: var(--border-hover); }
+.sidebar-toggle svg { display: block; }
+
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  top: var(--topbar-height);
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 55;
+  opacity: 0;
+  transition: opacity var(--ease);
+  pointer-events: none;
+}
+.sidebar-backdrop.open {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 768px) {
+  /* iOS Safari ズーム回避: input 系は必ず 16px 以上 */
+  input, textarea, select { font-size: 16px; }
+
+  /* 100vh は iOS ツールバーで誤差が出るので dvh に（対応ブラウザでのみ有効） */
+  html, body { height: 100dvh; }
+  #app { height: 100dvh; }
+
+  /* Topbar コンパクト化 */
+  .topbar { padding: 0 0.6rem; gap: 0.5rem; }
+  .topbar-title { font-size: 0.95rem; }
+  .back-link { padding: 4px 8px; font-size: 0.75rem; }
+  .topbar-status { display: none; }  /* 詳細ステータスはモバイルでは省略 */
+
+  /* ハンバーガー表示 */
+  .sidebar-toggle { display: inline-flex; }
+
+  /* サイドバーを左ドロワーに */
+  .layout { position: relative; }
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-height);
+    left: 0;
+    width: min(260px, 80vw);
+    height: calc(100dvh - var(--topbar-height));
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.5);
+    padding: 12px 8px;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .nav-item {
+    min-height: 44px;
+    font-size: 0.95rem;
+  }
+
+  .main-content { padding: 12px; }
+
+  /* ボタンを押しやすく */
+  .btn { min-height: 40px; padding: 0.5rem 0.9rem; }
+  .btn-sm { min-height: 36px; padding: 0.35rem 0.7rem; }
+
+  /* キャプチャ画面: 右固定 360px を 1列に */
+  .capture-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .capture-btn {
+    width: 100%;
+    max-width: 360px;
+    height: 88px;
+    font-size: 1.2rem;
+  }
+
+  /* 3列ディスク → 2列、狭ければ 1列 */
+  .disc-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+  /* テーブルは横スクロール可能に */
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .disc-grid { grid-template-columns: 1fr; }
+  .topbar-title {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

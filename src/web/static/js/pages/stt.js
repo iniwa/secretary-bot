@@ -203,7 +203,7 @@ export function render() {
     gap: 0.25rem;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .stt-controls-grid {
       grid-template-columns: 1fr;
     }

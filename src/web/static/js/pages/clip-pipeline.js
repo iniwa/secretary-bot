@@ -118,6 +118,17 @@ export function render() {
 <style>
   .cp-grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
   @media (min-width: 900px) { .cp-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 768px) {
+    .cp-form-grid { grid-template-columns: 1fr !important; }
+    .cp-params { grid-template-columns: 1fr 1fr !important; }
+    .cp-card { padding: 0.75rem; }
+    .cp-agent { flex-basis: 100%; }
+    /* ジョブ一覧テーブルは横スクロール確実に */
+    #cp-jobs-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+    .cp-log-pane { height: 14rem; }
+    .cp-log-header { flex-wrap: wrap; gap: 0.3rem; }
+    .cp-log-header select { flex: 1 1 100%; max-width: none; }
+  }
   .cp-card { background: var(--bg-raised); border: 1px solid var(--border);
              border-radius: 0.5rem; padding: 1rem; }
   .cp-card h3 { margin: 0 0 0.6rem 0; font-size: 0.95rem; }

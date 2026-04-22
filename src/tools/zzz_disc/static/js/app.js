@@ -86,6 +86,9 @@ async function navigate() {
     el.classList.toggle('active', el.dataset.page === route.nav);
   });
 
+  // モバイルではページ遷移時にサイドバーを閉じる
+  closeSidebar();
+
   const main = document.getElementById('main-content');
   try {
     main.innerHTML = route.module.render(params);
@@ -234,10 +237,25 @@ function setupSetPopovers() {
   window.addEventListener('resize', hide);
 }
 
+// サイドバー（モバイルドロワー）制御
+function openSidebar() {
+  document.getElementById('sidebar')?.classList.add('open');
+  document.getElementById('sidebar-backdrop')?.classList.add('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-backdrop')?.classList.remove('open');
+}
+
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
   applyUiPrefs();
   setupSetPopovers();
+
+  // ハンバーガー/バックドロップ
+  document.getElementById('sidebar-toggle')?.addEventListener('click', openSidebar);
+  document.getElementById('sidebar-backdrop')?.addEventListener('click', closeSidebar);
+
   if (!location.hash) location.hash = '#/characters';
   navigate();
 });

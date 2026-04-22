@@ -268,7 +268,7 @@ export function render() {
     user-select: none;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .dm-card, .dm-exc-card, .dm-settings-row {
       padding: 0.75rem;
     }

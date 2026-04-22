@@ -127,79 +127,15 @@ export function render() {
     grid-template-columns: 1fr 1fr;
     gap: 0.85rem;
   }
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .im-status-grid { grid-template-columns: 1fr; gap: 0.5rem; }
     .im-settings-grid { grid-template-columns: 1fr; }
   }
   .form-group {
     margin-bottom: 0.85rem;
   }
-  .form-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-  .form-row .form-input {
-    width: auto;
-    max-width: 180px;
-  }
-  .form-hint {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    margin-top: 0.2rem;
-  }
-  .card-footer {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-  }
   .im-toggle-row {
     grid-column: 1 / -1;
-  }
-
-  /* Toggle switch */
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 40px;
-    height: 22px;
-    flex-shrink: 0;
-  }
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-  .toggle-slider {
-    position: absolute;
-    inset: 0;
-    background: var(--bg-overlay);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    transition: all var(--ease);
-    cursor: pointer;
-  }
-  .toggle-slider::before {
-    content: '';
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    left: 2px;
-    top: 2px;
-    background: var(--text-muted);
-    border-radius: 50%;
-    transition: all var(--ease);
-  }
-  .toggle-switch input:checked + .toggle-slider {
-    background: var(--accent-muted);
-    border-color: var(--accent);
-  }
-  .toggle-switch input:checked + .toggle-slider::before {
-    transform: translateX(18px);
-    background: var(--accent);
   }
 
   /* Context sources */

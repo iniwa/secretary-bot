@@ -262,7 +262,7 @@ export function render() {
     font-weight: 600;
   }
 
-  @media (max-width: 640px) {
+  @media (max-width: 768px) {
     .obs-edit-panel {
       width: 95%;
       padding: 1rem;

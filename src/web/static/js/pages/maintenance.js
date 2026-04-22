@@ -20,8 +20,28 @@ export function render() {
     grid-template-columns: repeat(2, 1fr);
     gap: 1.25rem;
   }
-  @media (max-width: 860px) {
+  @media (max-width: 768px) {
     .maint-grid { grid-template-columns: 1fr; }
+    /* Agent 行を縦積み、コントロール群を下段フル幅に */
+    .agent-row {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .agent-info {
+      flex: 1 1 100%;
+    }
+    .agent-controls {
+      margin-left: 0;
+      width: 100%;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .btn-row {
+      gap: 0.5rem;
+    }
+    .btn-row .btn {
+      flex: 1 1 auto;
+    }
   }
   .maint-grid .card-header {
     border-bottom: 1px solid var(--border);
@@ -33,14 +53,6 @@ export function render() {
     color: var(--text-secondary);
     margin-bottom: 0.75rem;
     line-height: 1.5;
-  }
-  .warning-text {
-    font-size: 0.75rem;
-    color: var(--warning);
-    background: var(--warning-muted);
-    padding: 0.5rem 0.75rem;
-    border-radius: var(--radius-sm);
-    margin-bottom: 0.85rem;
   }
   .result-box {
     margin-top: 0.75rem;

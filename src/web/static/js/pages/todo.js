@@ -231,7 +231,7 @@ export function render() {
     margin-bottom: 0.5rem;
     opacity: 0.5;
   }
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .todo-item {
       flex-wrap: wrap;
     }

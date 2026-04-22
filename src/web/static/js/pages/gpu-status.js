@@ -213,6 +213,40 @@ export function render() {
     font-family: monospace;
     margin-bottom: 0.4rem;
   }
+
+  @media (max-width: 768px) {
+    .gpu-page { max-width: none; }
+    .gpu-toolbar {
+      gap: 0.5rem;
+    }
+    .gpu-toolbar .btn {
+      flex: 1 1 auto;
+    }
+    /* ライブ表示の各メトリクスを縦積み、バーを太めに */
+    .gpu-live-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.4rem;
+    }
+    .gpu-live-bar {
+      min-width: 0;
+      width: 100%;
+      height: 10px;
+    }
+    /* ollama ps テーブルは横スクロール可能にし、padding を詰める */
+    .gpu-ps-table {
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      white-space: nowrap;
+    }
+    .gpu-ps-table th, .gpu-ps-table td {
+      padding: 0.45rem 0.55rem;
+      font-size: 0.72rem;
+    }
+    /* ログボックスを少し低めに */
+    .gpu-log { max-height: 320px; }
+  }
 </style>
 
 <div class="gpu-page">

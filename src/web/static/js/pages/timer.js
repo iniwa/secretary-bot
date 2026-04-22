@@ -60,7 +60,7 @@ export function render() {
     grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
   }
-  @media (max-width: 640px) {
+  @media (max-width: 768px) {
     .timer-grid {
       grid-template-columns: 1fr;
     }

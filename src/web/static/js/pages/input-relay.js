@@ -217,6 +217,42 @@ export function render() {
     opacity: 0.5;
     pointer-events: none;
   }
+
+  @media (max-width: 768px) {
+    .ir-page { max-width: none; }
+    /* Update カードを縦積み、ボタンをフル幅 */
+    .ir-update-card {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+    }
+    .ir-update-card > .btn {
+      width: 100%;
+    }
+    /* Agent カードを 1列に */
+    .ir-agents-grid {
+      grid-template-columns: 1fr;
+    }
+    /* コントロールボタンはタップしやすく */
+    .ir-agent-controls .btn {
+      min-height: 40px;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.8125rem;
+    }
+    /* ログ見出し: select とボタンを折返し */
+    .ir-log-header {
+      gap: 0.5rem;
+    }
+    .ir-log-header select.form-input {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+    .ir-log-container {
+      max-height: 380px;
+      padding: 0.75rem;
+      font-size: 0.72rem;
+    }
+  }
 </style>
 
 <div class="ir-page">

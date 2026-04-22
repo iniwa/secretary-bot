@@ -261,7 +261,7 @@ export function render() {
     font-family: ui-monospace, SFMono-Regular, monospace;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .mono-timeline {
       padding-left: 1.25rem;
     }

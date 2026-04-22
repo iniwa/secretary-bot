@@ -145,6 +145,30 @@ export function render() {
   }
   .hb-entry:last-child { border-bottom: none; }
   .tps-value { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.75rem; }
+
+  @media (max-width: 768px) {
+    /* タブ/フィルタを折り返し＋タップターゲット確保 */
+    .log-filters { gap: 0.4rem; }
+    .log-filters .form-input, .log-filters select.form-input {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .log-filters label {
+      flex: 0 0 auto;
+      padding: 0.4rem 0;
+    }
+    .log-filters .btn {
+      flex: 1 1 100%;
+    }
+    /* カード化されるので max-width による ellipsis は解除し、折り返しに */
+    .log-content-cell {
+      max-width: none;
+      white-space: normal;
+    }
+    /* heartbeat / expand row の高さ調整 */
+    .hb-list { max-height: 420px; }
+    .log-expand-row pre { max-height: 220px; }
+  }
 </style>
 
 <div class="logs-page">

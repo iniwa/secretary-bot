@@ -159,7 +159,7 @@ export function render() {
     font-size: 0.95rem;
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 768px) {
     .memo-card {
       padding: 0.75rem;
     }

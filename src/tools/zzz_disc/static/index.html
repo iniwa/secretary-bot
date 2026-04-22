@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a1a1a" />
   <title>ZZZ Disc Manager</title>
   <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
   <link rel="stylesheet" href="static/css/zzz_disc.css" />
@@ -10,13 +11,17 @@
 <body>
   <div id="app">
     <header class="topbar">
+      <button id="sidebar-toggle" class="sidebar-toggle" aria-label="メニュー">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <a href="/" class="back-link" title="Botへ戻る">&larr; Bot</a>
       <h1 class="topbar-title">🎮 ZZZ Disc Manager</h1>
       <div id="topbar-status" class="topbar-status"></div>
     </header>
 
     <div class="layout">
-      <nav class="sidebar">
+      <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+      <nav class="sidebar" id="sidebar">
         <a href="#/characters" class="nav-item" data-page="characters">
           <span class="nav-icon">👥</span><span>キャラ</span>
         </a>
