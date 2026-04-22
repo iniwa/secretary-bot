@@ -55,6 +55,29 @@ _MOOD_ENERGY_MAP = {
     "idle": "low",
 }
 
+# モノローグの NG パターン（抽象語の羅列・禁止表現）。
+# 1 個でもマッチした monologue は「特になし」扱いでスキップする。
+# ※ 実運用で連発しすぎて問題になっている表現に限定しているので、
+#   単独マッチでも reject する方が効果が高い。
+_MONOLOGUE_NG_PATTERNS = [
+    re.compile(r"情報が(飛び交|流れ込|流れ去|まとまっ|整理さ|次々と)"),
+    re.compile(r"(静けさ|静寂)の中"),
+    re.compile(r"穏やかな(時間|待機)"),
+    re.compile(r"次の展開"),
+    re.compile(r"何かが始まる前"),
+    re.compile(r"一つに(繋が|まとまっ)"),
+    re.compile(r"(心地いい|落ち着いた感覚|落ち着いた時間)"),
+    re.compile(r"(全て|すべて)が(一つ|今|ここ)に"),
+    re.compile(r"色々な(情報|話題|出来事)が飛び"),
+    re.compile(r"静かな時間が流れ"),
+    re.compile(r"情報(交換|が洪水)"),
+]
+_MONOLOGUE_NG_THRESHOLD = 1
+
+# speak テキストの類似度判定しきい値（bigram Jaccard）。
+# 直近5件の notified_message と比べて、これ以上なら no_op に降格。
+_SPEAK_SIMILARITY_THRESHOLD = 0.35
+
 
 class InnerMind:
     """ミミの自律思考エンジン。"""
@@ -509,7 +532,21 @@ class InnerMind:
             log.info("InnerMind: monologue is empty/skipped")
             return ""
 
+        # NG 表現ガード: 抽象語テンプレに該当するモノローグは捨てる
+        ng_hits = self._count_ng_matches(monologue)
+        if ng_hits >= _MONOLOGUE_NG_THRESHOLD:
+            log.info(
+                "InnerMind: monologue rejected by NG filter (hits=%d): %s",
+                ng_hits, monologue[:100],
+            )
+            return ""
+
         return monologue
+
+    @staticmethod
+    def _count_ng_matches(text: str) -> int:
+        """モノローグ内の NG パターンのマッチ数を返す。"""
+        return sum(1 for pat in _MONOLOGUE_NG_PATTERNS if pat.search(text))
 
     async def _extract_structure(self, monologue: str, lens_category: str) -> dict:
         """Step 2: モノローグからmood/memory_update/interest_topicをJSON抽出。"""
@@ -708,6 +745,7 @@ class InnerMind:
     async def _generate_speak_text(self, thought: dict, context: dict) -> str:
         """action=speak 選択後、モノローグから短い発言本文を生成する。"""
         persona = self.bot.config.get("character", {}).get("persona", "")
+        user_name = await self._get_user_name()
 
         recent_conv = ""
         for sr in context["sources"]:
@@ -715,26 +753,30 @@ class InnerMind:
                 recent_conv = sr["text"]
                 break
 
-        # 直近の自発発言（繰り返し抑制）
+        # 直近の自発発言（繰り返し抑制・類似度ガード用）
         recent_rows = await self.bot.database.fetchall(
             "SELECT notified_message FROM mimi_monologue "
             "WHERE did_notify = 1 AND notified_message IS NOT NULL "
             "ORDER BY id DESC LIMIT 5",
         )
-        if recent_rows:
-            recent_speaks = "\n".join(
-                f"- {(r.get('notified_message') or '')[:100]}" for r in recent_rows
-            )
+        recent_texts = [
+            (r.get("notified_message") or "").strip()
+            for r in (recent_rows or [])
+        ]
+        recent_texts = [t for t in recent_texts if t]
+        if recent_texts:
+            recent_speaks = "\n".join(f"- {t[:100]}" for t in recent_texts)
         else:
             recent_speaks = "（過去の自発発言なし）"
 
-        system = SPEAK_TEXT_SYSTEM.format(persona=persona)
+        system = SPEAK_TEXT_SYSTEM.format(persona=persona, user_name=user_name)
         prompt = SPEAK_TEXT_PROMPT.format(
             monologue=thought.get("monologue", ""),
             time_context=self._get_time_context(),
             discord_status=context.get("discord_status", "unknown"),
             recent_conversation=recent_conv or "（なし）",
             recent_speaks=recent_speaks,
+            user_name=user_name,
         )
         try:
             raw = await self.bot.llm_router.generate(
@@ -747,10 +789,45 @@ class InnerMind:
         text = (raw or "").strip()
         # 囲み記号や引用符を剥がす
         text = text.strip("`").strip('"').strip("'").strip()
-        # 長すぎる場合は先頭80文字でトリム
-        if len(text) > 80:
-            text = text[:80]
+        if not text:
+            return ""
+        # 長すぎる場合は先頭60文字でトリム（プロンプトと揃える）
+        if len(text) > 60:
+            text = text[:60]
+
+        # 類似度ガード: 直近の発言とほぼ同じなら沈黙させる（no_op に降格される）
+        if recent_texts:
+            sim = max(self._bigram_jaccard(text, prev) for prev in recent_texts)
+            if sim >= _SPEAK_SIMILARITY_THRESHOLD:
+                log.info(
+                    "InnerMind: speak text too similar (jaccard=%.2f) to recent, demoting: %s",
+                    sim, text,
+                )
+                return ""
+
         return text
+
+    async def _get_user_name(self) -> str:
+        """ユーザーの呼称を取得。DB settings → config → フォールバック順。"""
+        val = await self.bot.database.get_setting("character.user_name")
+        if not val:
+            val = self.bot.config.get("character", {}).get("user_name", "")
+        val = (val or "").strip()
+        return val or "あなた"
+
+    @staticmethod
+    def _bigram_jaccard(a: str, b: str) -> float:
+        """2文字 n-gram の Jaccard 係数で日本語文の類似度を測る。"""
+        def bigrams(s: str) -> set[str]:
+            s = re.sub(r"[\s、。！？!?「」『』\"'`]", "", s)
+            if len(s) < 2:
+                return set()
+            return {s[i:i + 2] for i in range(len(s) - 1)}
+
+        ga, gb = bigrams(a), bigrams(b)
+        if not ga or not gb:
+            return 0.0
+        return len(ga & gb) / len(ga | gb)
 
     async def _build_tier_menu(self, tier: int) -> str:
         """Tier2/Tier3 の許可ユニット一覧をプロンプト用文字列に整形。"""
