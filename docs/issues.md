@@ -14,8 +14,33 @@
   - コード実装（Phase A〜F）は 2026-04-20 に完了済
   - 詳細は `docs/auto_kirinuki/implementation_plan.md` Phase G セクション参照
 
-### MainPCのollamaがCPUで動いている
-- [ ] ログを確認していると、明らかに思考時間が長すぎる
+### MainPCのollamaがCPUで動いている → **2026-04-22 解決**
+- [x] ログを確認していると、明らかに思考時間が長すぎる
+
+#### 2026-04-22 解決（SSH 作業）
+
+**根本原因**（2つ同時発生）:
+1. `start_agent.bat` が `taskkill /IM ollama.exe` しか実行しておらず **`ollama app.exe`（デスクトップ/トレイアプリ）は殺さなかった** → デスクトップアプリが :11434 を握り、start_agent.bat の `set` 環境変数が反映されない状態が継続
+2. **Ollama インストールが破損**: `%LOCALAPPDATA%\Programs\Ollama\lib\ollama\` 配下に `mlx_cuda_v13` のみ、`cuda_v12` / `cuda_v13` / `rocm` / `vulkan` が欠落。upgrade.log に 2026-04-18 アップグレード時の `DeleteFile: The existing file appears to be in use` が記録されており、使用中のバイナリ置換が失敗して CUDA バックエンドが消えていた
+
+**実施した対処**:
+1. `ollama.exe` / `ollama app.exe` を taskkill
+2. OllamaSetup.exe（v0.21.0）をサイレント再インストール → `cuda_v12` / `cuda_v13` / `rocm` / `vulkan` ディレクトリ復活
+3. ユーザー Startup フォルダ（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`）から `Ollama.lnk` を削除 → デスクトップアプリの自動起動停止
+4. `windows-agent/start_agent.bat` を修正: `taskkill /IM "ollama app.exe" /F` を追加（再発防御）
+5. Windows Agent を再起動し、start_agent.bat の `set` 環境変数が ollama に届く状態で起動
+
+**検証結果**:
+```
+inference compute id=GPU-df4d5b5f-... library=CUDA compute=8.9
+name=CUDA0 description="NVIDIA GeForce RTX 4080" libdirs=ollama,cuda_v13
+total="16.0 GiB" available="14.2 GiB"
+OLLAMA_FLASH_ATTENTION:true / OLLAMA_KV_CACHE_TYPE:q8_0 / OLLAMA_MAX_LOADED_MODELS:1
+```
+- `gemma4:e2b` が `size_vram=7.21GB`（= モデル全量、100% GPU オフロード）でロード
+- 推論速度 約 203 tokens/sec（CPU fallback 時の十数倍）
+
+---
 
 #### 2026-04-22 診断結果（Remote PC から調査）
 
