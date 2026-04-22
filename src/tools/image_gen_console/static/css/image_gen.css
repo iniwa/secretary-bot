@@ -45,6 +45,16 @@ html, body { height: 100vh; overflow: hidden; }
 .ig-topbar-status {
   font-size: 0.75rem;
   color: var(--text-muted);
+  cursor: default;
+  user-select: none;
+}
+
+/* === NSFW mode === */
+body[data-nsfw="on"] .ig-topbar-title {
+  color: #e74c3c;
+}
+body[data-nsfw="on"] .ig-topbar-status {
+  color: #e74c3c;
 }
 
 /* === Layout === */

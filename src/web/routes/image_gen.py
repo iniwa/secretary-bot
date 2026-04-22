@@ -190,6 +190,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         lora_overrides = body.get("lora_overrides")
         if lora_overrides is not None and not isinstance(lora_overrides, list):
             raise HTTPException(400, "lora_overrides must be an array")
+        is_nsfw = bool(body.get("is_nsfw"))
         try:
             job_id = await unit.enqueue(
                 user_id=ctx.webgui_user_id or "webgui",
@@ -202,6 +203,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 user_position=user_position,
                 modality=modality,
                 lora_overrides=lora_overrides,
+                is_nsfw=is_nsfw,
             )
         except HTTPException:
             raise
@@ -273,13 +275,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     async def generation_gallery(
         limit: int = 50, offset: int = 0,
         favorite: int = 0, tag: str | None = None,
+        nsfw: int = 0,
     ):
         unit = _get_image_gen_unit()
         limit = max(1, min(200, int(limit)))
         offset = max(0, int(offset))
+        # nsfw=0（既定）→ SFW のみ、nsfw=1 → NSFW のみ
         rows = await unit.list_gallery(
             limit=limit, offset=offset,
             favorite_only=bool(favorite), tag=(tag or None),
+            nsfw=bool(nsfw),
         )
         items: list[dict] = []
         for r in rows:
@@ -299,6 +304,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     "negative": r.get("negative"),
                     "favorite": r.get("favorite", False),
                     "tags": r.get("tags") or [],
+                    "is_nsfw": bool(r.get("is_nsfw", False)),
                 })
         return {"items": items}
 

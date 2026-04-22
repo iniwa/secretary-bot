@@ -19,10 +19,11 @@ export const GenerationAPI = {
       method: 'POST',
     });
   },
-  gallery({ limit = 50, offset = 0, favorite = false, tag = null } = {}) {
+  gallery({ limit = 50, offset = 0, favorite = false, tag = null, nsfw = false } = {}) {
     const params = { limit, offset };
     if (favorite) params.favorite = 1;
     if (tag) params.tag = tag;
+    if (nsfw) params.nsfw = 1;
     return api('/api/generation/gallery', { params });
   },
   galleryTags() {

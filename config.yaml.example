@@ -142,6 +142,7 @@ units:
     nas:
       base_path: "/mnt/secretary-bot/ai-image" # Pi からの NAS マウントパス（`secretary-bot` 共有配下の `ai-image` サブディレクトリ）
       outputs_subdir: "outputs"
+      nsfw_outputs_subdir: "outputs_misc"      # 隠しモード (is_nsfw=1) 投入ジョブの保存先サブディレクトリ
       workflows_subdir: "workflows"
       lora_datasets_subdir: "lora_datasets"
       lora_work_subdir: "lora_work"

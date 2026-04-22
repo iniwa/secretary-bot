@@ -343,6 +343,7 @@ class ImageGenUnit(BaseUnit):
         user_position: str = "tail",
         modality: str | None = None,
         lora_overrides: list[dict] | None = None,
+        is_nsfw: bool = False,
     ) -> str:
         """ジョブを登録し、job_id (UUID hex) を返す。
 
@@ -428,6 +429,7 @@ class ImageGenUnit(BaseUnit):
             modality=resolved_modality,
             sections_json=sections_json,
             priority=int(merged.get("PRIORITY", 0)) if "PRIORITY" in merged else 0,
+            is_nsfw=is_nsfw,
         )
         log.info("generation_job enqueued: id=%s user=%s workflow=%s modality=%s sections=%s",
                  job_id, user_id, workflow_name, resolved_modality,
@@ -461,6 +463,7 @@ class ImageGenUnit(BaseUnit):
     async def list_gallery(
         self, limit: int = 50, offset: int = 0,
         favorite_only: bool = False, tag: str | None = None,
+        nsfw: bool | None = False,
     ) -> list[dict]:
         """完了ジョブの result_paths を日付降順で列挙する。
 
@@ -468,9 +471,11 @@ class ImageGenUnit(BaseUnit):
         Phase2 で NAS outputs/ を直接走査する実装に差し替える。
 
         favorite_only=True で ⭐ のみ、tag 指定で当該タグを含むジョブのみ返す。
+        nsfw=False (既定) で SFW のみ、True で NSFW のみ、None で両方。
         """
         rows = await self.bot.database.generation_job_list(
             status=STATUS_DONE, modality="image", limit=limit, offset=offset,
+            nsfw=nsfw,
         )
         out: list[dict] = []
         for r in rows:
@@ -508,6 +513,7 @@ class ImageGenUnit(BaseUnit):
                 "negative": r.get("negative"),
                 "favorite": favorite,
                 "tags": tags,
+                "is_nsfw": bool(r.get("is_nsfw")),
             })
         return out
 
@@ -621,6 +627,7 @@ class ImageGenUnit(BaseUnit):
         )
         out = js.to_dict()
         out["favorite"] = bool(row.get("favorite"))
+        out["is_nsfw"] = bool(row.get("is_nsfw"))
         try:
             out["tags"] = json.loads(row.get("tags") or "[]") or []
         except Exception:

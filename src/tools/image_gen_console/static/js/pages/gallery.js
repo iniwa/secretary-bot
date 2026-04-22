@@ -123,6 +123,7 @@ async function loadGallery({ reset = true } = {}) {
       limit: PAGE_SIZE, offset,
       favorite: favoriteOnly,
       tag: tagFilter,
+      nsfw: !!window.IGNsfw?.isOn(),
     });
     const page = data?.items || [];
     allItems = reset ? page : [...allItems, ...page];
@@ -264,6 +265,11 @@ export async function mount() {
   $('gal-tag')?.addEventListener('change', (e) => {
     tagFilter = e.target.value || null;
     loadGallery({ reset: true });
+  });
+  // NSFW モード切替時にギャラリーを再読込
+  window.addEventListener('ig:nsfw-change', () => {
+    loadGallery({ reset: true });
+    loadTags();
   });
   await Promise.all([loadGallery({ reset: true }), loadTags()]);
 }

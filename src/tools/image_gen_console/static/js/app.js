@@ -125,11 +125,55 @@ async function refreshTopbarStatus() {
 }
 
 // ============================================================
+// NSFW hidden mode — バージョン表示ダブルクリックでトグル
+// ============================================================
+const NSFW_LS_KEY = 'ig:nsfw';
+
+function isNsfwOn() {
+  try { return localStorage.getItem(NSFW_LS_KEY) === '1'; }
+  catch { return false; }
+}
+
+function applyNsfwAttr(on) {
+  if (on) document.body.setAttribute('data-nsfw', 'on');
+  else document.body.removeAttribute('data-nsfw');
+}
+
+function setNsfwMode(on) {
+  try { localStorage.setItem(NSFW_LS_KEY, on ? '1' : '0'); }
+  catch { /* ignore */ }
+  applyNsfwAttr(on);
+  // 既存ページに状態変化を通知（gallery などが再読込する）
+  window.dispatchEvent(new CustomEvent('ig:nsfw-change', { detail: { on } }));
+}
+
+// 他モジュールから参照できるようにグローバルへエクスポート
+window.IGNsfw = {
+  isOn: isNsfwOn,
+  set: setNsfwMode,
+};
+
+function setupNsfwToggle() {
+  const el = document.getElementById('ig-topbar-status');
+  if (!el) return;
+  // ダブルクリックで切替
+  el.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    const next = !isNsfwOn();
+    setNsfwMode(next);
+    toast(next ? 'NSFW mode ON' : 'NSFW mode OFF', 'info');
+  });
+}
+
+// ============================================================
 // Init
 // ============================================================
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
   if (!location.hash) location.hash = DEFAULT_HASH;
+  // NSFW モードを DOM 確定直後に body に反映しておく
+  applyNsfwAttr(isNsfwOn());
+  setupNsfwToggle();
   navigate();
   refreshTopbarStatus();
   setInterval(refreshTopbarStatus, 60000);

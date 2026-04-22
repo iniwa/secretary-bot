@@ -33,6 +33,20 @@ let sectionPresets = [];
 const SECTION_EXPANDED_LS = 'imggen:sections:expanded';
 let sectionExpanded = {};
 
+// NSFW 隠しモード — OFF 時は nsfw カテゴリ・セクションを完全に非表示にする
+const NSFW_CATEGORY_KEY = 'nsfw';
+function nsfwOn() { return !!window.IGNsfw?.isOn(); }
+function visibleCategories() {
+  return nsfwOn()
+    ? categories
+    : categories.filter(c => c.key !== NSFW_CATEGORY_KEY);
+}
+function visibleSections() {
+  return nsfwOn()
+    ? sections
+    : sections.filter(s => s.category_key !== NSFW_CATEGORY_KEY);
+}
+
 // 既知の sampler / scheduler（datalist 候補）
 const KNOWN_SAMPLERS = [
   'euler', 'euler_ancestral', 'heun', 'heunpp2', 'dpm_2', 'dpm_2_ancestral',
@@ -472,7 +486,7 @@ function renderUserPosOptions() {
   const sel = $('ig-userpos');
   if (!sel) return;
   const cur = sel.value || 'tail';
-  const catOpts = categories.map(c =>
+  const catOpts = visibleCategories().map(c =>
     `<option value="section:${esc(c.key)}">カテゴリ: ${esc(c.label)}</option>`
   ).join('');
   sel.innerHTML = `
@@ -502,7 +516,7 @@ function isCategoryExpanded(key) {
 }
 
 function setAllCategoriesExpanded(expanded) {
-  for (const c of categories) sectionExpanded[c.key] = !!expanded;
+  for (const c of visibleCategories()) sectionExpanded[c.key] = !!expanded;
   persistSectionExpandedLS();
   renderSections();
 }
@@ -510,13 +524,15 @@ function setAllCategoriesExpanded(expanded) {
 function renderSections() {
   const el = $('ig-sec-cats');
   if (!el) return;
-  if (!categories.length) {
+  const cats = visibleCategories();
+  const secs = visibleSections();
+  if (!cats.length) {
     el.innerHTML = '<div class="imggen-empty" style="padding:0.4rem;">カテゴリがありません</div>';
     return;
   }
-  el.innerHTML = categories.map(c => {
+  el.innerHTML = cats.map(c => {
     const expanded = isCategoryExpanded(c.key);
-    const list = sections.filter(s => s.category_key === c.key)
+    const list = secs.filter(s => s.category_key === c.key)
       .sort((a, b) => (b.starred - a.starred) || a.name.localeCompare(b.name));
     const chips = list.map(s => {
       const selected = chosen.includes(s.id);
@@ -797,7 +813,7 @@ function openSectionModal({ category_key = '', section_id = null } = {}) {
   const root = $('ig-sec-modal-root');
   if (!root) return;
   const editing = section_id ? sections.find(s => s.id === section_id) : null;
-  const catOpts = categories.map(c =>
+  const catOpts = visibleCategories().map(c =>
     `<option value="${esc(c.key)}" ${c.key === (editing?.category_key || category_key) ? 'selected' : ''}>${esc(c.label)}</option>`
   ).join('');
   root.innerHTML = `
@@ -1073,6 +1089,7 @@ async function handleSubmit() {
           positive: iterPositive, negative: iterNegative, params,
           section_ids: chosen,
           user_position: $('ig-userpos')?.value || 'tail',
+          is_nsfw: nsfwOn(),
         };
         const overrides = collectLoraOverrides();
         if (overrides.length) body.lora_overrides = overrides;
@@ -1467,6 +1484,19 @@ export async function mount() {
   $('ig-secpreset-save')?.addEventListener('click', handleSectionPresetSave);
   $('ig-secpreset-overwrite')?.addEventListener('click', handleSectionPresetOverwrite);
   $('ig-secpreset-delete')?.addEventListener('click', handleSectionPresetDelete);
+
+  // NSFW モード切替時は NSFW カテゴリの可視/非可視を即反映。
+  // OFF 時は chosen に紛れ込んだ nsfw セクションも除去する。
+  window.addEventListener('ig:nsfw-change', () => {
+    if (!nsfwOn()) {
+      chosen = chosen.filter(sid => {
+        const s = sections.find(x => x.id === sid);
+        return s && s.category_key !== NSFW_CATEGORY_KEY;
+      });
+    }
+    renderSections();
+    renderUserPosOptions();
+  });
 
   await Promise.all([
     loadWorkflows(),
