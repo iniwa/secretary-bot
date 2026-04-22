@@ -450,6 +450,7 @@ tr:hover td { background: var(--bg-raised); }
   flex-direction: column;
   height: 100%;
   max-height: calc(100vh - var(--topbar-height));
+  max-height: calc(100dvh - var(--topbar-height));
 }
 .chat-messages {
   flex: 1;
@@ -835,8 +836,21 @@ tr:hover td { background: var(--bg-raised); }
   .chat-form { flex-direction: column; gap: 0.5rem; }
   .chat-form textarea { width: 100%; max-height: 9rem; }
   .chat-send { align-self: stretch; min-height: var(--tap-target); }
-  /* チャットページはセーフエリア下端に貼り付くため、入力欄に余白を確保 */
-  .chat-page { padding-bottom: var(--safe-bottom); }
+  /* 入力エリアを画面下端に寄せ、周囲から視覚的に浮かせる */
+  .chat-input-area {
+    background: var(--bg-base);
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border);
+  }
+  /* ボトムタブ + padding-bottom で main-content 下部は既に余白確保済みなので
+   * chat-page の padding-bottom は不要 (Phase A で入れていた分を削除) */
+
+  /* チャットページはメッセージ領域のみスクロールし、入力欄は固定位置に見せる
+   * max-height を 100dvh ベースにすることで iOS Safari のダイナミックツールバー対応 */
+  .chat-page {
+    /* ボトムタブ分の下余白 + topbar を差し引いた実寸 */
+    max-height: calc(100dvh - var(--topbar-height) - 56px - var(--safe-top) - var(--safe-bottom));
+  }
 
   /* Reply 関連はホバー前提なので、モバイルでは常時表示にする */
   .chat-reply-btn { opacity: 1; padding: 0.35rem 0.55rem; font-size: 1rem; }
