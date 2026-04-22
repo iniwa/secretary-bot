@@ -175,6 +175,62 @@ Grafana Provisioning API 経由で 12 ルール / 34 箇所を一括更新。
 | Grafana メモリ | 270 / 512 MiB (52.8%) | 181 / 512 MiB (35.3%) |
 | `grafana.db` journal_mode | `delete` | `wal` |
 
+## 追加対応: 再デプロイ直後の `Docker - Container Down` 誤発火
+
+上記の修正後、Portainer で stack を再デプロイした直後に
+`Docker - Container Down` アラートが grafana / victoriametrics / node-exporter 等
+に対して一斉に Firing してしまった。
+
+### 原因
+`Docker - Container Down` ルールのクエリが **コンテナ ID (`id` ラベル) ごとのシリーズ**
+を見ていた。
+
+```promql
+time() - container_last_seen{job="cadvisor", name=~".+"}
+```
+
+stack 再デプロイでコンテナが作り直されると ID が変わるが、cadvisor のキャッシュには
+**古い ID のシリーズが数分間残る**。古いシリーズの `container_last_seen` は更新されない
+ので `time() - container_last_seen` が単調増加し、閾値 120 秒を超えた瞬間に `for: 2m`
+を経過して Firing する。新しい ID 側は正常な値なのに、古い ID 側の「亡霊シリーズ」が
+誤通知の原因。
+
+webhook には `id = /system.slice/docker-<old_hash>.scope` が載っていたので、それが
+stale な古い ID だと分かる。
+
+### 修正
+クエリを **name 単位で最新 last_seen を集約** する形に変更:
+
+```promql
+time() - max by(name) (container_last_seen{job="cadvisor", name=~".+"})
+```
+
+Grafana Provisioning API 経由で適用（ルール UID: `cfg99m9v28000a`）:
+
+```bash
+# 取得 → expr を書き換え → PUT
+curl -s -u admin:PASS \
+  http://localhost:3003/api/v1/provisioning/alert-rules/cfg99m9v28000a > rule.json
+# rule.json の data[0].model.expr を上記 max by(name) 版に置換
+curl -X PUT -u admin:PASS \
+  -H 'Content-Type: application/json' \
+  -H 'X-Disable-Provenance: true' \
+  http://localhost:3003/api/v1/provisioning/alert-rules/cfg99m9v28000a \
+  --data @rule.json
+```
+
+### トレードオフ
+- 同じ name のコンテナが生きていれば最新 last_seen が採用されるので誤発火しない
+- 本当にコンテナが消えたケース（name ラベルのシリーズ自体が無くなる）は
+  `noDataState=OK` のため Firing しない。name ベースの「過去存在したのに今ない」検知は
+  別クエリ（`present_over_time` / `absent_over_time`）で追加実装する余地あり
+- 同一 name で高速に再起動ループしているケースは検知が鈍る可能性あり
+
+### 結果（再デプロイ後の検証）
+- VictoriaMetrics でクエリ検証 → 全 29 コンテナが 21 秒（閾値 120 秒を大幅に下回る）
+- Grafana ルール state: `inactive` / health: `ok`
+- 全コンテナ `Normal`、Firing なし
+
 ## 学び（次回再発時に即参照すべき点）
 
 1. **Grafana 11 で `GF_DATABASE_WAL=true` は効かない**。modernc.org/sqlite
@@ -188,6 +244,10 @@ Grafana Provisioning API 経由で 12 ルール / 34 箇所を一括更新。
 4. 次回 Grafana のバージョンアップで unified storage がもっと重くなり、
    WAL でも捌けなくなった場合は **SQLite → PostgreSQL 移行** が次の選択肢。
    Pi ARM64 でも postgres:16-alpine で 100〜150MiB 程度で運用可能。
+5. **cadvisor の `container_last_seen` は `id` ラベルで一意**。コンテナ再作成で
+   古い ID のシリーズが数分間 stale に残るので、`time() - container_last_seen` を
+   そのまま閾値比較するとデプロイのたびに誤発火する。**`max by(name)` で集約**する
+   のが定石。
 
 ## 関連ファイル
 
