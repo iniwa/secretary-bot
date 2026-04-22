@@ -19,6 +19,7 @@ import * as inputRelay from './pages/input-relay.js';
 import * as stt from './pages/stt.js';
 import * as activity from './pages/activity.js';
 import * as dockerMonitor from './pages/docker-monitor.js';
+import * as gpuStatus from './pages/gpu-status.js';
 import * as pending from './pages/pending.js';
 import * as clipPipeline from './pages/clip-pipeline.js';
 
@@ -44,6 +45,7 @@ const pages = {
   settings:     { title: 'Settings',         module: settings },
   logs:         { title: 'Logs',             module: logs },
   'docker-monitor': { title: 'Docker Monitor', module: dockerMonitor },
+  'gpu-status': { title: 'GPU Status',       module: gpuStatus },
   pending:      { title: 'Pending Actions',  module: pending },
   maintenance:  { title: 'Maintenance',      module: maintenance },
   'clip-pipeline': { title: 'Auto-Kirinuki', module: clipPipeline },

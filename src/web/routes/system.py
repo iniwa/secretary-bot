@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 
 from src.logger import get_logger
 from src.web._agent_helpers import (
+    agent_request,
     delayed_restart,
     find_agent_by_id,
     get_all_agent_versions,
@@ -301,3 +302,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "all_match": all_match,
             "any_dead": any_dead,
         }
+
+    @app.get("/api/gpu-status/logs")
+    async def gpu_status_logs(lines: int = 200):
+        """全 Windows Agent の GPU 診断ログ（nvidia-smi / ollama ps）を並列取得。"""
+        results = await agent_request(bot, "GET", f"/gpu/logs?lines={lines}")
+        return {"agents": results}

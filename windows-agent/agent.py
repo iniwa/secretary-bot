@@ -608,6 +608,23 @@ async def obs_status(request: Request):
 
 
 _LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "agent.log")
+_GPU_LOG_FILE = os.path.join(os.path.dirname(__file__), "logs", "gpu_status.log")
+
+
+@app.get("/gpu/logs")
+async def gpu_logs(request: Request, lines: int = 200):
+    """GPU 診断ログ（start_agent.bat が起動時に nvidia-smi / ollama ps を追記）の末尾を返す。"""
+    _verify_token(request)
+    log_lines: list[str] = []
+    exists = os.path.exists(_GPU_LOG_FILE)
+    try:
+        if exists:
+            with open(_GPU_LOG_FILE, encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+            log_lines = [line.rstrip() for line in all_lines[-lines:]]
+    except Exception as e:
+        return {"logs": [], "error": str(e), "exists": exists}
+    return {"logs": log_lines, "exists": exists}
 
 
 @app.get("/obs/logs")
