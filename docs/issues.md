@@ -13,4 +13,4 @@
 - [ ] G4: 旧リポジトリ `streamarchive-auto-kirinuki` への参考用コメント追加（削除しない）
   - コード実装（Phase A〜F）は 2026-04-20 に完了済
   - 詳細は `docs/auto_kirinuki/implementation_plan.md` Phase G セクション参照
-
+- [ ] キャッシュ消去モードの追加
