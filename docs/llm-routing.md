@@ -131,7 +131,7 @@ Gemini を使わせず Ollama 必須にしたい呼び出しで指定する。Ol
 | 場所 | キー | 優先順 |
 |---|---|---|
 | `config.yaml` | `gemini.conversation` / `gemini.unit_routing` / `gemini.memory_extraction` / `gemini.monthly_token_limit` | 起動時に読む |
-| SQLite `settings` テーブル | `gemini.<name>` | **DB が上書き**（`src/bot.py:273`） |
+| SQLite `settings` テーブル | `gemini.<name>` | **DB が上書き**（`src/bot.py::_restore_settings`） |
 
 DB 側は WebGUI の設定画面から変更される。`config.yaml` を直接触っても DB に
 値があれば起動時に上書きされるので、運用では **WebGUI 経由で変更** するのが

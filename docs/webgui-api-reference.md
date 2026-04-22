@@ -1,193 +1,188 @@
 # WebGUI API リファレンス
 
-> 調査日: 2026-04-09
-> 対象: `src/web/app.py` (75+ endpoints)
+> 最終更新: 2026-04-23
+> 実装: `src/web/app.py`（アプリ組み立て）+ `src/web/routes/*.py`（カテゴリ別ルート）
+
+## 概要
+
+WebGUI は `FastAPI` 1 アプリで、ルートは `src/web/routes/` 配下のカテゴリ別モジュールに分割されている。
+`src/web/app.py` の `create_web_app(bot)` が全ルートを `register_all_routes()` でマウントし、
+その後 `/tools/zzz-disc/*`（`src/tools/zzz_disc`）、`/tools/image-gen/*`（`src/tools/image_gen_console`）の
+同居ツールを登録する。
+
+- 認証: Basic 認証（`_context.WebContext.verify`）。`/health` と `/api/flow/stream` など一部 SSE は認証なし。
+- 静的配信: `/static/*` と同居ツールの `/static/*` には `Cache-Control: no-cache, must-revalidate` を
+  付与するミドルウェア（`app.py` 内）。`index.html` は md5 ベースの `?v=` を自動付与する。
+- PWA: `/service-worker.js`, `/manifest.webmanifest` をルート配下で配信。
+
+エンドポイントは非常に多いので、以下は「カテゴリと代表パス」のみ列挙する。
+完全なシグネチャは `src/web/routes/<name>.py` を参照のこと（ファイル名＝カテゴリ名と対応）。
 
 ---
 
-## 1. Health & Status
+## 1. Core & Health ― `routes/core.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/health` | ヘルスチェック（認証不要） | - | `status`, `version`, `uptime` |
-| GET | `/api/status` | 総合ステータス | - | `version`, `uptime`, `ollama`, `agents[]`, `db`, `memory` |
-| GET | `/api/ollama-models` | Ollamaモデル一覧 | - | `models[]` |
-| POST | `/api/ollama-recheck` | Ollama接続再チェック | - | `ollama_available` |
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/health` | ヘルスチェック（認証不要） |
+| POST | `/api/chat` | WebGUI チャット送信（`message`, `reply_unit`任意） |
+| GET | `/api/logs` | 会話ログ（`limit/offset/keyword/channel/bot_only`） |
+| GET | `/api/status` | 総合ステータス（version/uptime/ollama/agents/db/memory） |
+| GET | `/api/version` | コミットハッシュ |
 
-## 2. Chat & Conversation
+## 2. System / Maintenance ― `routes/system.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| POST | `/api/chat` | メッセージ送信 | `message`, `reply_unit`(任意) | `flow_id` |
-| GET | `/api/logs` | 会話ログ取得 | `limit`, `offset`, `keyword`, `channel`, `bot_only` | `logs[]` |
+Ollama・Agent・コード更新・GPU ステータス系。
 
-## 3. Maintenance & Updates
+- `POST /api/ollama-recheck` / `GET /api/ollama-models` / `GET /api/ollama-status`
+- `POST /api/delegation-mode`（Agent 委任モード "allow"/"deny"/"auto"）
+- `POST /api/agents/{agent_id}/pause` / `DELETE /api/agents/{agent_id}/pause`
+- `POST /api/update-code` / `POST /api/restart`
+- `POST /api/agents/restart-all` / `POST /api/agents/{agent_id}/restart`
+- `GET /api/agents/versions`
+- `GET /api/gpu-status/live` / `GET /api/gpu-status/logs` / `GET /api/gpu-status/ollama-server-log`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| POST | `/api/update-code` | Git pull + サブモジュール更新 + Agent/コンテナ再起動 | - | `updated`, `message`, `restarted`, `restart_detail`, `agents[]` |
-| POST | `/api/restart` | コンテナ再起動 | - | `restarted`, `detail` |
-| POST | `/api/delegation-mode` | Agent委任モード変更 | `agent_id`, `mode`("allow"/"deny"/"auto") | `ok` |
+## 3. Config ― `routes/config.py`
 
-## 4. Reminders CRUD
+LLM・Gemini・ペルソナ・設定系全般。
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/units/reminders` | リマインダー一覧 | `active`(任意) | `items[]` |
-| PUT | `/api/units/reminders/{rid}` | リマインダー更新 | `message`, `remind_at`(ISO) | `ok` |
-| POST | `/api/units/reminders/{rid}/done` | 完了にする | - | `ok` |
-| DELETE | `/api/units/reminders/{rid}` | 削除 | - | `ok` |
+- `GET|POST /api/llm-config`（`ollama_model`, `ollama_timeout`, `gemini_model`, `unit_models` …）
+- `GET /api/debug/llm-state`
+- `GET|POST /api/gemini-config`, `GET|POST /api/unit-gemini`
+- `GET|POST /api/heartbeat-config`
+- `GET|POST /api/chat-config`, `GET|POST /api/rakuten-config`, `GET /api/debug/rakuten-search`
+- `GET|POST /api/persona`
+- `GET|POST /api/settings`（汎用 Key-Value）
+- `GET /api/logs/llm`, `GET /api/debug/heartbeat-logs`
 
-## 5. Todos CRUD
+## 4. Units CRUD ― `routes/units.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/units/todos` | Todo一覧 | `done`(任意) | `items[]` |
-| PUT | `/api/units/todos/{tid}` | Todo更新 | `title`, `due_date`(任意) | `ok` |
-| POST | `/api/units/todos/{tid}/done` | 完了にする | - | `ok` |
-| DELETE | `/api/units/todos/{tid}` | 削除 | - | `ok` |
+Reminder / Todo / Memo / Weather / Timer / Unit 状態。
 
-## 6. Memos CRUD
+- Reminder: `GET/PUT/DELETE/POST /done` — `/api/units/reminders[/{rid}]`
+- Todo: `GET/PUT/DELETE/POST /done` — `/api/units/todos[/{tid}]`
+- Memo: `GET/PUT/DELETE/POST /append` — `/api/units/memos[/{mid}]`
+- Weather: `GET/PUT/DELETE/POST /toggle` — `/api/units/weather[/{wid}]`
+- Timer: `GET /api/units/timers`
+- Loaded units: `GET /api/units/loaded`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/units/memos` | メモ一覧 | `keyword`(任意) | `items[]` |
-| PUT | `/api/units/memos/{mid}` | メモ更新 | `content`, `tags`(任意) | `ok` |
-| POST | `/api/units/memos/{mid}/append` | メモに追記 | `content` | `ok` |
-| DELETE | `/api/units/memos/{mid}` | 削除 | - | `ok` |
+## 5. Memory ― `routes/memory.py`
 
-## 7. Weather Subscriptions
+ChromaDB 検索・削除。`collection` は `ai_memory` / `people_memory` / `conversation_log` 等。
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/units/weather` | 天気購読一覧 | `active`(任意) | `items[]` |
-| PUT | `/api/units/weather/{wid}` | 購読更新 | `notify_hour`, `notify_minute`, `location`(任意) | `ok` |
-| DELETE | `/api/units/weather/{wid}` | 削除 | - | `ok` |
-| POST | `/api/units/weather/{wid}/toggle` | 有効/無効切替 | - | `ok`, `active` |
+- `GET /api/memory/{collection}`（`limit`, `offset`）
+- `GET /api/memory/{collection}/search`
+- `DELETE /api/memory/{collection}/{doc_id}`
 
-## 8. Timers & Units
+## 6. Inner Mind & Pending ― `routes/inner_mind.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/units/timers` | アクティブタイマー一覧 | - | `items[]`(`id`, `message`, `minutes`, `remaining_sec`) |
-| GET | `/api/units/loaded` | ロード済みユニット一覧 | - | `units[]`(`name`, `description`, `delegate_to`, `breaker_state`) |
+- Monologue/Status/Context: `GET /api/monologue`, `GET /api/inner-mind/status`, `GET /api/inner-mind/context`
+- Settings: `GET|POST /api/inner-mind/settings`
+- Dispatches/Autonomy: `GET /api/inner-mind/dispatches`, `GET|POST /api/inner-mind/autonomy`, `GET /api/inner-mind/autonomy/units`
+- Pending Actions（承認待ちキュー）:
+  - `GET /api/pending`, `GET /api/pending/unread-count`, `GET /api/pending/{pid}`
+  - `POST /api/pending/{pid}/approve` / `reject` / `cancel`
 
-## 9. Memory (ChromaDB)
+## 7. Flow ― `routes/flow.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/memory/{collection}` | メモリアイテム取得 | `limit`, `offset` | `items[]`, `total` |
-| DELETE | `/api/memory/{collection}/{doc_id}` | メモリアイテム削除 | - | `ok` |
+- `GET /api/flow/state` — `flow_tracker` の現在状態
+- `GET /api/flow/stream` — SSE（リアルタイム更新）
 
-> collection: `ai_memory`, `people_memory`, `conversation_log`
+## 8. Activity ― `routes/activity.py`
 
-## 10. LLM Configuration
+ゲーム・OBS・PC アクティビティ統合ダッシュボード。
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/llm-config` | LLM設定取得 | - | `ollama_model`, `ollama_timeout`, `gemini_model`, `unit_models` |
-| POST | `/api/llm-config` | LLM設定変更 | 同上 | `ok` |
-| GET | `/api/debug/llm-state` | LLMデバッグ情報 | - | `ollama_available`, `gemini_config`, `units{}` |
+- `GET /api/activity/main`（Main PC の生状態）
+- `GET /api/activity/stats` / `summary` / `daily` / `sessions`
+- `GET /api/activity/diary`（当日）/ `GET /api/activity/diary/list`
+- `POST /api/activity/diary/regenerate`
 
-## 11. Gemini Configuration
+## 9. Docker Log Monitor ― `routes/docker_monitor.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/gemini-config` | Gemini設定取得 | - | `conversation`, `memory_extraction`, `unit_routing`, `monthly_token_limit` |
-| POST | `/api/gemini-config` | Gemini設定変更 | 同上 | `ok` |
-| GET | `/api/unit-gemini` | ユニット別Gemini許可 | - | `{unit_name: bool}` |
-| POST | `/api/unit-gemini` | ユニット別Gemini許可設定 | `unit`, `allowed` | `ok` |
+- `GET /api/docker-monitor/errors`
+- `POST /api/docker-monitor/errors/{error_id}/dismiss` / `dismiss-all`
+- `DELETE /api/docker-monitor/errors/{error_id}`
+- `GET|POST /api/docker-monitor/exclusions`, `DELETE /api/docker-monitor/exclusions/{exc_id}`
 
-## 12. Logs
+## 10. RSS ― `routes/rss.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/logs` | 会話ログ | `limit`, `offset`, `keyword`, `channel`, `bot_only` | `logs[]` |
-| GET | `/api/logs/llm` | LLMログ(Ollama/Gemini) | `limit`, `offset`, `provider`(任意) | `logs[]` |
-| GET | `/api/debug/heartbeat-logs` | ハートビートログ | - | `logs[]` |
+- `GET|POST /api/rss/feeds`, `DELETE /api/rss/feeds/{feed_id}`
+- `POST /api/rss/feeds/{feed_id}/toggle`
+- `GET /api/rss/articles`, `POST /api/rss/fetch`
+- `POST /api/rss/articles/{article_id}/feedback`
 
-## 13. Rakuten Search
+## 11. STT ― `routes/stt.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/rakuten-config` | 楽天検索設定 | - | `max_results`, `fetch_details` |
-| POST | `/api/rakuten-config` | 楽天検索設定変更 | 同上 | `ok` |
-| GET | `/api/debug/rakuten-search` | 楽天検索デバッグ | - | `available`, `data` |
+- `GET|POST /api/stt-config`
+- `GET /api/stt/status`, `GET /api/stt/devices`, `POST /api/stt/control`
+- `GET /api/stt/model/status`, `GET /api/stt/transcripts`, `GET /api/stt/summaries`
+- `POST /api/stt/resummarize`
 
-## 14. Chat Unit Config
+## 12. OBS ― `routes/obs.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/chat-config` | Chat設定 | - | `history_minutes` |
-| POST | `/api/chat-config` | Chat設定変更 | 同上 | `ok` |
+- `GET|POST /api/obs/games`（game_processes.json / game_groups.json の管理）
+- `GET /api/obs/status`, `GET /api/obs/logs`
 
-## 15. Heartbeat Config
+## 13. Input Relay ― `routes/input_relay.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/heartbeat-config` | ハートビート設定 | - | `interval_with_ollama_minutes`, `interval_without_ollama_minutes`, `compact_threshold_messages` |
-| POST | `/api/heartbeat-config` | ハートビート設定変更 | 同上 | `ok` |
+Windows Agent ツール `input-relay` の操作。
 
-## 16. Character & Persona
+- `POST /api/tools/input-relay/update`
+- `GET /api/tools/input-relay/status`
+- `GET /api/tools/input-relay/logs/{role}`
+- `POST /api/tools/input-relay/{start|stop|restart}/{role}`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/persona` | ペルソナ取得 | - | `persona` |
-| POST | `/api/persona` | ペルソナ設定 | `persona` | `ok` |
+## 14. Image Generation ― `routes/image_gen.py`（最大）
 
-## 17. Flow Tracking
+ジョブ投入・ギャラリー・ワークフロー・プリセット・プロンプト・Agent 管理を網羅。
+主要グループのみ抜粋（実装は 64KB 超）:
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/flow/state` | フロー状態 | - | (tracker依存) |
-| GET | `/api/flow/stream` | SSEストリーム | - | `data: {event_json}` |
+- 旧API（互換）: `POST /api/image/generate`, `GET /api/image/jobs[/stream|/{id}]`, `POST /cancel`
+- ジョブ（新パス）: `POST /api/generation/submit`, `GET /api/generation/jobs[/stream|/{id}]`,
+  `POST /api/generation/jobs/{id}/cancel`, `DELETE` / bulk-delete / bulk-favorite / bulk-tags
+- ギャラリー: `GET /api/image/gallery`, `GET /api/generation/gallery`,
+  `GET /api/generation/gallery/similar/{job_id}`, `GET /api/generation/gallery/tags`
+- セクション: `GET|POST|PATCH|DELETE /api/generation/section-categories[/{id}]`,
+  `/api/generation/sections[/{id}]`, `/api/generation/section-presets[/{id}]`,
+  `POST /api/generation/compose-preview`
+- Wildcards: `GET /api/generation/wildcards[/bulk|/{name}]`, `POST /expand`, `PUT|DELETE /{name}`
+- Checkpoints/Workflows: `GET /api/generation/checkpoints`,
+  `GET|POST|DELETE /api/image/workflows[/{id}]`
+- プロンプト編集（prompt_crafter）: `GET /api/image/prompts[/active]`, `POST /api/image/prompts/craft`,
+  `DELETE /api/image/prompts/active` / `/{session_id}`
+- Agent 制御: `GET /api/image/agents`,
+  `GET /api/image/agents/{id}/comfyui/status`, `POST /api/image/agents/{id}/comfyui/{start|stop}`,
+  `GET /api/image/agents/{id}/comfyui/history`
+- ファイル配信: `GET /api/image/file`（NAS 上の output を転送）
+- コレクション: `GET|POST|PATCH|DELETE /api/generation/collections[/{id}[/jobs]]`
 
-## 18. Monologue & InnerMind
+## 15. LoRA 学習 ― `routes/lora_train.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/monologue` | モノローグ一覧 | `limit` | `monologues[]` |
-| GET | `/api/inner-mind/status` | InnerMindステータス | - | `self_model`, `last_monologue`, `activity`, `enabled` |
-| GET | `/api/inner-mind/context` | InnerMindコンテキストソース | - | `sources[]`(`name`, `text`) |
-| GET | `/api/inner-mind/settings` | InnerMind設定取得 | - | `enabled`, `speak_probability`, `min_speak_interval_minutes`, `thinking_interval_ticks`, `speak_channel_id`, `target_user_id` |
-| POST | `/api/inner-mind/settings` | InnerMind設定変更 | 同上 | `ok` |
+- `GET|POST|PATCH|DELETE /api/lora/projects[/{id}]`
+- データセット: 画像 list/upload/delete/キャプション編集
+- ジョブ: 投入 / 一覧 / 状態 / キャンセル / ログ / EDL/プレビュー配信
+- テンプレート: `GET /api/lora/config-templates`, 適用/削除
 
-## 19. Input Relay (Windows Agent Tool)
+## 16. Clip Pipeline（自動切り抜き）― `routes/clip_pipeline.py`
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| POST | `/api/tools/input-relay/update` | 全Agentのinput-relay更新 | - | `agents[]` |
-| GET | `/api/tools/input-relay/status` | input-relayステータス | - | `agents[]` |
-| GET | `/api/tools/input-relay/logs/{role}` | input-relayログ | `lines` | Agent固有 |
-| POST | `/api/tools/input-relay/start/{role}` | input-relay開始 | - | Agent固有 |
-| POST | `/api/tools/input-relay/stop/{role}` | input-relay停止 | - | Agent固有 |
-| POST | `/api/tools/input-relay/restart/{role}` | input-relay再起動 | - | Agent固有 |
+- `POST /api/clip-pipeline/jobs`（投入）, `GET /api/clip-pipeline/jobs[/stream|/{id}]`, `POST /cancel`
+- `GET /api/clip-pipeline/jobs/{id}/edl`（生成 EDL 取得）
+- `GET /api/clip-pipeline/capability`（Agent の Whisper/Ollama 状態）
+- `GET /api/clip-pipeline/inputs`（NAS inputs/ の候補列挙）
 
-## 20. STT (Speech-to-Text)
+## 17. 同居ツール
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/stt/status` | STTステータス | - | `agents[]` |
-| GET | `/api/stt/devices` | マイクデバイス一覧 | `role`(default:"sub") | Agent固有 |
-| POST | `/api/stt/control` | STT制御(init/start/stop/set_device) | `role`, + 制御パラメータ | Agent固有 |
-| GET | `/api/stt/model/status` | Whisperモデル状態 | - | `loaded` |
-| GET | `/api/stt/transcripts` | 最新文字起こし | `role` | `transcripts[]` |
+`src/web/app.py` からそれぞれ別モジュールの `register(app, bot)` が呼ばれる。
 
-## 21. OBS
+- `/tools/zzz-disc/*` — `src/tools/zzz_disc`（HoYoLAB 連携ディスク Codex）
+- `/tools/image-gen/*` — `src/tools/image_gen_console`（画像生成コンソール SPA）
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/obs/games` | ゲームプロセス/グループ | - | `games[]`, `groups[]` |
-| POST | `/api/obs/games` | ゲーム設定保存 | ゲーム設定オブジェクト | Agent固有 |
-| GET | `/api/obs/status` | OBS接続状態 | - | `obs_connected` |
-| GET | `/api/obs/logs` | OBSログ | `lines` | `logs[]` |
+---
 
-## 22. RSS Feed
+## 実装上の約束
 
-| Method | Path | 説明 | パラメータ | レスポンス |
-|--------|------|------|-----------|-----------|
-| GET | `/api/rss/feeds` | フィード一覧 | - | `feeds[]`, `categories{}` |
-| POST | `/api/rss/feeds` | フィード追加 | `url`, `title`(任意), `category`(任意) | `ok` |
-| DELETE | `/api/rss/feeds/{feed_id}` | フィード削除 | - | `ok` |
-| GET | `/api/rss/articles` | 記事一覧 | `category`(任意), `limit` | `articles[]` |
-| POST | `/api/rss/fetch` | 手動フェッチ | - | fetch結果 |
+- ルート追加時は `src/web/routes/__init__.py::register_all_routes()` に登録する。
+- 長期実行 / SSE ストリームは Basic 認証を免除する設計（`dependencies=[Depends(ctx.verify)]` を
+  付けない）。ブラウザ EventSource は Basic 認証ヘッダを送れないため。
+- Agent 通信は `ctx.bot.unit_manager.agent_pool` 経由。Agent 再起動中は `_agent_restart_ts` を見て
+  restarting 扱いする（`app.py` 参照）。

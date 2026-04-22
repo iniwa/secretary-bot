@@ -107,7 +107,11 @@ secretary-bot/
 |   +-- bot.py                # エントリーポイント
 |   +-- unit_router.py        # 自然言語 -> ユニット振り分け
 |   +-- heartbeat.py          # ハートビート・コンテキスト圧縮
-|   +-- database.py           # SQLite（aiosqlite・WAL）
+|   +-- database/             # SQLite（aiosqlite・WAL）
+|   |   +-- _base.py          # スキーマ / マイグレーション本体
+|   |   +-- conversation.py / generation.py / clip_pipeline.py
+|   |   +-- lora.py / monologue.py / pending.py / section.py
+|   |   +-- settings.py / wildcard.py
 |   +-- errors.py             # BotError基底クラス
 |   +-- circuit_breaker.py    # サーキットブレーカー
 |   +-- logger.py             # 構造化ログ（JSON・trace_id）
@@ -116,8 +120,11 @@ secretary-bot/
 |   +-- status_collector.py   # Pi / Windows の状態収集
 |   +-- activity/
 |   |   +-- detector.py       # アクティビティ統合判定
+|   |   +-- collector.py      # active_pcs / セッション永続化
 |   |   +-- agent_monitor.py  # Windows Agent /activity 通信
 |   |   +-- discord_monitor.py # Discord VC 検出
+|   |   +-- habit_detector.py # 習慣ゲームのプレイ傾向・離脱検出
+|   |   +-- daily_diary.py    # 1日の activity ダイジェスト生成
 |   +-- gcal/
 |   |   +-- service.py        # Google Calendar API サービスファクトリ
 |   |   +-- sync.py           # ローカル DB とカレンダーの同期
@@ -134,11 +141,14 @@ secretary-bot/
 |   |       +-- habit.py / tavily_news.py
 |   +-- llm/
 |   |   +-- router.py         # Ollama/Gemini切り替え
-|   |   +-- ollama_client.py / gemini_client.py / unit_llm.py
+|   |   +-- ollama_client.py  # 複数インスタンス対応（least-connections）
+|   |   +-- gemini_client.py / unit_llm.py
+|   |   +-- gpu_monitor.py    # VictoriaMetrics 経由の GPU 占有検出
 |   +-- memory/
 |   |   +-- chroma_client.py  # ChromaDB（PersistentClient）
 |   |   +-- ai_memory.py      # AI自身の記憶（Ollama専用）
 |   |   +-- people_memory.py  # 人物記憶（Geminiフォールバック可）
+|   |   +-- interest_extractor.py / sweeper.py
 |   +-- rss/
 |   |   +-- fetcher.py        # feedparserでRSS巡回
 |   |   +-- processor.py      # LLM要約・フィルタリング
@@ -158,14 +168,18 @@ secretary-bot/
 |   |   +-- prompt_crafter.py # LLM対話でSDXLプロンプトを育成
 |   |   +-- model_sync.py     # 画像生成Agentのモデルキャッシュ同期
 |   |   +-- image_gen/        # 画像生成ユニット（ComfyUI連携）
-|   |       +-- unit.py           # ジョブ受付・状態参照・pub/sub
-|   |       +-- dispatcher.py     # Agent 振り分け・キュー制御
-|   |       +-- agent_client.py   # Windows Agent HTTPクライアント
-|   |       +-- workflow_mgr.py   # ComfyUI ワークフロー管理
-|   |       +-- wildcard_expander.py # Wildcard / Dynamic Prompts
-|   |       +-- section_composer.py / section_mgr.py
-|   |       +-- warmup.py / modality.py / models.py
-|   |       +-- presets/ / section_presets/
+|   |   |   +-- unit.py           # ジョブ受付・状態参照・pub/sub
+|   |   |   +-- dispatcher.py     # Agent 振り分け・キュー制御
+|   |   |   +-- agent_client.py   # Windows Agent HTTPクライアント
+|   |   |   +-- workflow_mgr.py   # ComfyUI ワークフロー管理
+|   |   |   +-- wildcard_expander.py # Wildcard / Dynamic Prompts
+|   |   |   +-- section_composer.py / section_mgr.py
+|   |   |   +-- warmup.py / modality.py / models.py
+|   |   |   +-- presets/ / section_presets/
+|   |   +-- clip_pipeline/    # 配信アーカイブ自動切り抜き（Whisper + Ollama）
+|   |   |   +-- unit.py / dispatcher.py / agent_client.py / models.py
+|   |   +-- lora_train/       # kohya_ss LoRA 学習
+|   |       +-- unit.py / agent_client.py / toml_builder.py / nas_io.py
 |   +-- tools/
 |   |   +-- zzz_disc/         # ゼンレスゾーンゼロ Codex（HoYoLAB連携）
 |   |   |   +-- routes.py / hoyolab_client.py / hoyolab_auth.py
@@ -175,7 +189,11 @@ secretary-bot/
 |   |   +-- image_gen_console/ # 画像生成コンソール（WebGUI 同居ツール）
 |   +-- web/
 |       +-- app.py            # FastAPI（WebGUI + /health）
-|       +-- static/
+|       +-- routes/           # API ルート群（system/config/inner_mind
+|       |                     #   /image_gen/rss/stt/memory/units/activity
+|       |                     #   /docker_monitor/flow/obs/input_relay
+|       |                     #   /clip_pipeline/lora_train/core）
+|       +-- static/           # index.html / js / css / service-worker.js
 +-- windows-agent/
 |   +-- agent.py              # FastAPI（:7777）
 |   +-- start_agent.bat
@@ -187,8 +205,11 @@ secretary-bot/
 |   |   +-- stt_client.py     # Sub PCへのバッチ送信
 |   |   +-- whisper_engine.py # kotoba-whisper ラッパー
 |   +-- tools/
-|   |   +-- tool_manager.py   # サブプロセス管理
-|   |   +-- input-relay/      # git submodule
+|   |   +-- tool_manager.py   # サブプロセス管理（version/update/start/stop）
+|   |   +-- input-relay/      # git submodule（OBSオーバーレイ）
+|   |   +-- image_gen/        # ComfyUI ラッパー（Agent 側）
+|   |   +-- clip_pipeline/    # Whisper + Ollama ハイライト判定（Agent 側）
+|   |   +-- zzz_disc/         # ZZZ Codex 画面キャプチャ・抽出（Agent 側）
 |   +-- config/
 |       +-- agent_config.yaml.example
 |       +-- game_processes.json

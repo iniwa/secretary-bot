@@ -1,238 +1,173 @@
 # WebGUI DB & Config リファレンス
 
-> 調査日: 2026-04-09
+> 最終更新: 2026-04-23
+> 実装: `src/database/`（スキーマ定義＋マイグレーション）/ `config.yaml.example`
+
+## Database Schema（現行 v35）
+
+`_SCHEMA_VERSION` は `src/database/_base.py` で管理されている。`DatabaseBase._maybe_migrate()` が
+`PRAGMA user_version` を見て逐次マイグレーションを流す方式。テーブルごとのアクセサは
+`src/database/<topic>.py` に分割されている（`conversation.py` / `generation.py` / `clip_pipeline.py` /
+`lora.py` / `monologue.py` / `pending.py` / `section.py` / `settings.py` / `wildcard.py`）。
+
+### ドメイン別テーブル一覧
+
+#### 基本ユニット
+- `memos` / `todos` / `reminders` / `weather_subscriptions` / `calendar_settings`
+
+#### 会話・ログ
+- `conversation_log`（`channel / channel_name / role / content / user_id / mode / unit`）
+- `conversation_summary`（Heartbeat のコンテキスト圧縮結果）
+- `llm_log`（provider/model/purpose/prompt/response/duration/tokens_per_sec/eval_count 等）
+
+#### InnerMind
+- `mimi_monologue`（monologue/mood/did_notify/notified_message）
+- `mimi_self_model`（Key-Value 型）
+- `pending_actions`（Actuator の承認待ちキュー）
+
+#### RSS
+- `rss_feeds` / `rss_articles` / `rss_user_prefs` / `rss_feedback`
+
+#### STT
+- `stt_transcripts` / `stt_summaries`
+
+#### Docker Log Monitor
+- `docker_log_exclusions` / `docker_error_log`
+
+#### Activity
+- `activity_samples`（Agent /activity の生サンプル、短期保持）
+- `game_sessions` / `foreground_sessions`（連続 FG の集計、永続）
+- `obs_sessions`（OBS の recording/streaming session）
+- `daily_diaries`（1日の活動ダイジェスト）
+
+#### Calendar（読み取り同期）
+- `calendar_read_sources` / `calendar_events`
+
+#### 画像生成（prompt_crafter / image_gen）
+- `prompt_templates` / `prompt_sessions`
+- `image_jobs` / `image_job_events`（旧系統）
+- `generation_jobs` / `generation_job_events`（新系統）
+- `prompt_section_categories` / `prompt_sections` / `prompt_section_presets`
+- `wildcard_files`（v31 以降。Wildcard / Dynamic Prompts の辞書 `name` PK）
+- `image_collections` / `image_collection_items`
+- `workflows`（ComfyUI ワークフロー JSON 保管）
+- `model_cache_manifest`（Agent の /capability 結果）
+
+#### LoRA 学習
+- `lora_projects` / `lora_dataset_items` / `lora_train_jobs` / `lora_config_templates`
+
+#### Clip Pipeline（自動切り抜き）
+- `clip_pipeline_jobs` / `clip_pipeline_job_events`
+
+#### 設定
+- `settings` (Key-Value) — ランタイム設定や UI 設定を格納。WebGUI 経由で書き換わる値は
+  基本的にこのテーブルに入る（例: LLM 設定、InnerMind 設定、RSS トグル、Gemini トグル …）。
+
+### マイグレーションの流れ
+- 新規カラム / 新規テーブルは `_INIT_SQL` にも同梱しつつ、`_MIGRATIONS` 辞書に
+  `old_version → new_version` のステップを登録する。
+- 既存 DB は `_maybe_migrate()` が再生して追加する。
+- 新規 DB は `_INIT_SQL` 一括 + `user_version = _SCHEMA_VERSION` をセットして初期化する。
+
+> テーブル一覧は増えやすいため、常に `src/database/_base.py` を第一ソースとする。
 
 ---
 
-## Database Schema (v14)
+## `config.yaml` 主要セクション
 
-### コアテーブル
+実体は `config.yaml.example` を参照。ここでは役割の概観のみ示す。
 
-#### memos
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| content | TEXT | NOT NULL |
-| tags | TEXT | |
-| user_id | TEXT | DEFAULT '' |
-| created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP |
+### LLM ― `llm`
+- `ollama_model` / `ollama_timeout` / `ollama_cooldown_sec` / `ollama_url`
+- `gpu_memory_skip_bytes` — GPU 占有中と見なして Ollama インスタンスを除外する閾値
+  （`llm.gpu_monitor` + VictoriaMetrics で判定）
 
-#### todos
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| title | TEXT | NOT NULL |
-| done | BOOLEAN | DEFAULT 0 |
-| user_id | TEXT | DEFAULT '' |
-| created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP |
-| done_at | DATETIME | |
-| due_date | DATETIME | |
+### Heartbeat ― `heartbeat`
+- `interval_with_ollama_minutes` / `interval_without_ollama_minutes` / `compact_threshold_messages`
 
-#### reminders
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| message | TEXT | NOT NULL |
-| remind_at | DATETIME | NOT NULL |
-| repeat_type | TEXT | |
-| repeat_interval | INTEGER | |
-| active | BOOLEAN | DEFAULT 1 |
-| notified | BOOLEAN | DEFAULT 0 |
-| user_id | TEXT | DEFAULT '' |
-| done_at | DATETIME | |
-| snooze_count | INTEGER | DEFAULT 0 |
-| last_snoozed_at | TEXT | |
-| snoozed_until | TEXT | |
+### Memory ― `memory`
+- `dedup_skip_threshold` / `dedup_merge_threshold` / `sweep_stale_days` / `sweep_enabled`
 
-#### weather_subscriptions
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| user_id | TEXT | NOT NULL |
-| location | TEXT | NOT NULL |
-| latitude | REAL | NOT NULL |
-| longitude | REAL | NOT NULL |
-| notify_hour | INTEGER | DEFAULT 7 |
-| notify_minute | INTEGER | DEFAULT 0 |
-| active | BOOLEAN | DEFAULT 1 |
-| created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP |
+### Activity ― `activity`
+- `poll_interval_seconds` / `sample_retention_days` / `idle_timeout_seconds`
+- `game_end_close_delay_seconds`（ゲーム再起動の吸収）
+- `stt_flush_on_fg_change_min_duration_seconds`
+- `input_relay.sender_url` / `block_rules` / `habit`（習慣ゲームプロフィール・離脱判定）
 
-### ログテーブル
+### Metrics ― `metrics.victoria_metrics_url`
+Grafana スタック流用。GPU / CPU / Agent 可用性に使用。
 
-#### conversation_log
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| timestamp | DATETIME | DEFAULT CURRENT_TIMESTAMP |
-| channel | TEXT | NOT NULL |
-| channel_name | TEXT | DEFAULT '' |
-| role | TEXT | NOT NULL |
-| content | TEXT | NOT NULL |
-| user_id | TEXT | DEFAULT '' |
-| mode | TEXT | |
-| unit | TEXT | |
+### Windows Agents ― `windows_agents`
+- `id` / `name` / `role`（"main" / "sub" / etc.）/ `host` / `port` / `priority`
+- `metrics_instance`（VictoriaMetrics 用）
+- `wol_device_id`（WoL ツールのデバイス ID）
+- `comfyui_public_url`（Cloudflare Tunnel 経由公開 URL、任意）
 
-#### llm_log
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| timestamp | DATETIME | NOT NULL |
-| provider | TEXT | NOT NULL |
-| model | TEXT | NOT NULL |
-| purpose | TEXT | NOT NULL |
-| prompt_text | TEXT | |
-| system_text | TEXT | |
-| response_text | TEXT | |
-| prompt_len | INTEGER | DEFAULT 0 |
-| response_len | INTEGER | DEFAULT 0 |
-| duration_ms | INTEGER | DEFAULT 0 |
-| success | BOOLEAN | DEFAULT 1 |
-| error | TEXT | |
-| tokens_per_sec | REAL | |
-| eval_count | INTEGER | |
-| prompt_eval_count | INTEGER | |
+### 委託閾値 ― `delegation.thresholds`
+`cpu_percent` / `memory_percent` / `gpu_percent` を超えると委託を拒否する。
 
-#### conversation_summary
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| summary | TEXT | NOT NULL |
-| created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP |
+### ユニット ― `units`
+`reminder / memo / timer / status / chat / web_search / rakuten_search / weather / calendar /
+rss / power / docker_log_monitor / image_gen / lora_train / prompt_crafter / model_sync / clip_pipeline`
+の enabled + 個別パラメータ。`chat.history_minutes`, `calendar.timezone`, `power.shutdown_delay`
+など。ユニットごとに `llm:` を上書き可能（`ollama_only`, `ollama_model`, `gemini_model`）。
 
-### InnerMindテーブル
+### Tools（同居サブツール）― `tools`
+- `zzz_disc.delegate_to` / `capture.backend=mss|obs` / `queue.max_concurrent`
+  — ZZZ Disc Manager（HoYoLAB 連携）
 
-#### mimi_monologue
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| monologue | TEXT | NOT NULL |
-| mood | TEXT | |
-| did_notify | BOOLEAN | DEFAULT 0 |
-| notified_message | TEXT | |
-| created_at | DATETIME | NOT NULL |
+### RSS ― `rss`
+`fetch_interval_minutes` / `digest_hour` / `article_retention_days` / `max_articles_per_category` /
+`presets`（gaming / tech / pc / vr / news など既定フィード群）。
 
-#### mimi_self_model
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| key | TEXT | NOT NULL |
-| value | TEXT | NOT NULL |
-| updated_at | DATETIME | NOT NULL |
+### Calendar 読み取り同期 ― `calendar.read_sync`
+`enabled` / `sync_interval_minutes` / `lookahead_days` / `inject_hours`。
+書き込みは `units.calendar` 側。
 
-### RSSテーブル
+### Docker Log Monitor ― `docker_monitor`
+`check_interval_seconds` / `cooldown_minutes` / `containers` / `max_lines_per_check`。
 
-#### rss_feeds
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| url | TEXT | UNIQUE NOT NULL |
-| title | TEXT | NOT NULL |
-| category | TEXT | NOT NULL |
-| is_preset | INTEGER | DEFAULT 0 |
-| added_by | TEXT | |
-| created_at | TEXT | DEFAULT (datetime('now')) |
+### STT ― `stt`
+- `polling_interval_minutes`
+- `capture`（device / sample_rate / VAD / 閾値類）
+- `batch.interval_minutes`
+- `processing`（要約閾値 / silence_trigger / gap_split / retention）
+- `model`（`kotoba-tech/kotoba-whisper-v2.0`, device=cuda, unload_after_minutes）
 
-#### rss_articles
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| feed_id | INTEGER | REFERENCES rss_feeds(id) |
-| title | TEXT | NOT NULL |
-| url | TEXT | UNIQUE NOT NULL |
-| summary | TEXT | |
-| published_at | TEXT | |
-| fetched_at | TEXT | DEFAULT (datetime('now')) |
+### WoL ツール ― `wol.url`
 
-#### rss_user_prefs / rss_feedback
-- ユーザー別フィード設定・記事評価
+### InnerMind ― `inner_mind`
+- `thinking_interval_ticks` / `min_speak_interval_minutes` / `speak_channel_id` / `target_user_id`
+- `active_threshold_minutes`
+- `salience.top_n` / `salience.threshold`（注意フィルタ）
+- `github`（GITHUB_TOKEN + username が必要）
+- `tavily_news`（TAVILY_API_KEY + queries 必要）
 
-### STTテーブル
+### Gemini トグル ― `gemini`
+`conversation` / `memory_extraction` / `unit_routing` / `monthly_token_limit`（全デフォルト OFF）
 
-#### stt_transcripts
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| raw_text | TEXT | NOT NULL |
-| started_at | TEXT | NOT NULL |
-| ended_at | TEXT | NOT NULL |
-| duration_seconds | REAL | |
-| collected_at | TEXT | DEFAULT (datetime('now')) |
-| summarized | INTEGER | DEFAULT 0 |
-
-#### stt_summaries
-| Column | Type | 制約 |
-|--------|------|------|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT |
-| summary | TEXT | NOT NULL |
-| transcript_ids | TEXT | NOT NULL |
-| created_at | TEXT | DEFAULT (datetime('now')) |
-
-### 設定テーブル
-
-#### settings (Key-Valueストア)
-| Column | Type | 制約 |
-|--------|------|------|
-| key | TEXT | PRIMARY KEY |
-| value | TEXT | NOT NULL |
-
-ランタイム設定の保存に使用。WebGUIからの設定変更はここに保存される。
+### キャラクター ― `character`
+`name` / `persona`（ミミの人格定義テキスト）
 
 ---
 
-## config.yaml 主要セクション
-
-### LLM設定 (`llm`)
-- `ollama_model`: デフォルトモデル名
-- `ollama_timeout`: 生成タイムアウト（秒）
-- `ollama_url`: Ollama URL（省略時は自動構築）
-
-### ハートビート (`heartbeat`)
-- `interval_with_ollama_minutes`: Ollama有効時の間隔（15分）
-- `interval_without_ollama_minutes`: Ollama無効時の間隔（180分）
-- `compact_threshold_messages`: 圧縮閾値（20メッセージ）
-
-### Windows Agents (`windows_agents`)
-- `id`, `name`, `role`, `host`, `port`, `priority`
-- `metrics_instance`: VictoriaMetrics用
-- `wol_device_id`: Wake-on-LAN用
-
-### ユニット (`units`)
-各ユニットの `enabled` フラグ + 個別設定
-
-### InnerMind (`inner_mind`)
-- `enabled`, `thinking_interval_ticks`, `speak_probability`
-- `min_speak_interval_minutes`, `speak_channel_id`, `target_user_id`
-
-### Gemini (`gemini`)
-- `conversation`, `memory_extraction`, `unit_routing`: 各トグル
-- `monthly_token_limit`: 月間トークン制限
-
-### キャラクター (`character`)
-- `name`: "ミミ"
-- `persona`: ペルソナ定義テキスト
-
-### その他
-- `rss`: フェッチ間隔, ダイジェスト時刻, プリセット
-- `stt`: ポーリング間隔, キャプチャ設定, Whisperモデル
-- `weather`: API URL, デフォルト地域
-- `searxng`: SearXNG URL, 結果数
-- `rakuten_search`: 最大結果数, 詳細取得
-
----
-
-## 環境変数 (.env)
+## 環境変数（`.env`）
 
 | 変数名 | 用途 |
 |--------|------|
-| GEMINI_API_KEY | Google Gemini APIキー |
-| DISCORD_BOT_TOKEN | Discordボットトークン |
-| DISCORD_ADMIN_CHANNEL_ID | 管理通知チャンネル |
-| WEBGUI_USERNAME | WebGUI認証ユーザー名 |
-| WEBGUI_PASSWORD | WebGUI認証パスワード |
-| WEBGUI_PORT | WebGUIポート（8100） |
-| WEBGUI_USER_ID | WebGUI用DiscordユーザーID |
-| PORTAINER_URL / API_TOKEN / ENV_ID | Portainer連携 |
-| CONTAINER_NAME | コンテナ名 |
-| GITEA_URL / USER / TOKEN | Gitea連携 |
-| GOOGLE_SERVICE_ACCOUNT_FILE | Googleカレンダー認証 |
-| AGENT_SECRET_TOKEN | Windows Agent認証トークン |
+| `GEMINI_API_KEY` | Google Gemini APIキー（Geminiフォールバック用） |
+| `DISCORD_BOT_TOKEN` | Discord Bot トークン |
+| `DISCORD_ADMIN_CHANNEL_ID` | 管理通知チャンネル |
+| `WEBGUI_USERNAME` / `WEBGUI_PASSWORD` | Basic 認証 |
+| `WEBGUI_PORT` | WebGUI 公開ポート（既定 8100） |
+| `WEBGUI_USER_ID` | WebGUI 用の仮想 Discord ユーザー ID |
+| `PORTAINER_URL` / `PORTAINER_API_TOKEN` / `PORTAINER_ENV_ID` | Portainer 経由の再起動 |
+| `CONTAINER_NAME` | 再起動対象コンテナ名 |
+| `GITEA_URL` / `GITEA_USER` / `GITEA_TOKEN` | Gitea サブモジュール連携（input-relay 等） |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | Google Calendar 認証 |
+| `AGENT_SECRET_TOKEN` | Windows Agent 認証（`X-Agent-Token`） |
+| `GITHUB_TOKEN` | InnerMind の GitHub 活動コンテキスト用 |
+| `TAVILY_API_KEY` | InnerMind の Web ニュースコンテキスト用 |
+| `OBS_WEBSOCKET_PASSWORD` | ZZZ Disc Manager の OBS キャプチャ用（`tools.zzz_disc.capture.obs`） |
+
+> 値は `.env.example` のテンプレを参照。`config.yaml` には機密情報を書かないこと。

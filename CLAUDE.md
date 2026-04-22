@@ -66,16 +66,18 @@
 ```
 [Discord] [WebGUI]
     ↓         ↓
-[Skill Router]        ← LLMがどのユニットを使うか判断（JSON返却）
+[Unit Router]         ← LLMがどのユニットを使うか判断（JSON返却）
     ↓
 [Unit Manager]        ← ユニットを自動ロード・管理
     ├── Pi上のUnit    → そのまま実行
     └── DELEGATE_TO="windows" → RemoteUnitProxy → AgentPool → Windows Agent
 
+[InnerMind]           ← 自律思考（ContextSource プラグインで情報収集）
 [Heartbeat]           ← 適応型頻度制御（Ollama有無で間隔切り替え）
+[ActivityDetector]    ← ゲーム/OBS/VC 状態でLLM処理抑制
 [LLM Router]          ← Ollama優先 → Gemini APIフォールバック
 [AgentPool]           ← 複数Windows PCをpriority順に管理
-[SQLite]              ← 全データ永続化
+[SQLite]              ← 全データ永続化（src/database/ モジュール群）
 [ChromaDB]            ← インプロセス（PersistentClient）・ベクトル記憶
 [WebGUI]              ← FastAPI + レスポンシブHTML（PCファースト）
 ```
@@ -86,32 +88,79 @@
 secretary-bot/
 ├── src/
 │   ├── bot.py                # エントリーポイント
-│   ├── skill_router.py       # 自然言語 → ユニット振り分け
+│   ├── unit_router.py        # 自然言語 → ユニット振り分け
 │   ├── heartbeat.py          # ハートビート・コンテキスト圧縮
 │   ├── errors.py             # BotError基底クラス
 │   ├── circuit_breaker.py    # サーキットブレーカー
 │   ├── logger.py             # 構造化ログ（JSON・trace_id）
-│   ├── database.py           # SQLite（aiosqlite・WAL）
+│   ├── fetch_utils.py        # HTTP取得ユーティリティ
+│   ├── flow_tracker.py       # フロー追跡（trace単位の進捗管理）
+│   ├── status_collector.py   # Pi / Windows の状態収集
+│   ├── database/             # SQLite マイグレーション＋ドメイン別アクセサ
+│   │   ├── _base.py          # スキーマ定義・マイグレーション本体
+│   │   ├── conversation.py / generation.py / clip_pipeline.py
+│   │   ├── lora.py / monologue.py / pending.py / section.py
+│   │   ├── settings.py / wildcard.py
+│   ├── activity/
+│   │   ├── detector.py       # アクティビティ統合判定
+│   │   ├── collector.py      # active_pcs / セッション永続化
+│   │   ├── agent_monitor.py  # Windows Agent /activity 通信
+│   │   ├── discord_monitor.py # Discord VC 検出
+│   │   ├── habit_detector.py # 習慣ゲーム離脱検出
+│   │   └── daily_diary.py    # 1日の activity ダイジェスト生成
+│   ├── gcal/
+│   │   ├── service.py / sync.py # Google Calendar API 同期
+│   ├── inner_mind/
+│   │   ├── core.py / prompts.py / actuator.py / approval_view.py
+│   │   ├── discord_activity.py
+│   │   └── context_sources/  # プラグイン式情報収集（conversation/memo/
+│   │                         #   reminder/memory/weather/rss/stt/
+│   │                         #   activity/calendar/github/habit/tavily_news）
 │   ├── llm/
 │   │   ├── router.py         # Ollama/Gemini切り替え
-│   │   ├── ollama_client.py
-│   │   └── gemini_client.py
+│   │   ├── ollama_client.py  # 複数インスタンス対応（least-connections）
+│   │   ├── gemini_client.py
+│   │   ├── gpu_monitor.py    # VictoriaMetrics 経由の GPU 占有検出
+│   │   └── unit_llm.py       # purpose別 LLM ラッパー
 │   ├── memory/
 │   │   ├── chroma_client.py  # ChromaDB（PersistentClient）
 │   │   ├── ai_memory.py      # AI自身の記憶（Ollama専用）
-│   │   └── people_memory.py  # 人物記憶（Geminiフォールバック可）
+│   │   ├── people_memory.py  # 人物記憶（Geminiフォールバック可）
+│   │   ├── interest_extractor.py / sweeper.py
+│   ├── rss/
+│   │   ├── fetcher.py / processor.py / recommender.py / notify.py
+│   ├── stt/
+│   │   ├── collector.py / processor.py # transcript 収集・要約
 │   ├── units/
 │   │   ├── base_unit.py      # BaseUnit（Cog継承）
 │   │   ├── remote_proxy.py   # 透過的な委託ラッパー
 │   │   ├── agent_pool.py     # 複数PC管理
 │   │   ├── reminder.py / memo.py / timer.py / status.py / chat.py
+│   │   ├── weather.py / web_search.py / rakuten_search.py
+│   │   ├── calendar.py / power.py / rss.py
+│   │   ├── docker_log_monitor.py # コンテナログ監視
+│   │   ├── prompt_crafter.py / model_sync.py
+│   │   ├── image_gen/        # 画像生成（ComfyUI 連携）
+│   │   ├── clip_pipeline/    # 自動切り抜き（Whisper + Ollama）
+│   │   └── lora_train/       # kohya_ss LoRA 学習
+│   ├── tools/                # WebGUI 同居ツール（疎結合）
+│   │   ├── zzz_disc/         # ZZZ Codex（HoYoLAB連携）
+│   │   └── image_gen_console/ # 画像生成コンソール SPA
 │   └── web/
 │       ├── app.py            # FastAPI（WebGUI + /health）
-│       └── static/
+│       ├── routes/           # ルート群（system/config/inner_mind/image_gen
+│       │                     #   /rss/stt/memory/units/activity/docker_monitor
+│       │                     #   /flow/obs/input_relay/clip_pipeline/lora_train）
+│       └── static/           # index.html / js / css / service-worker.js
 ├── windows-agent/
 │   ├── agent.py              # FastAPI（:7777）
-│   ├── units/
+│   ├── activity/             # game_detector / obs_manager
+│   ├── stt/                  # mic_capture / whisper_engine / stt_client
+│   ├── tools/                # tool_manager + サブツール（input-relay/
+│   │                         #   image_gen/clip_pipeline/zzz_disc）
+│   ├── config/               # agent_config.yaml / game_processes.json 等
 │   └── start_agent.bat
+├── docs/                     # 設計判断・運用ノート（必ず巡回）
 ├── Dockerfile
 ├── config.yaml.example
 ├── .env.example
@@ -122,8 +171,10 @@ secretary-bot/
 ## Key Rules
 
 ### Unit追加
-1. `src/units/my_unit.py` を作成し `BaseUnit` を継承
-2. `config.yaml` の `units:` に追記 → 自動ロード
+1. `src/units/my_unit.py` を作成し `BaseUnit` を継承（`UNIT_NAME` / `UNIT_DESCRIPTION` / 必要なら `DELEGATE_TO` を定義し、末尾に `async def setup(bot)` を用意）
+2. `src/units/__init__.py` の `_UNIT_MODULES` に `"my_unit": "src.units.my_unit"` を追加
+3. `config.yaml` の `units.my_unit.enabled: true` を設定
+4. 起動時に `UnitManager.load_units()` が `_UNIT_MODULES` を走査し、enabled のものだけ自動ロードする
 
 ### Discord通知
 - 各ユニットが `BaseUnit` のヘルパー（`notify()` / `notify_error()`）経由で直接送信
@@ -178,7 +229,11 @@ GitHubパブリックリポジトリのため:
 | DB（構造化） | SQLite（aiosqlite・WAL） |
 | DB（記憶） | ChromaDB（PersistentClient） |
 | スケジューラ | APScheduler |
-| LLM | Ollama API（qwen3）/ Google Generative AI SDK |
+| LLM | Ollama API（既定 `gemma4:e2b`）/ Google Generative AI SDK（Geminiフォールバック・既定OFF） |
+| STT | kotoba-whisper-v2.0（Sub PC の Windows Agent 側で実行） |
+| 画像生成 | ComfyUI（Windows Agent 側で実行） |
+| RSS | feedparser |
+| スケジュール | APScheduler + Heartbeat |
 
 ## Tooling
 - Use **Serena MCP** tools for code navigation and editing to maximize efficiency (symbol search, overview, replace, insert, etc.)
