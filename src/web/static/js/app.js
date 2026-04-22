@@ -324,4 +324,11 @@ document.addEventListener('DOMContentLoaded', () => {
   refreshFooter();
   setInterval(refreshTopbarStatus, 15000);
   setInterval(refreshFooter, 60000);
+
+  // Service worker (PWA)。http/https どちらでも登録は同じだが、
+  // ローカルで file:// で開いたときはブラウザが拒否するため failure を握りつぶす
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+      .catch(() => { /* silent */ });
+  }
 });

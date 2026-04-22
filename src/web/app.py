@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from src.logger import get_logger
 from src.web._context import WebContext
@@ -86,6 +86,20 @@ def create_web_app(bot) -> FastAPI:
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(static_dir):
         app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
+
+    # PWA: service worker はルートスコープで配信する必要がある
+    @app.get("/service-worker.js")
+    async def service_worker():
+        path = os.path.join(os.path.dirname(__file__), "static", "service-worker.js")
+        return FileResponse(path, media_type="application/javascript", headers={
+            "Cache-Control": "no-cache",
+            "Service-Worker-Allowed": "/",
+        })
+
+    @app.get("/manifest.webmanifest")
+    async def manifest():
+        path = os.path.join(os.path.dirname(__file__), "static", "manifest.webmanifest")
+        return FileResponse(path, media_type="application/manifest+json")
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
