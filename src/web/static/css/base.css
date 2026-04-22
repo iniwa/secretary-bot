@@ -26,7 +26,7 @@
   /* Text */
   --text-primary: #e4e7ed;
   --text-secondary: #8b90a0;
-  --text-muted: #555b6e;
+  --text-muted: #7a8099;  /* WCAG AA 比 (対 --bg-base) 目標で #555b6e から格上げ */
 
   /* Border */
   --border: #1e2231;
@@ -74,6 +74,34 @@ a { color: var(--accent-hover); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { font-family: inherit; cursor: pointer; }
 input, textarea, select { font-family: inherit; font-size: inherit; }
+
+/* === Focus visible (a11y) ===
+ * キーボード操作時のみ可視化。マウス clickでは出ない */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* input 系は border を使うので outline なし + box-shadow でリング */
+.form-input:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+/* === Reduced motion (a11y) === */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 /* === Typography === */
 
