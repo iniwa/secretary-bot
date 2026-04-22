@@ -1327,15 +1327,26 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except ValueError:
             raise HTTPException(403, "path outside nas mount")
 
-        outputs_subdir = (
-            bot.config.get("units", {}).get("image_gen", {})
-            .get("nas", {}).get("outputs_subdir", "outputs")
+        nas_cfg = (
+            bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
         )
-        outputs_real = (mount_real / outputs_subdir).resolve()
-        try:
-            real.relative_to(outputs_real)
-        except ValueError:
-            raise HTTPException(403, "only outputs/ is allowed")
+        allowed_subdirs = [
+            nas_cfg.get("outputs_subdir", "outputs"),
+            nas_cfg.get("nsfw_outputs_subdir", "outputs_misc"),
+        ]
+        allowed = False
+        for sub in allowed_subdirs:
+            if not sub:
+                continue
+            root = (mount_real / sub).resolve()
+            try:
+                real.relative_to(root)
+                allowed = True
+                break
+            except ValueError:
+                continue
+        if not allowed:
+            raise HTTPException(403, "only outputs/ or outputs_misc/ is allowed")
 
         if not real.is_file():
             raise HTTPException(404, "file not found")
