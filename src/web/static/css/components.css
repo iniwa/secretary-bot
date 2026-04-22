@@ -20,6 +20,37 @@
   letter-spacing: 0.04em;
 }
 
+/* === Activity Row (Dashboard Main PC Activity card) === */
+
+.activity-card { margin-bottom: 1rem; }
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.25rem 0;
+}
+.activity-cell {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.activity-cell-wide {
+  flex: 2 1 220px;
+  min-width: 0;
+}
+.activity-cell .activity-value {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.activity-cell-wide .activity-value {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+@media (max-width: 480px) {
+  .activity-cell, .activity-cell-wide { flex-basis: 100%; }
+}
+
 /* === Status Dot === */
 
 .status-dot {
@@ -341,7 +372,11 @@ select.form-input { cursor: pointer; }
 
 /* === Tables === */
 
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
 table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 th, td {
   padding: 0.6rem 0.75rem;
@@ -415,6 +450,7 @@ tr:hover td { background: var(--bg-raised); }
   flex-direction: column;
   height: 100%;
   max-height: calc(100vh - var(--topbar-height));
+  max-height: calc(100dvh - var(--topbar-height));
 }
 .chat-messages {
   flex: 1;
@@ -707,3 +743,130 @@ tr:hover td { background: var(--bg-raised); }
 .acc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.85rem 1rem; }
 @media (max-width: 860px) { .acc-grid { grid-template-columns: 1fr; } }
 .acc-grid .form-group { margin-bottom: 0; }
+
+/* === Mobile (≤768px): タッチ最適化 ===
+ * Phase A: 既存 DOM はそのままに、タッチターゲットと余白を整える。
+ * 個別ページ専用ルールはここでは追加しない（Phase C で対応）。
+ */
+@media (max-width: 768px) {
+  /* iOS ズーム回避: フォーム入力は 16px 必須。base.css 側の宣言が
+   * .form-input の後にロードされる components.css に上書きされないよう
+   * ここで明示再宣言する */
+  .form-input,
+  textarea.form-input,
+  select.form-input,
+  .chat-form textarea { font-size: 16px; }
+
+  /* === Responsive table: 横スクロール → カード縦積みに切替 ===
+   * <table class="table-responsive"> を付けると、モバイル時に thead を隠し、
+   * tr をカード、td を「ラベル: 値」形式に変換する。
+   * 各 <td data-label="..."> の data-label がラベル文字列になる。 */
+  .table-responsive,
+  .table-responsive thead,
+  .table-responsive tbody,
+  .table-responsive tr,
+  .table-responsive th,
+  .table-responsive td { display: block; width: 100%; }
+  .table-responsive thead {
+    position: absolute;
+    left: -9999px;
+    top: -9999px;
+  }
+  .table-responsive tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    padding: 0.35rem 0.75rem;
+    margin-bottom: 0.65rem;
+  }
+  .table-responsive tr:hover td { background: transparent; }
+  .table-responsive td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px dashed var(--border);
+    word-break: break-word;
+    text-align: right;
+  }
+  .table-responsive td:last-child { border-bottom: none; }
+  .table-responsive td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-align: left;
+  }
+  /* data-label がない (actions セル等) はラベル非表示 & 左揃え */
+  .table-responsive td:not([data-label])::before { display: none; }
+  .table-responsive td:not([data-label]) { justify-content: flex-start; text-align: left; }
+  /* table-wrap の中で responsive を使う場合、外枠の overflow を解除して縦に伸ばす */
+  .table-wrap:has(.table-responsive) { overflow: visible; }
+
+  /* ボタン類: iOS HIG 準拠で最小 44x44 */
+  .btn {
+    min-height: var(--tap-target);
+    padding: 0.55rem 1.05rem;
+    font-size: 0.9375rem;
+  }
+  .btn-sm {
+    min-height: 36px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8125rem;
+  }
+  .pill {
+    min-height: 36px;
+    padding: 0.45rem 0.95rem;
+    font-size: 0.875rem;
+  }
+
+  /* テーブル: padding を厚めに、横スクロール時のタッチをしやすく */
+  th, td { padding: 0.75rem 0.85rem; }
+  .data-table th, .data-table td { padding: 0.6rem 0.6rem; }
+
+  /* アコーディオン見出しをタップしやすく */
+  .accordion-summary { min-height: var(--tap-target); padding: 1rem 1.1rem; }
+
+  /* チャット: 吹き出しを画面幅に近づけ、入力欄まわりを操作しやすく */
+  .chat-msg { max-width: 92%; }
+  .chat-form { flex-direction: column; gap: 0.5rem; }
+  .chat-form textarea { width: 100%; max-height: 9rem; }
+  .chat-send { align-self: stretch; min-height: var(--tap-target); }
+  /* 入力エリアを画面下端に寄せ、周囲から視覚的に浮かせる */
+  .chat-input-area {
+    background: var(--bg-base);
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border);
+  }
+  /* ボトムタブ + padding-bottom で main-content 下部は既に余白確保済みなので
+   * chat-page の padding-bottom は不要 (Phase A で入れていた分を削除) */
+
+  /* チャットページはメッセージ領域のみスクロールし、入力欄は固定位置に見せる
+   * max-height を 100dvh ベースにすることで iOS Safari のダイナミックツールバー対応 */
+  .chat-page {
+    /* ボトムタブ分の下余白 + topbar を差し引いた実寸 */
+    max-height: calc(100dvh - var(--topbar-height) - 56px - var(--safe-top) - var(--safe-bottom));
+  }
+
+  /* Reply 関連はホバー前提なので、モバイルでは常時表示にする */
+  .chat-reply-btn { opacity: 1; padding: 0.35rem 0.55rem; font-size: 1rem; }
+
+  /* Toast: ノッチを避ける */
+  #toast-container {
+    top: max(1rem, calc(var(--safe-top) + 0.5rem));
+    right: max(1rem, var(--safe-right));
+    left: max(1rem, var(--safe-left));
+  }
+  .toast { max-width: none; }
+
+  /* ヘルプアイコン: タップで読み取れるサイズに */
+  .help-icon { width: 18px; height: 18px; font-size: 0.75rem; }
+  .help-tooltip { width: min(280px, calc(100vw - 2rem)); }
+
+  /* Dashboard ミニカードの数値は据え置き、ラベルだけ可読性を上げる */
+  .mini-label, .stat-sub { font-size: 0.8125rem; }
+}

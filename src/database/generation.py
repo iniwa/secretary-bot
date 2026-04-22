@@ -65,6 +65,7 @@ class GenerationJobMixin:
         modality: str = "image",
         sections_json: str | None = None,
         priority: int = 0, max_retries: int = 2,
+        is_nsfw: bool = False,
     ) -> str:
         """ジョブを queued で登録し、UUID を返す。"""
         import uuid
@@ -72,10 +73,11 @@ class GenerationJobMixin:
         await self.execute(
             "INSERT INTO generation_jobs "
             "(id, user_id, platform, workflow_id, modality, sections_json, "
-            " positive, negative, params_json, status, priority, max_retries, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+            " positive, negative, params_json, status, priority, max_retries, is_nsfw, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
             (job_id, user_id, platform, workflow_id, modality, sections_json,
-             positive, negative, params_json, priority, max_retries, jst_now()),
+             positive, negative, params_json, priority, max_retries,
+             1 if is_nsfw else 0, jst_now()),
         )
         await self._generation_job_event(
             job_id=job_id, from_status=None, to_status="queued",
@@ -90,6 +92,7 @@ class GenerationJobMixin:
         self, user_id: str | None = None, status: str | None = None,
         modality: str | None = None,
         limit: int = 50, offset: int = 0,
+        nsfw: bool | None = None,
     ) -> list[dict]:
         conditions: list[str] = []
         params: list = []
@@ -102,6 +105,9 @@ class GenerationJobMixin:
         if modality:
             conditions.append("modality = ?")
             params.append(modality)
+        if nsfw is not None:
+            conditions.append("is_nsfw = ?")
+            params.append(1 if nsfw else 0)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         params.extend([limit, offset])
         return await self.fetchall(

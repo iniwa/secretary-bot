@@ -67,7 +67,10 @@ export function openLightbox(item, opts = {}) {
   if (opts.onTagsEdit) {
     actions.push(`<button data-act="tags" title="タグ編集">🏷 タグ</button>`);
   }
-  if (item.positive || item.negative) {
+  if (opts.onExtract) {
+    // Extract ページへ遷移して PNG メタデータ抽出を行うフック
+    actions.push(`<button data-act="extract" title="Extract ページでプロンプトを抽出">📝 プロンプト → Extract</button>`);
+  } else if (item.positive || item.negative) {
     actions.push(`<button data-act="prompt" title="プロンプトを表示">📝 プロンプト</button>`);
   }
   if (opts.onReuse) {
@@ -106,6 +109,11 @@ export function openLightbox(item, opts = {}) {
       ev.stopPropagation();
       openPromptModal(item);
       return;
+    }
+    if (btn?.dataset.act === 'extract') {
+      ev.stopPropagation();
+      opts.onExtract?.(item);
+      return close();
     }
     if (btn?.dataset.act === 'tags') {
       ev.stopPropagation();

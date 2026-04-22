@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_chenkin_official",
+  "description": "ChenkinNoob-XL v0.5 作者公式の推奨 negative。SFW 志向・古いスタイル・低品質・低解像度を除去",
+  "positive": null,
+  "negative": "nsfw, worst quality, old, early, low quality, lowres, signature, username, logo, bad hands, mutated hands",
+  "tags": "chenkin,noobxl,negative,official"
+}

@@ -347,6 +347,11 @@ class Dispatcher:
         if "FILENAME_PREFIX" not in params:
             now = datetime.now(JST).strftime("%Y-%m-%d_%H%M%S")
             params["FILENAME_PREFIX"] = f"{now}_{job['id']}_{params['SEED']}"
+        # NSFW ジョブは保存サブディレクトリを差し替える（Agent 側で output_subdir として解釈）
+        if job.get("is_nsfw"):
+            nas_cfg = self.bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
+            nsfw_sub = (nas_cfg.get("nsfw_outputs_subdir") or "outputs_misc").strip("/\\")
+            params["OUTPUT_SUBDIR"] = nsfw_sub
 
         workflow_id = job.get("workflow_id")
         wf_row = await self.bot.database.workflow_get(workflow_id) if workflow_id else None
@@ -566,15 +571,17 @@ class Dispatcher:
         nas_cfg = self.bot.config.get("units", {}).get("image_gen", {}).get("nas", {}) or {}
         base = (nas_cfg.get("mount_point") or nas_cfg.get("base_path") or "/mnt/ai-image").rstrip("/\\")
         outputs_sub = (nas_cfg.get("outputs_subdir") or "outputs").strip("/\\")
+        nsfw_sub = (nas_cfg.get("nsfw_outputs_subdir") or "outputs_misc").strip("/\\")
         # 既に Pi マウント配下なら変更なし
         if p.startswith(base + "/") or p.startswith(base + "\\"):
             return p.replace("\\", "/")
-        # outputs/... 部分を抜き出して base と結合
+        # {outputs_sub} / {nsfw_sub} のいずれかを marker として抜き出して base と結合
         uni = p.replace("\\", "/")
-        marker = f"/{outputs_sub}/"
-        idx = uni.find(marker)
-        if idx >= 0:
-            return f"{base}{uni[idx:]}"
+        for sub in (outputs_sub, nsfw_sub):
+            marker = f"/{sub}/"
+            idx = uni.find(marker)
+            if idx >= 0:
+                return f"{base}{uni[idx:]}"
         return uni
 
     async def _on_job_done(

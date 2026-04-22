@@ -139,7 +139,7 @@ export function render() {
 
   <div class="card">
     <div class="table-wrap">
-      <table>
+      <table class="table-responsive">
         <thead>
           <tr>
             <th>Status</th>
@@ -191,10 +191,10 @@ function renderRows(items) {
     const isDone = !!item.done_at;
 
     return `<tr data-rid="${item.id}">
-      <td>${statusBadge(item)}</td>
-      <td class="reminder-message-cell">${esc(item.message || '')}${snoozeHtml}</td>
-      <td class="mono text-xs">${fmtTime(item.remind_at)}</td>
-      <td>${repeatLabel(item)}</td>
+      <td data-label="Status">${statusBadge(item)}</td>
+      <td class="reminder-message-cell" data-label="Message">${esc(item.message || '')}${snoozeHtml}</td>
+      <td class="mono text-xs" data-label="Scheduled">${fmtTime(item.remind_at)}</td>
+      <td data-label="Repeat">${repeatLabel(item)}</td>
       <td>
         <div class="reminder-actions">
           ${isDone ? '' : `<button class="btn btn-sm" data-edit="${item.id}">Edit</button>`}

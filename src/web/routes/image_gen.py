@@ -190,6 +190,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         lora_overrides = body.get("lora_overrides")
         if lora_overrides is not None and not isinstance(lora_overrides, list):
             raise HTTPException(400, "lora_overrides must be an array")
+        is_nsfw = bool(body.get("is_nsfw"))
         try:
             job_id = await unit.enqueue(
                 user_id=ctx.webgui_user_id or "webgui",
@@ -202,6 +203,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 user_position=user_position,
                 modality=modality,
                 lora_overrides=lora_overrides,
+                is_nsfw=is_nsfw,
             )
         except HTTPException:
             raise
@@ -273,13 +275,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     async def generation_gallery(
         limit: int = 50, offset: int = 0,
         favorite: int = 0, tag: str | None = None,
+        nsfw: int = 0,
     ):
         unit = _get_image_gen_unit()
         limit = max(1, min(200, int(limit)))
         offset = max(0, int(offset))
+        # nsfw=0（既定）→ SFW のみ、nsfw=1 → NSFW のみ
         rows = await unit.list_gallery(
             limit=limit, offset=offset,
             favorite_only=bool(favorite), tag=(tag or None),
+            nsfw=bool(nsfw),
         )
         items: list[dict] = []
         for r in rows:
@@ -299,6 +304,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     "negative": r.get("negative"),
                     "favorite": r.get("favorite", False),
                     "tags": r.get("tags") or [],
+                    "is_nsfw": bool(r.get("is_nsfw", False)),
                 })
         return {"items": items}
 
@@ -354,6 +360,35 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except Exception as e:
             raise HTTPException(500, f"failed to load loras: {e}")
         return {"loras": loras}
+
+    @app.get("/api/generation/checkpoints", dependencies=[Depends(ctx.verify)])
+    async def generation_checkpoints():
+        """各 Agent がキャッシュ済みの checkpoint を集計して返す。
+
+        model_cache_manifest（ModelSyncUnit が定期同期）を元に、ファイル名の
+        union を返す。agents には「その checkpoint を持っている agent_id の一覧」を
+        添える。config の default_base_model も同梱して UI 側の初期選択に使う。
+        """
+        rows = await bot.database.fetchall(
+            "SELECT agent_id, filename FROM model_cache_manifest "
+            "WHERE file_type = 'checkpoints'"
+        )
+        by_file: dict[str, list[str]] = {}
+        for r in rows:
+            fn = r.get("filename") or ""
+            aid = r.get("agent_id") or ""
+            if not fn:
+                continue
+            by_file.setdefault(fn, [])
+            if aid and aid not in by_file[fn]:
+                by_file[fn].append(aid)
+        items = [
+            {"filename": fn, "agents": sorted(aids)}
+            for fn, aids in sorted(by_file.items(), key=lambda kv: kv[0].lower())
+        ]
+        ig_cfg = (bot.config.get("units") or {}).get("image_gen") or {}
+        default_ckpt = ig_cfg.get("default_base_model") or None
+        return {"items": items, "default": default_ckpt}
 
     @app.get("/api/generation/gallery/tags", dependencies=[Depends(ctx.verify)])
     async def generation_gallery_tags():

@@ -119,8 +119,11 @@ units:
     enabled: true                             # 機能全体のトグル
     discord_output_channel_id: 0              # 生成結果を投稿する固定チャンネル（0 で無効）
     discord_lora_max_slots: 1                 # Discord から指定可能な LoRA 枚数上限（将来拡張用）
-    default_preset: "t2i_default"             # 未指定時のプリセット
+    default_preset: "t2i_default"             # 未指定時のプリセット（LoRA 付）。LoRA 不要なら "t2i_default_vanilla"
     default_base_model: "chenkinNoobXLCKXL_v05.safetensors"   # CKPT 未指定時の既定モデル
+    # 候補（Agent へキャッシュ済みのもののみ選択可）:
+    #   - chenkinNoobXLCKXL_v05.safetensors   # NoobXL v0.5（既定、LoRA INIWA_NOOBXL と併用）
+    #   - asumaxlIllustrious_v4.safetensors   # AsumaXL v4（Illustrious、t2i_default_vanilla と併用推奨）
     default_sampler: "euler_ancestral"
     default_scheduler: "normal"
     default_cfg: 5.5
@@ -142,6 +145,7 @@ units:
     nas:
       base_path: "/mnt/secretary-bot/ai-image" # Pi からの NAS マウントパス（`secretary-bot` 共有配下の `ai-image` サブディレクトリ）
       outputs_subdir: "outputs"
+      nsfw_outputs_subdir: "outputs_misc"      # 隠しモード (is_nsfw=1) 投入ジョブの保存先サブディレクトリ
       workflows_subdir: "workflows"
       lora_datasets_subdir: "lora_datasets"
       lora_work_subdir: "lora_work"

@@ -303,7 +303,7 @@ export function render() {
 
     <div class="card">
       <div class="table-wrap">
-        <table>
+        <table class="table-responsive">
           <thead>
             <tr>
               <th>Title</th>
@@ -380,11 +380,11 @@ function renderFeedRows(feedList) {
     const toggleLabel = disabled ? 'Enable' : 'Disable';
     const toggleTo = disabled ? 'true' : 'false';
     return `<tr class="${rowCls}">
-      <td>${esc(f.title || '(no title)')}${disabledBadge}</td>
-      <td class="rss-feed-url"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.url)}">${esc(truncateUrl(f.url))}</a></td>
-      <td>${catBadge}</td>
-      <td>${presetBadge}</td>
-      <td class="text-xs">${esc(f.added_by || '---')}</td>
+      <td data-label="Title">${esc(f.title || '(no title)')}${disabledBadge}</td>
+      <td class="rss-feed-url" data-label="URL"><a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.url)}">${esc(truncateUrl(f.url))}</a></td>
+      <td data-label="Category">${catBadge}</td>
+      <td data-label="Preset">${presetBadge}</td>
+      <td class="text-xs" data-label="Added by">${esc(f.added_by || '---')}</td>
       <td>
         <button class="btn btn-sm" data-action="toggle-feed" data-feed-id="${f.id}" data-enabled="${toggleTo}">${toggleLabel}</button>
         <button class="btn btn-sm btn-danger" data-action="delete-feed" data-feed-id="${f.id}">Delete</button>

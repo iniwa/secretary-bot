@@ -15,7 +15,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 33
+_SCHEMA_VERSION = 34
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -811,6 +811,19 @@ class DatabaseBase:
                     total_stream_sec    INTEGER NOT NULL DEFAULT 0,
                     created_at          TEXT NOT NULL
                 )""",
+            ],
+            34: [
+                # 画像生成ジョブに NSFW フラグを追加。
+                # フロントの隠しモードから is_nsfw=1 で投入されたジョブは、
+                # Agent に output_subdir を切り替えて渡し、Gallery 側でも別枠表示する。
+                "ALTER TABLE generation_jobs ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0",
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_is_nsfw ON generation_jobs(is_nsfw, created_at DESC)",
+                # NSFW 用プロンプト断片カテゴリ。display_order は末尾に回して通常モードで目立たせない。
+                "INSERT OR IGNORE INTO prompt_section_categories (key, label, description, display_order, is_builtin) VALUES ('nsfw', 'NSFW', '隠しモード専用ワード', 9999, 1)",
+                # ダミーワード seed（運用上で書き換え想定）
+                "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-1', 'placeholder_tag_a', NULL, 1, 0)",
+                "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-2', 'placeholder_tag_b', NULL, 1, 0)",
+                "INSERT OR IGNORE INTO prompt_sections (category_key, name, positive, negative, is_builtin, starred) VALUES ('nsfw', 'dummy-3', 'placeholder_tag_c', NULL, 1, 0)",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

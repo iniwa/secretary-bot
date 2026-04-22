@@ -663,10 +663,11 @@ async def cache_sync_cancel(sync_id: str, request: Request):
 
 
 # --- /image/generate ---
-def _build_output_dir() -> str:
+def _build_output_dir(subdir: str = "outputs") -> str:
     base = (_ctx.nas_drive or _nas_base_fallback()).rstrip("\\")
     today = dt.datetime.now()
-    rel = os.path.join("outputs", today.strftime("%Y-%m"), today.strftime("%Y-%m-%d"))
+    safe_sub = (subdir or "outputs").strip("/\\") or "outputs"
+    rel = os.path.join(safe_sub, today.strftime("%Y-%m"), today.strftime("%Y-%m-%d"))
     return os.path.join(base + os.sep, rel)
 
 
@@ -734,8 +735,11 @@ async def image_generate(request: Request):
     if err:
         return _error_response(503, err["error_class"], err["message"], err["retryable"], trace_id=trace_id)
 
-    # output_dir 決定（inputs に明示されていればそれ優先）
-    output_dir = inputs.get("output_dir") or _build_output_dir()
+    # output_dir 決定（inputs に明示されていればそれ優先、
+    # 未指定時は output_subdir を用いてデフォルト base 以下を組み立て）
+    output_dir = inputs.get("output_dir") or _build_output_dir(
+        str(inputs.get("output_subdir") or "outputs")
+    )
     # `//nas/...` 表記なら UNC に変換
     if isinstance(output_dir, str) and output_dir.startswith("//"):
         output_dir = "\\\\" + output_dir.lstrip("/").replace("/", "\\")

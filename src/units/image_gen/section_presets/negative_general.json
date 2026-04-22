@@ -1,8 +1,8 @@
 {
   "category_key": "negative",
   "name": "negative_general",
-  "description": "汎用 negative（低品質・破綻防止）",
+  "description": "汎用 negative（NoobAI/Illustrious 準拠）。worst aesthetic / old / early / mutated hands などの公式推奨を含む",
   "positive": null,
-  "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry",
-  "tags": "negative,baseline"
+  "negative": "lowres, bad anatomy, bad hands, mutated hands and fingers, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, worst aesthetic, old, early, jpeg artifacts, signature, watermark, username, logo, blurry, bad feet, bad proportions, disfigured, ugly, monochrome",
+  "tags": "negative,baseline,noobxl,illustrious"
 }

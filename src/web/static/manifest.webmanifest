@@ -1,0 +1,19 @@
+{
+  "name": "Mimi Secretary Bot",
+  "short_name": "Mimi",
+  "description": "Mimi secretary bot dashboard",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0d13",
+  "theme_color": "#0b0d13",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

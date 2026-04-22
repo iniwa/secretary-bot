@@ -316,7 +316,7 @@ export function render() {
     </div>
     <div class="obs-groups-wrap" id="obs-groups-wrap"></div>
     <div class="table-wrap">
-      <table>
+      <table class="table-responsive">
         <thead>
           <tr>
             <th>Name</th>
@@ -467,9 +467,9 @@ function renderGamesTable() {
     const upDisabled = idx === 0 ? ' disabled' : '';
     const downDisabled = idx === last ? ' disabled' : '';
     return `<tr>
-      <td>${name}</td>
-      <td class="mono text-xs">${proc}</td>
-      <td>${group}</td>
+      <td data-label="Name">${name}</td>
+      <td class="mono text-xs" data-label="Process">${proc}</td>
+      <td data-label="Group">${group}</td>
       <td>
         <div class="obs-row-actions">
           <button class="btn btn-sm btn-icon-sm" data-move-up="${idx}" title="Move up"${upDisabled}>&uarr;</button>

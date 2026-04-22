@@ -1,0 +1,8 @@
+{
+  "category_key": "negative",
+  "name": "negative_asuma_official",
+  "description": "AsumaXL/Illustrious XL コミュニティ推奨の拡張 negative。displeasing/oldest/artistic failure など Illustrious 特有タグを含む",
+  "positive": null,
+  "negative": "worst quality, bad quality, displeasing, very displeasing, low quality, lowres, bad anatomy, bad hands, mutated hands and fingers, extra digits, fewer digits, jaggy lines, unclear, scan artifacts, monochrome, greyscale, 2koma, 4koma, comic, multiple views, bad angle, bad perspective, bad proportions, bad feet, artistic error, artistic failure, oldest, signature, watermark, censor, jpeg artifacts, twitter username",
+  "tags": "asumaxl,illustrious,negative,official"
+}

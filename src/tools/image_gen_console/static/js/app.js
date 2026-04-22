@@ -17,16 +17,22 @@ import * as prompts from './pages/prompts.js';
 import * as extract from './pages/extract.js';
 import * as wildcards from './pages/wildcards.js';
 import * as lora from './pages/lora.js';
+import * as reference from './pages/reference.js';
+import * as referenceChenkin from './pages/reference_chenkin.js';
+import * as referenceAsuma from './pages/reference_asuma.js';
 import { toast } from './lib/toast.js';
 
 const routes = [
-  { hash: '#/generate',  module: generate,  nav: 'generate',  title: 'Generate' },
-  { hash: '#/jobs',      module: jobs,      nav: 'jobs',      title: 'Jobs' },
-  { hash: '#/gallery',   module: gallery,   nav: 'gallery',   title: 'Gallery' },
-  { hash: '#/prompts',   module: prompts,   nav: 'prompts',   title: 'Prompts' },
-  { hash: '#/extract',   module: extract,   nav: 'extract',   title: 'Extract' },
-  { hash: '#/wildcards', module: wildcards, nav: 'wildcards', title: 'Wildcards' },
-  { hash: '#/lora',      module: lora,      nav: 'lora',      title: 'LoRA' },
+  { hash: '#/generate',          module: generate,         nav: 'generate',          title: 'Generate' },
+  { hash: '#/jobs',              module: jobs,             nav: 'jobs',              title: 'Jobs' },
+  { hash: '#/gallery',           module: gallery,          nav: 'gallery',           title: 'Gallery' },
+  { hash: '#/prompts',           module: prompts,          nav: 'prompts',           title: 'Prompts' },
+  { hash: '#/extract',           module: extract,          nav: 'extract',           title: 'Extract' },
+  { hash: '#/wildcards',         module: wildcards,        nav: 'wildcards',         title: 'Wildcards' },
+  { hash: '#/lora',              module: lora,             nav: 'lora',              title: 'LoRA' },
+  { hash: '#/reference',         module: reference,        nav: 'reference',         title: 'プリセット参考（共通）' },
+  { hash: '#/reference/chenkin', module: referenceChenkin, nav: 'reference-chenkin', title: '参考 / ChenkinNoob-XL' },
+  { hash: '#/reference/asuma',   module: referenceAsuma,   nav: 'reference-asuma',   title: '参考 / AsumaXL' },
 ];
 
 const DEFAULT_HASH = '#/generate';
@@ -125,11 +131,88 @@ async function refreshTopbarStatus() {
 }
 
 // ============================================================
+// NSFW hidden mode — バージョン表示ダブルクリックでトグル
+// ============================================================
+const NSFW_LS_KEY = 'ig:nsfw';
+
+function isNsfwOn() {
+  try { return localStorage.getItem(NSFW_LS_KEY) === '1'; }
+  catch { return false; }
+}
+
+function applyNsfwAttr(on) {
+  if (on) document.body.setAttribute('data-nsfw', 'on');
+  else document.body.removeAttribute('data-nsfw');
+}
+
+function setNsfwMode(on) {
+  try { localStorage.setItem(NSFW_LS_KEY, on ? '1' : '0'); }
+  catch { /* ignore */ }
+  applyNsfwAttr(on);
+  // 既存ページに状態変化を通知（gallery などが再読込する）
+  window.dispatchEvent(new CustomEvent('ig:nsfw-change', { detail: { on } }));
+}
+
+// 他モジュールから参照できるようにグローバルへエクスポート
+window.IGNsfw = {
+  isOn: isNsfwOn,
+  set: setNsfwMode,
+};
+
+function setupNsfwToggle() {
+  const el = document.getElementById('ig-topbar-status');
+  if (!el) return;
+  // ダブルクリックで切替
+  el.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    const next = !isNsfwOn();
+    setNsfwMode(next);
+    toast(next ? 'NSFW mode ON' : 'NSFW mode OFF', 'info');
+  });
+}
+
+// ============================================================
+// モバイル用サイドバー drawer 制御
+// ============================================================
+function setupMobileDrawer() {
+  const btn = document.getElementById('ig-menu-toggle');
+  const sidebar = document.getElementById('ig-sidebar');
+  const backdrop = document.getElementById('ig-sidebar-backdrop');
+  if (!btn || !sidebar || !backdrop) return;
+
+  const open = () => {
+    sidebar.classList.add('open');
+    backdrop.classList.add('open');
+  };
+  const close = () => {
+    sidebar.classList.remove('open');
+    backdrop.classList.remove('open');
+  };
+  const toggle = () => {
+    if (sidebar.classList.contains('open')) close();
+    else open();
+  };
+
+  btn.addEventListener('click', toggle);
+  backdrop.addEventListener('click', close);
+  // ナビ項目タップで自動で閉じる（モバイル only 動作だが PC でも害なし）
+  sidebar.addEventListener('click', (e) => {
+    if (e.target.closest('.ig-nav-item')) close();
+  });
+  // hashchange でも閉じる（「← Bot」以外の遷移保険）
+  window.addEventListener('hashchange', close);
+}
+
+// ============================================================
 // Init
 // ============================================================
 window.addEventListener('hashchange', navigate);
 document.addEventListener('DOMContentLoaded', () => {
   if (!location.hash) location.hash = DEFAULT_HASH;
+  // NSFW モードを DOM 確定直後に body に反映しておく
+  applyNsfwAttr(isNsfwOn());
+  setupNsfwToggle();
+  setupMobileDrawer();
   navigate();
   refreshTopbarStatus();
   setInterval(refreshTopbarStatus, 60000);

@@ -90,6 +90,7 @@ function renderGallery() {
     if (!g) return;
     openLightbox(g, {
       onReuse: handleReuse,
+      onExtract: handleExtract,
       onFavoriteToggle: handleFavoriteToggle,
       onTagsEdit: handleTagsEdit,
     });
@@ -123,6 +124,7 @@ async function loadGallery({ reset = true } = {}) {
       limit: PAGE_SIZE, offset,
       favorite: favoriteOnly,
       tag: tagFilter,
+      nsfw: !!window.IGNsfw?.isOn(),
     });
     const page = data?.items || [];
     allItems = reset ? page : [...allItems, ...page];
@@ -196,6 +198,29 @@ async function handleReuse(item) {
   }
 }
 
+function handleExtract(item) {
+  // 画像 URL を Extract ページへ渡して PNG メタデータ抽出を行う。
+  // extract.js 側の onShow が stash を拾って fetch → handleFile 相当の処理を行う。
+  const url = item.url || item.thumb_url;
+  if (!url) { toast('画像 URL がありません', 'error'); return; }
+  // ファイル名: path 末尾 or job_id.png
+  const fname = (() => {
+    try {
+      const p = new URL(url, location.origin).searchParams.get('path') || '';
+      const m = p.split(/[\\\/]/).pop();
+      return m || `${item.job_id || 'image'}.png`;
+    } catch { return `${item.job_id || 'image'}.png`; }
+  })();
+  stashSet({
+    type: 'extract-from-url',
+    source: 'gallery',
+    url, name: fname,
+    job_id: item.job_id || null,
+  });
+  location.hash = '#/extract';
+  toast('Extract ページへ送りました', 'info');
+}
+
 // ============================================================
 // Favorite / Tags
 // ============================================================
@@ -264,6 +289,11 @@ export async function mount() {
   $('gal-tag')?.addEventListener('change', (e) => {
     tagFilter = e.target.value || null;
     loadGallery({ reset: true });
+  });
+  // NSFW モード切替時にギャラリーを再読込
+  window.addEventListener('ig:nsfw-change', () => {
+    loadGallery({ reset: true });
+    loadTags();
   });
   await Promise.all([loadGallery({ reset: true }), loadTags()]);
 }

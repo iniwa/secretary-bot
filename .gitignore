@@ -54,3 +54,6 @@ temp/
 
 # Playwright
 .playwright-mcp/
+
+# Temp / scratch
+.tmp/

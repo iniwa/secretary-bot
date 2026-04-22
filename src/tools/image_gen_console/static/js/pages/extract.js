@@ -7,7 +7,7 @@
  *  実装は pure JS。zTXt（deflate 圧縮）は依存を増やさないため未対応。
  */
 import { toast } from '../lib/toast.js';
-import { esc, stashSet, buildPromptBlock } from '../lib/common.js';
+import { esc, stashSet, stashGet, stashClear, buildPromptBlock } from '../lib/common.js';
 import { GenerationAPI } from '../lib/generation_api.js';
 import { decomposePromptClient } from '../lib/decompose.js';
 
@@ -424,6 +424,26 @@ function onPaste(e) {
 }
 
 // ============================================================
+// URL 経由読み込み（Gallery からの送り込み対応）
+// ============================================================
+async function handleUrl(url, name) {
+  try {
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const ct = (blob.type || '').toLowerCase();
+    if (!ct.includes('png') && !/\.png$/i.test(name)) {
+      toast('PNG 以外はメタデータ抽出不可（表示のみ）', 'warn');
+    }
+    const file = new File([blob], name || 'image.png', { type: 'image/png' });
+    await handleFile(file);
+  } catch (err) {
+    console.error('extract handleUrl failed', err);
+    toast(`画像取得失敗: ${err.message}`, 'error');
+  }
+}
+
+// ============================================================
 // Lifecycle
 // ============================================================
 export async function mount() {
@@ -433,4 +453,13 @@ export async function mount() {
     _pasteBound = true;
   }
   if (lastResult) renderResult();
+}
+
+export function onShow() {
+  // Gallery 等から送られてきた画像 URL があれば自動抽出を走らせる
+  const stash = stashGet();
+  if (stash && stash.type === 'extract-from-url' && stash.url) {
+    stashClear();
+    handleUrl(stash.url, stash.name || 'image.png');
+  }
 }

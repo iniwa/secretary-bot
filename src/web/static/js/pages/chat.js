@@ -73,7 +73,7 @@ export function render() {
       <span class="reply-icon">&#8617;</span>
       <span class="reply-unit" id="reply-unit"></span>
       <span class="reply-preview" id="reply-preview"></span>
-      <button class="reply-close" id="reply-close" title="Cancel">&times;</button>
+      <button class="reply-close" id="reply-close" type="button" title="Cancel" aria-label="返信をキャンセル">&times;</button>
     </div>
     <form class="chat-form" id="chat-form">
       <textarea id="chat-input" class="form-input" placeholder="Message... (Shift+Enter for newline)" rows="1" autocomplete="off"></textarea>
@@ -150,8 +150,10 @@ function appendMessage(role, text, unit, channel, channelName, replyTo) {
     // Reply button
     const replyBtn = document.createElement('button');
     replyBtn.className = 'chat-reply-btn';
+    replyBtn.type = 'button';
     replyBtn.innerHTML = '&#8617;';
     replyBtn.title = 'Reply to this unit';
+    replyBtn.setAttribute('aria-label', 'このユニットに返信');
     replyBtn.addEventListener('click', () => setReply(unit, text));
     el.appendChild(replyBtn);
   } else {
