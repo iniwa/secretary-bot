@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_beach",
+  "description": "海辺（砂浜・波・青空・夏の日差し）",
+  "positive": "beach, ocean, waves, sand, seashore, clear blue sky, summer, sunlight, outdoors",
+  "negative": null,
+  "tags": "scene,beach,summer,outdoor"
+}

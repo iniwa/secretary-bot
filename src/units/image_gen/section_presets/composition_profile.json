@@ -1,0 +1,8 @@
+{
+  "category_key": "composition",
+  "name": "composition_profile",
+  "description": "横顔（サイドビュー・プロフィール）",
+  "positive": "profile view, from side, side view, looking to the side",
+  "negative": null,
+  "tags": "composition,profile,side"
+}

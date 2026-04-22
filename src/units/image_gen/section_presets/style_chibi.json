@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_chibi",
+  "description": "ちびキャラ（デフォルメ・2〜3頭身・丸みのあるフォルム）",
+  "positive": "chibi, super deformed, small body, simplified proportions, round face, cute",
+  "negative": null,
+  "tags": "style,chibi,deformed"
+}

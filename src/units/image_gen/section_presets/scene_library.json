@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_library",
+  "description": "図書館（書棚・古書・静かな雰囲気・暖色照明）",
+  "positive": "library, bookshelves, books, reading desk, quiet atmosphere, warm lighting, indoors",
+  "negative": null,
+  "tags": "scene,library,indoor"
+}

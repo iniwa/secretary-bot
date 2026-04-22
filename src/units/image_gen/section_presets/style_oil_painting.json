@@ -1,0 +1,8 @@
+{
+  "category_key": "style",
+  "name": "style_oil_painting",
+  "description": "油絵風（厚塗り・キャンバス質感・古典絵画）",
+  "positive": "oil painting, thick brushstrokes, impasto, canvas texture, painterly, classical painting",
+  "negative": null,
+  "tags": "style,oil_painting,traditional"
+}

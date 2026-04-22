@@ -1,0 +1,8 @@
+{
+  "category_key": "scene",
+  "name": "scene_rainy_street",
+  "description": "雨の街角（濡れた路面・傘・反射・曇天）",
+  "positive": "rainy street, rain, wet pavement, puddles, reflections, umbrella, overcast sky, melancholic atmosphere",
+  "negative": null,
+  "tags": "scene,rain,street,outdoor"
+}
