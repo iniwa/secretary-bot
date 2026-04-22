@@ -14,3 +14,5 @@
   - コード実装（Phase A〜F）は 2026-04-20 に完了済
   - 詳細は `docs/auto_kirinuki/implementation_plan.md` Phase G セクション参照
 
+### MainPCのollamaがCPUで動いている
+- [ ] ログを確認していると、明らかに思考時間が長すぎる
