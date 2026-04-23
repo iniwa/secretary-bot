@@ -23,6 +23,7 @@ import * as gpuStatus from './pages/gpu-status.js';
 import * as pending from './pages/pending.js';
 import * as clipPipeline from './pages/clip-pipeline.js';
 import * as koboWatch from './pages/kobo-watch.js';
+import * as router from './pages/router.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -30,6 +31,7 @@ import * as koboWatch from './pages/kobo-watch.js';
 const pages = {
   dashboard:    { title: 'Dashboard',        module: dashboard },
   chat:         { title: 'Chat',             module: chat },
+  router:       { title: 'Router',           module: router },
   reminder:     { title: 'Reminder',         module: reminder },
   todo:         { title: 'Todo',             module: todo },
   memo:         { title: 'Memo',             module: memo },

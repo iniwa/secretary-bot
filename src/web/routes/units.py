@@ -277,5 +277,55 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 "description": actual.UNIT_DESCRIPTION,
                 "delegate_to": actual.DELEGATE_TO,
                 "breaker_state": actual.breaker.state,
+                "chat_routable": getattr(actual, "CHAT_ROUTABLE", True),
             })
         return {"units": units}
+
+    @app.get("/api/router/info", )
+    async def get_router_info():
+        """ユニットルーターが選択肢として提示するユニット一覧を返す。
+
+        WebGUI でチャットルーターの挙動を確認するためのエンドポイント。
+        chat_routable=True のユニットのみを LLM プロンプトに掲載する。
+        """
+        routable: list[dict] = []
+        excluded: list[dict] = []
+        for unit in bot.unit_manager.units.values():
+            actual = getattr(unit, "unit", unit)
+            entry = {
+                "name": getattr(actual, "UNIT_NAME", ""),
+                "description": getattr(actual, "UNIT_DESCRIPTION", ""),
+                "delegate_to": getattr(actual, "DELEGATE_TO", None),
+                "breaker_state": getattr(getattr(actual, "breaker", None), "state", None),
+            }
+            if getattr(actual, "CHAT_ROUTABLE", True):
+                routable.append(entry)
+            else:
+                excluded.append(entry)
+
+        # 直近のセッション（チャネル別の継続中ユニット）
+        router = getattr(bot, "unit_router", None)
+        sessions: list[dict] = []
+        timeout = 0
+        if router is not None:
+            from src.unit_router import _SESSION_TIMEOUT
+            import time as _time
+            timeout = _SESSION_TIMEOUT
+            now = _time.monotonic()
+            for key, sess in list(router._sessions.items()):
+                age = now - sess["ts"]
+                if age > timeout:
+                    continue
+                sessions.append({
+                    "session_key": key,
+                    "unit": sess["unit"],
+                    "age_sec": int(age),
+                    "expires_in_sec": int(timeout - age),
+                })
+
+        return {
+            "routable": routable,
+            "excluded": excluded,
+            "sessions": sessions,
+            "session_timeout_sec": timeout,
+        }
