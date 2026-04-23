@@ -82,6 +82,8 @@ class Dispatcher:
         self._progress_last: dict[str, float] = {}
         # Agent クライアントキャッシュ: agent_id -> AgentClient
         self._agent_clients: dict[str, AgentClient] = {}
+        # Agent 選定 + 予約書き込みを直列化するロック（並列分散の race 回避）
+        self._select_lock = asyncio.Lock()
 
     # --- lifecycle ---
 
@@ -151,15 +153,20 @@ class Dispatcher:
         job_id = job["id"]
         new_trace_id()
         try:
-            # Agent 選定
-            agent = await self._select_agent_for_job(job)
-            if agent is None:
-                await self._transition_retry(
-                    job, reason="no_agent_available",
-                    from_status=STATUS_DISPATCHING,
-                )
-                return
-            agent_id = agent.get("id", "")
+            # Agent 選定 + assigned_agent 予約。同時 claim 時の race を避けるため
+            # 「select → reserve」を直列化する。reserve 後は他 worker の inflight 集計に
+            # 反映され、別 PC が選ばれる。
+            async with self._select_lock:
+                agent = await self._select_agent_for_job(job)
+                if agent is None:
+                    await self._transition_retry(
+                        job, reason="no_agent_available",
+                        from_status=STATUS_DISPATCHING,
+                    )
+                    return
+                agent_id = agent.get("id", "")
+                await self.bot.database.generation_job_set_assigned_agent(job_id, agent_id)
+                job["assigned_agent"] = agent_id
 
             # キャッシュ照合（Phase1 は簡易: 不足検知のみ、実際の sync は Agent 側に委譲）
             missing = await self._check_cache_missing(agent, job)
@@ -189,7 +196,12 @@ class Dispatcher:
             await self._transition_failed(job, str(e), from_status=STATUS_DISPATCHING)
 
     async def _select_agent_for_job(self, job: dict) -> dict | None:
-        """Agent 選定: main_pc_only なら MainPC 固定、それ以外は AgentPool.select_agent。"""
+        """Agent 選定: main_pc_only なら MainPC 固定、それ以外は AgentPool.select_agent。
+
+        複数 PC 並列分散のため、`assigned_agent` 別の進行中ジョブ数を DB から集計し、
+        `max_concurrent_per_agent` 上限で AgentPool に渡す。これにより同時投入された
+        ジョブが MainPC / SubPC へ分散される。
+        """
         workflow_id = job.get("workflow_id")
         main_pc_only = False
         if workflow_id:
@@ -203,7 +215,27 @@ class Dispatcher:
                 if a.get("role") == "main":
                     preferred = a.get("id")
                     break
-        return await self.bot.unit_manager.agent_pool.select_agent(preferred=preferred)
+
+        ig_cfg = (self.bot.config.get("units") or {}).get("image_gen") or {}
+        try:
+            cap = int(ig_cfg.get("max_concurrent_per_agent", 1))
+        except (TypeError, ValueError):
+            cap = 1
+        if cap < 1:
+            cap = 1
+
+        inflight = await self.bot.database.generation_job_inflight_by_agent()
+        # 自ジョブが既に dispatching として計上されているため、選定上は -1 する
+        my_agent = job.get("assigned_agent") or ""
+        if my_agent and my_agent in inflight and inflight[my_agent] > 0:
+            inflight = dict(inflight)
+            inflight[my_agent] -= 1
+
+        return await self.bot.unit_manager.agent_pool.select_agent(
+            preferred=preferred,
+            inflight_per_agent=inflight,
+            max_concurrent_per_agent=cap,
+        )
 
     async def _check_cache_missing(self, agent: dict, job: dict) -> list[dict]:
         """Phase1: model_cache_manifest を見て欠けているものを返す（最小実装）。

@@ -142,6 +142,8 @@ units:
       poll_interval_seconds: 2                # フォールバックポーリング
       stuck_reaper_interval_seconds: 30
       progress_debounce_seconds: 2            # DB 書き込みデバウンス
+    max_concurrent_per_agent: 1               # 1 PC あたり同時実行可能ジョブ数（ComfyUIは原則 1）。
+                                              # この値以下なら複数PCに自動分散する。
     nas:
       base_path: "/mnt/secretary-bot/ai-image" # Pi からの NAS マウントパス（`secretary-bot` 共有配下の `ai-image` サブディレクトリ）
       outputs_subdir: "outputs"

@@ -280,6 +280,33 @@ class GenerationJobMixin:
                 (result_paths_json, result_kinds_json, job_id),
             )
 
+    async def generation_job_set_assigned_agent(
+        self, job_id: str, agent_id: str | None,
+    ) -> bool:
+        """assigned_agent のみを更新する（status イベントを発生させない）。
+
+        Dispatcher が Agent を選定した直後に「予約」書き込みを行い、
+        以降の claim で inflight 集計に含めるために利用する。
+        """
+        rc = await self.execute_returning_rowcount(
+            "UPDATE generation_jobs SET assigned_agent = ? WHERE id = ?",
+            (agent_id, job_id),
+        )
+        return rc > 0
+
+    async def generation_job_inflight_by_agent(self) -> dict[str, int]:
+        """assigned_agent 別の進行中（dispatching/warming_cache/running）ジョブ数を返す。
+
+        複数 PC への並列分散を行う Dispatcher の Agent 選定で利用する。
+        """
+        rows = await self.fetchall(
+            "SELECT assigned_agent AS aid, COUNT(*) AS cnt FROM generation_jobs "
+            "WHERE status IN ('dispatching', 'warming_cache', 'running') "
+            "  AND assigned_agent IS NOT NULL AND assigned_agent <> '' "
+            "GROUP BY assigned_agent"
+        )
+        return {str(r["aid"]): int(r["cnt"]) for r in rows}
+
     async def generation_job_find_timed_out(self) -> list[dict]:
         """timeout_at < now の非終端ジョブを返す。
         timeout_at は JST 文字列で書かれるので比較も JST に揃える。

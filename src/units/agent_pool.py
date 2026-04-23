@@ -83,15 +83,37 @@ class AgentPool:
         """最後の select_agent 時に記録されたブロック理由を返す。"""
         return list(self._block_reasons.get(agent_id, []))
 
-    async def select_agent(self, preferred: str | None = None) -> dict | None:
+    async def select_agent(
+        self,
+        preferred: str | None = None,
+        *,
+        inflight_per_agent: dict[str, int] | None = None,
+        max_concurrent_per_agent: int | None = None,
+        skip_idle_check: bool = False,
+    ) -> dict | None:
+        """Agent を 1 台選定する。
+
+        - preferred: 指定があれば最優先で評価
+        - inflight_per_agent: agent_id → 現在進行中ジョブ数。複数 PC への分散時に渡す
+        - max_concurrent_per_agent: 1 台あたり同時実行可能ジョブ数の上限。
+          inflight が cap に達している Agent はブロック扱い
+        - skip_idle_check: True なら CPU/GPU 等の VictoriaMetrics アイドル判定をスキップ
+          （inflight ベースで分散する画像生成 Dispatcher 用。VictoriaMetrics は
+          反応が遅く、直前に投げたジョブで埋まっている事実を検知できないため）
+
+        通常モードでは priority 順に「最初に通った Agent」を返す（後方互換）。
+        inflight_per_agent / max_concurrent_per_agent が指定された場合は、
+        cap 未満の候補から「inflight が少ない順 → preferred → priority 順」で選ぶ。
+        """
         agents = list(self._agents)
-        if preferred:
-            agents.sort(key=lambda a: 0 if a["id"] == preferred else 1)
+        cap = max_concurrent_per_agent
+        inflight = inflight_per_agent or {}
 
         self._block_reasons = {}
+        eligible: list[dict] = []
         for agent in agents:
             aid = agent["id"]
-            reasons = []
+            reasons: list[str] = []
             mode = self.get_mode(aid)
             if mode == "deny":
                 continue
@@ -103,19 +125,42 @@ class AgentPool:
                 reasons.append("オフライン")
                 self._block_reasons[aid] = reasons
                 continue
+            if cap is not None and int(inflight.get(aid, 0)) >= int(cap):
+                reasons.append(f"同時実行上限({cap})")
+                self._block_reasons[aid] = reasons
+                continue
             if mode == "auto":
-                idle, idle_reason = await self._is_idle_detailed(agent)
-                if not idle:
-                    reasons.append(idle_reason)
+                if not skip_idle_check:
+                    idle, idle_reason = await self._is_idle_detailed(agent)
+                    if not idle:
+                        reasons.append(idle_reason)
                 activity_ok, activity_reason = await self._is_activity_ok(agent)
                 if not activity_ok:
                     reasons.append(activity_reason)
                 if reasons:
                     self._block_reasons[aid] = reasons
                     continue
-            return agent
+            eligible.append(agent)
 
-        return None
+        if not eligible:
+            return None
+
+        # 通常モード（inflight 情報なし）は従来通り「priority 順で最初の 1 台」
+        if cap is None and not inflight:
+            if preferred:
+                eligible.sort(key=lambda a: 0 if a["id"] == preferred else 1)
+            return eligible[0]
+
+        # 分散モード: inflight 少ない順 → preferred 一致 → priority 順
+        def _key(a: dict) -> tuple:
+            aid = a["id"]
+            return (
+                int(inflight.get(aid, 0)),
+                0 if preferred and aid == preferred else 1,
+                int(a.get("priority", 99)),
+            )
+        eligible.sort(key=_key)
+        return eligible[0]
 
     async def _is_alive(self, agent: dict) -> bool:
         url = f"http://{agent['host']}:{agent['port']}/health"
