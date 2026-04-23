@@ -8,6 +8,7 @@ from src.database._base import _SCHEMA_VERSION, JST, DatabaseBase, jst_now
 from src.database.clip_pipeline import ClipPipelineMixin
 from src.database.conversation import ConversationMixin
 from src.database.generation import GenerationJobMixin
+from src.database.kobo_watch import KoboWatchMixin
 from src.database.lora import LoRAMixin
 from src.database.monologue import MonologueMixin
 from src.database.pending import PendingActionMixin
@@ -26,6 +27,7 @@ class Database(
     SectionMixin,
     WildcardMixin,
     LoRAMixin,
+    KoboWatchMixin,
     DatabaseBase,
 ):
     pass

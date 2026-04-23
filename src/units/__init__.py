@@ -26,6 +26,7 @@ _UNIT_MODULES = {
     "prompt_crafter": "src.units.prompt_crafter",
     "lora_train": "src.units.lora_train",
     "clip_pipeline": "src.units.clip_pipeline",
+    "kobo_watch": "src.units.kobo_watch",
 }
 
 

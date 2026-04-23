@@ -15,7 +15,7 @@ def jst_now() -> str:
 
 log = get_logger(__name__)
 
-_SCHEMA_VERSION = 35
+_SCHEMA_VERSION = 36
 
 _INIT_SQL = """
 CREATE TABLE IF NOT EXISTS memos (
@@ -850,6 +850,55 @@ class DatabaseBase:
                 "CREATE INDEX IF NOT EXISTS idx_generation_jobs_finished ON generation_jobs(status, modality, finished_at DESC)",
                 # workflow_id の検索用
                 "CREATE INDEX IF NOT EXISTS idx_generation_jobs_workflow ON generation_jobs(workflow_id)",
+            ],
+            36: [
+                # === kobo_watch（楽天Kobo シリーズ新刊監視）===
+                # ユーザーが登録した「著者+タイトルキーワード」を 1 日 1 回楽天 API で照会し、
+                # 新刊を検出して Discord 通知する。
+                """CREATE TABLE IF NOT EXISTS book_watch_targets (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    author           TEXT    NOT NULL,
+                    title_keyword    TEXT,
+                    user_id          TEXT    NOT NULL,
+                    enabled          INTEGER NOT NULL DEFAULT 1,
+                    notify_kobo_only INTEGER NOT NULL DEFAULT 0,
+                    created_at       TEXT    NOT NULL,
+                    UNIQUE(author, title_keyword)
+                )""",
+                # 既知 ISBN（新刊判定用）。target 削除で CASCADE。
+                """CREATE TABLE IF NOT EXISTS book_watch_known_books (
+                    isbn          TEXT    PRIMARY KEY,
+                    target_id     INTEGER NOT NULL,
+                    title         TEXT    NOT NULL,
+                    author        TEXT    NOT NULL,
+                    publisher     TEXT,
+                    sales_date    TEXT,
+                    item_url      TEXT,
+                    image_url     TEXT,
+                    first_seen_at TEXT    NOT NULL,
+                    FOREIGN KEY(target_id) REFERENCES book_watch_targets(id) ON DELETE CASCADE
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_known_books_target ON book_watch_known_books(target_id)",
+                # 検出・通知履歴。同 ISBN に対し紙→Kobo 後追いで複数行になり得る。
+                """CREATE TABLE IF NOT EXISTS book_watch_detections (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    isbn              TEXT    NOT NULL,
+                    target_id         INTEGER NOT NULL,
+                    kobo_available    INTEGER NOT NULL DEFAULT 0,
+                    kobo_url          TEXT,
+                    notified_at       TEXT,
+                    suppressed_reason TEXT,
+                    created_at        TEXT    NOT NULL,
+                    FOREIGN KEY(target_id) REFERENCES book_watch_targets(id) ON DELETE CASCADE
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_detections_isbn ON book_watch_detections(isbn)",
+                "CREATE INDEX IF NOT EXISTS idx_detections_notified ON book_watch_detections(notified_at)",
+                # IP 変動検知 / kobo_watch 最終実行時刻などの汎用 key/value
+                """CREATE TABLE IF NOT EXISTS system_state (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT,
+                    updated_at TEXT NOT NULL
+                )""",
             ],
         }
         cursor = await self._db.execute("PRAGMA user_version")

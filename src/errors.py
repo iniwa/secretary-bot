@@ -149,10 +149,47 @@ class HighlightError(ClipPipelineError):
     severity = Severity.MEDIUM
 
 
+# === 楽天 Web Service / kobo_watch エラー階層 ===
+
+
+class RakutenApiError(BotError):
+    """楽天 API 呼び出しの基底エラー。"""
+    severity = Severity.MEDIUM
+
+    def __init__(
+        self, message: str, *, status: int | None = None,
+        body: str | None = None, severity: Severity | None = None,
+    ):
+        super().__init__(message, severity=severity)
+        self.status = status
+        self.body = body
+
+
+class RakutenAuthError(RakutenApiError):
+    """applicationId / accessKey 不正・必須欠落（HTTP 400/401）。"""
+    severity = Severity.HIGH
+
+
+class RakutenRefererError(RakutenApiError):
+    """Referer ヘッダー不足 or Allow IP 不一致（HTTP 403）。"""
+    severity = Severity.HIGH
+
+
+class RakutenRateLimitError(RakutenApiError):
+    """レート制限超過（HTTP 429）。retry 可能。"""
+    severity = Severity.LOW
+
+
+class KoboWatchError(BotError):
+    """kobo_watch ユニット固有のエラー。"""
+    severity = Severity.MEDIUM
+
+
 # retry 判定の集約ヘルパー
 _RETRYABLE_CLASSES = (
     TransientError, ResourceUnavailableError, CacheSyncError,
     AgentCommunicationError, OOMError,
+    RakutenRateLimitError,
 )
 
 

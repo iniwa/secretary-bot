@@ -15,6 +15,7 @@ from src.web.routes import (
     image_gen,
     inner_mind,
     input_relay,
+    kobo_watch,
     lora_train,
     memory,
     obs,
@@ -43,3 +44,4 @@ def register_all_routes(app: FastAPI, ctx: WebContext) -> None:
     image_gen.register(app, ctx)
     lora_train.register(app, ctx)
     clip_pipeline.register(app, ctx)
+    kobo_watch.register(app, ctx)

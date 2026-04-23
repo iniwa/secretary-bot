@@ -95,6 +95,11 @@ units:
     enabled: true
   status:
     enabled: true
+    # グローバル IP 変動検知（kobo_watch の楽天 API Allow IP 更新リマインド用）
+    ip_watch:
+      enabled: true
+      check_interval_min: 30                # heartbeat 連動。ここで間隔の下限を指定
+      endpoint: "https://api.ipify.org"
   chat:
     enabled: true
     history_minutes: 60           # 会話履歴の参照範囲（分）。0=時間制限なし
@@ -109,6 +114,20 @@ units:
     timezone: "Asia/Tokyo"
   rss:
     enabled: true
+  # 楽天 Kobo シリーズ新刊監視
+  kobo_watch:
+    enabled: true
+    check_hour_jst: 7                        # 毎日この時刻（JST）に新刊チェック
+    new_book_window_days: 60                 # 発売日が N 日以内の本だけ「新刊」扱い
+    notify_kobo_only: false                  # true で Kobo 版ありの本だけ通知
+    referer: "https://github.com/iniwa/ai-mimich-agent"  # 楽天 API 必須ヘッダー
+    request_interval_ms: 1500                # 楽天推奨レート（1.5 秒以上）
+    api:
+      books_search_url: "https://openapi.rakuten.co.jp/services/api/BooksBook/Search/20170404"
+      kobo_search_url:  "https://openapi.rakuten.co.jp/services/api/Kobo/EbookSearch/20170426"
+    kobo_match:
+      title_similarity_threshold: 0.80
+      author_must_match: true
   power:
     enabled: true
     shutdown_delay: 60  # デフォルト遅延秒数

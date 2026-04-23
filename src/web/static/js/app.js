@@ -22,6 +22,7 @@ import * as dockerMonitor from './pages/docker-monitor.js';
 import * as gpuStatus from './pages/gpu-status.js';
 import * as pending from './pages/pending.js';
 import * as clipPipeline from './pages/clip-pipeline.js';
+import * as koboWatch from './pages/kobo-watch.js';
 
 // ============================================================
 // Page registry — add pages here as they're implemented
@@ -49,6 +50,7 @@ const pages = {
   pending:      { title: 'Pending Actions',  module: pending },
   maintenance:  { title: 'Maintenance',      module: maintenance },
   'clip-pipeline': { title: 'Auto-Kirinuki', module: clipPipeline },
+  'kobo-watch': { title: 'Kobo Watch',     module: koboWatch },
 };
 
 let currentPage = null;
