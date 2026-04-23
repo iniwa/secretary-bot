@@ -27,6 +27,7 @@ class LoRATrainUnit(BaseUnit):
     UNIT_NAME = "lora_train"
     UNIT_DESCRIPTION = "LoRA 学習のプロジェクト管理・データセット投入・kohya 学習。"
     DELEGATE_TO = None
+    CHAT_ROUTABLE = False
     AUTONOMY_TIER = 4
     AUTONOMOUS_ACTIONS: list[str] = []
 

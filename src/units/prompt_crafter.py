@@ -69,6 +69,7 @@ class PromptCrafterUnit(BaseUnit):
     UNIT_NAME = "prompt_crafter"
     UNIT_DESCRIPTION = "LLM 会話で画像生成プロンプトを作成・編集する。"
     DELEGATE_TO = None
+    CHAT_ROUTABLE = False
     AUTONOMY_TIER = 4
     AUTONOMOUS_ACTIONS: list[str] = []
 

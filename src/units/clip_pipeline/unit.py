@@ -72,6 +72,7 @@ class ClipPipelineUnit(BaseUnit):
         "ハイライトを抽出して EDL / MP4 を出力する。"
     )
     DELEGATE_TO = None
+    CHAT_ROUTABLE = False
     AUTONOMY_TIER = 4
     AUTONOMOUS_ACTIONS: list[str] = []
 

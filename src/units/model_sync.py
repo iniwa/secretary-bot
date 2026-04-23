@@ -26,6 +26,7 @@ class ModelSyncUnit(BaseUnit):
     UNIT_NAME = "model_sync"
     UNIT_DESCRIPTION = "画像生成 Agent のモデルキャッシュを定期ポーリングして DB へ同期する。"
     DELEGATE_TO = None
+    CHAT_ROUTABLE = False
     AUTONOMY_TIER = 4
     AUTONOMOUS_ACTIONS: list[str] = []
 

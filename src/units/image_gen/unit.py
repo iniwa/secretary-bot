@@ -62,6 +62,7 @@ class ImageGenUnit(BaseUnit):
     UNIT_NAME = "image_gen"
     UNIT_DESCRIPTION = "ComfyUI による画像生成。プリセット + プロンプトでジョブ投入。"
     DELEGATE_TO = None            # Pi 内完結（Agent 呼び出しは Dispatcher 経由）
+    CHAT_ROUTABLE = False         # WebGUI 専用。チャット経由では呼ばない。
     AUTONOMY_TIER = 4             # Phase5 で調整
     AUTONOMOUS_ACTIONS: list[str] = []
 

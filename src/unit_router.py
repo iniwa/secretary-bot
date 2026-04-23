@@ -49,6 +49,8 @@ class UnitRouter:
         for unit in self.bot.unit_manager.units.values():
             # RemoteUnitProxy の場合は内部ユニットを参照
             actual = getattr(unit, "unit", unit)
+            if not getattr(actual, "CHAT_ROUTABLE", True):
+                continue
             name = getattr(actual, "UNIT_NAME", "")
             desc = getattr(actual, "UNIT_DESCRIPTION", "")
             if name:

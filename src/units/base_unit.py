@@ -21,6 +21,8 @@ class BaseUnit(commands.Cog):
     UNIT_DESCRIPTION: str = ""
     DELEGATE_TO: str | None = None
     PREFERRED_AGENT: str | None = None
+    # チャット入力の Unit Router 候補に含めるか。False の場合は WebGUI/裏方専用。
+    CHAT_ROUTABLE: bool = True
     # 自律行動の既定階層。T4=破壊的/未定義。各ユニットで適切な値に上書きする。
     AUTONOMY_TIER: int = 4
     # 自律的に呼び出し可能なアクション名のリスト（method名を想定）。
