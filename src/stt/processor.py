@@ -19,7 +19,7 @@ _SUMMARY_SYSTEM = (
 
 _SUMMARY_PROMPT = """\
 以下は、いにわ（ユーザー）のマイクから取得した音声テキスト化の結果です。
-期間: {period_start} 〜 {period_end}
+対象期間: {period_start} 〜 {period_end}
 片側の発話のみで、相手の声は含まれていません。
 
 ## 発話データ
@@ -27,11 +27,19 @@ _SUMMARY_PROMPT = """\
 
 ## 指示
 - 必ず日本語で出力してください
-- 最初の1行で「期間: {period_start} 〜 {period_end}」を記述
-- 続けて箇条書き3〜5点、合計200〜300文字程度で簡潔に
+- 箇条書き3〜5点、合計200〜300文字程度で簡潔に
 - 何について話していたかと、推測できる文脈（ゲーム中・作業中・通話中など）を含める
-- 前置きや見出しは不要、期間+箇条書きのみ返す
+- 前置きや見出しは不要、箇条書きのみ返す
+- 日付や時刻は絶対に出力しない（期間はシステム側で付与するため）
 """
+
+
+def _fmt_ts(s: str) -> str:
+    """started_at 文字列を 'YYYY-MM-DD HH:MM' の人間向け形式に整形。失敗時はそのまま返す。"""
+    dt = _parse_started_at(s)
+    if dt is None:
+        return s[:16] if s else "?"
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def _parse_started_at(s: str) -> datetime | None:
@@ -173,12 +181,11 @@ class STTProcessor:
         """LLM 要約 + stt_summaries INSERT + stt_transcripts マーク + ChromaDB 保存。"""
         transcript_lines = []
         for r in rows:
-            time_str = r["started_at"][:16] if r["started_at"] else "?"
-            transcript_lines.append(f"[{time_str}] {r['raw_text']}")
+            transcript_lines.append(f"[{_fmt_ts(r['started_at'])}] {r['raw_text']}")
         transcript_text = "\n".join(transcript_lines)
 
-        period_start = rows[0]["started_at"][:16] if rows[0]["started_at"] else "?"
-        period_end = rows[-1]["started_at"][:16] if rows[-1]["started_at"] else "?"
+        period_start = _fmt_ts(rows[0]["started_at"])
+        period_end = _fmt_ts(rows[-1]["started_at"])
 
         prompt = _SUMMARY_PROMPT.format(
             transcripts=transcript_text,
@@ -186,12 +193,13 @@ class STTProcessor:
             period_end=period_end,
         )
         try:
-            summary = await self.bot.llm_router.generate(
+            body = await self.bot.llm_router.generate(
                 prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary",
             )
         except Exception as e:
             log.warning("STT summary generation failed: %s", e)
             return False
+        summary = f"期間: {period_start} 〜 {period_end}\n\n{body.strip()}"
 
         ids = [r["id"] for r in rows]
         ids_json = json.dumps(ids)
@@ -247,12 +255,11 @@ class STTProcessor:
 
         transcript_lines = []
         for r in rows:
-            time_str = r["started_at"][:16] if r["started_at"] else "?"
-            transcript_lines.append(f"[{time_str}] {r['raw_text']}")
+            transcript_lines.append(f"[{_fmt_ts(r['started_at'])}] {r['raw_text']}")
         transcript_text = "\n".join(transcript_lines)
 
-        period_start = rows[0]["started_at"][:16] if rows[0]["started_at"] else "?"
-        period_end = rows[-1]["started_at"][:16] if rows[-1]["started_at"] else "?"
+        period_start = _fmt_ts(rows[0]["started_at"])
+        period_end = _fmt_ts(rows[-1]["started_at"])
 
         prompt = _SUMMARY_PROMPT.format(
             transcripts=transcript_text,
@@ -260,12 +267,13 @@ class STTProcessor:
             period_end=period_end,
         )
         try:
-            new_summary = await self.bot.llm_router.generate(
+            body = await self.bot.llm_router.generate(
                 prompt, system=_SUMMARY_SYSTEM, purpose="stt_summary",
             )
         except Exception as e:
             log.warning("STT resummarize failed for id=%d: %s", summary_id, e)
             return False
+        new_summary = f"期間: {period_start} 〜 {period_end}\n\n{body.strip()}"
 
         await self.bot.database.execute(
             "UPDATE stt_summaries SET summary = ? WHERE id = ?",
