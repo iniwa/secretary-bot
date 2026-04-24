@@ -162,6 +162,29 @@ class KoboWatchMixin:
             (int(limit),),
         )
 
+    async def kobo_detection_list_with_books(self, limit: int = 50) -> list[dict]:
+        """検出履歴に known_books の書誌情報を LEFT JOIN で添えて返す。"""
+        return await self.fetchall(
+            "SELECT d.id, d.isbn, d.target_id, d.kobo_available, d.kobo_url, "
+            "       d.notified_at, d.suppressed_reason, d.created_at, "
+            "       k.title AS title, k.author AS author, "
+            "       k.publisher AS publisher, k.sales_date AS sales_date, "
+            "       k.item_url AS item_url, k.image_url AS image_url "
+            "FROM book_watch_detections d "
+            "LEFT JOIN book_watch_known_books k ON k.isbn = d.isbn "
+            "ORDER BY d.created_at DESC LIMIT ?",
+            (int(limit),),
+        )
+
+    async def kobo_known_latest_by_target(self, target_id: int) -> dict | None:
+        """監視対象の最新既知本を 1 件返す。sales_date の降順、NULL は末尾。"""
+        return await self.fetchone(
+            "SELECT * FROM book_watch_known_books WHERE target_id = ? "
+            "ORDER BY CASE WHEN sales_date IS NULL OR sales_date = '' THEN 1 ELSE 0 END, "
+            "         sales_date DESC, first_seen_at DESC LIMIT 1",
+            (int(target_id),),
+        )
+
     async def kobo_detection_list_pending(self) -> list[dict]:
         """通知保留中（notified_at IS NULL かつ suppressed_reason が一時的なもの）。"""
         return await self.fetchall(

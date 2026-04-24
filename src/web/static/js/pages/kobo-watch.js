@@ -38,9 +38,41 @@ export function render() {
   .kw-add .form-input { width: 100%; }
   .kw-target-row .kw-title { font-weight: 600; }
   .kw-target-row .kw-sub  { color: var(--text-muted); font-size: 0.8125rem; }
-  .kw-detections { font-size: 0.875rem; }
-  .kw-detections li { padding: 0.3rem 0; border-bottom: 1px solid var(--border); }
+  .kw-detections { font-size: 0.875rem; list-style: none; padding: 0; margin: 0; }
+  .kw-detections li {
+    display: flex; gap: 0.75rem; align-items: flex-start;
+    padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+  }
   .kw-detections li:last-child { border-bottom: none; }
+  .kw-det-thumb {
+    flex: 0 0 48px; width: 48px; height: 68px;
+    background: var(--bg-muted, #222); border-radius: 3px; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 0.75rem;
+  }
+  .kw-det-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .kw-det-body { flex: 1; min-width: 0; }
+  .kw-det-title { font-weight: 600; word-break: break-word; }
+  .kw-det-meta { color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.1rem; }
+  .kw-det-links { margin-top: 0.25rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .kw-det-links a {
+    display: inline-flex; gap: 0.2rem; align-items: center;
+    padding: 0.1rem 0.5rem; border-radius: 3px;
+    background: var(--bg-muted, #222); font-size: 0.8125rem;
+  }
+  .kw-latest {
+    display: flex; gap: 0.5rem; align-items: flex-start;
+    padding: 0.3rem 0; font-size: 0.8125rem;
+  }
+  .kw-latest-thumb {
+    flex: 0 0 36px; width: 36px; height: 52px;
+    background: var(--bg-muted, #222); border-radius: 3px; overflow: hidden;
+  }
+  .kw-latest-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .kw-latest-body { min-width: 0; flex: 1; }
+  .kw-latest-title { font-weight: 600; word-break: break-word; }
+  .kw-latest-links { margin-top: 0.15rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .kw-latest-links a { font-size: 0.75rem; }
   .kw-label-kobo { color: var(--success); }
   .kw-label-paper { color: var(--text-muted); }
   .kw-empty {
@@ -77,12 +109,13 @@ export function render() {
           <tr>
             <th>#</th>
             <th>著者 / タイトル</th>
+            <th>最新既知本</th>
             <th>設定</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody id="kw-targets-tbody">
-          <tr><td colspan="4" class="kw-empty">読み込み中...</td></tr>
+          <tr><td colspan="5" class="kw-empty">読み込み中...</td></tr>
         </tbody>
       </table>
     </div>
@@ -100,11 +133,35 @@ export function render() {
 // ============================================================
 // Rendering
 // ============================================================
+function renderLatest(latest) {
+  if (!latest) {
+    return '<span class="kw-sub">（まだ既知本なし）</span>';
+  }
+  const thumb = latest.image_url
+    ? `<img src="${esc(latest.image_url)}" alt="">`
+    : '';
+  const sales = latest.sales_date ? esc(latest.sales_date) : '発売日不明';
+  const links = [];
+  if (latest.item_url) {
+    links.push(`<a href="${esc(latest.item_url)}" target="_blank" rel="noopener">📕 楽天ブックス</a>`);
+  }
+  return `
+    <div class="kw-latest">
+      <div class="kw-latest-thumb">${thumb}</div>
+      <div class="kw-latest-body">
+        <div class="kw-latest-title">${esc(latest.title || '(タイトル不明)')}</div>
+        <div class="kw-sub">${sales}</div>
+        <div class="kw-latest-links">${links.join('')}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderTargets(targets) {
   const tbody = $('kw-targets-tbody');
   if (!tbody) return;
   if (!targets || targets.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" class="kw-empty">まだ登録がないよ</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="kw-empty">まだ登録がないよ</td></tr>';
     return;
   }
   tbody.innerHTML = targets.map(t => {
@@ -116,6 +173,7 @@ function renderTargets(targets) {
           <div class="kw-title">${esc(t.author)}</div>
           <div class="kw-sub">${kw}</div>
         </td>
+        <td>${renderLatest(t.latest_known)}</td>
         <td>
           <label style="display:block;">
             <input type="checkbox" data-action="toggle-enabled" ${t.enabled ? 'checked' : ''}>
@@ -150,11 +208,32 @@ function renderDetections(detections) {
       : (d.suppressed_reason
           ? `⚠️ 抑制 (${esc(d.suppressed_reason)})`
           : '⏳ 未通知');
-    const kobo = d.kobo_url ? ` · <a href="${esc(d.kobo_url)}" target="_blank" rel="noopener">Kobo</a>` : '';
+    const thumb = d.image_url
+      ? `<img src="${esc(d.image_url)}" alt="">`
+      : '<span>📕</span>';
+    const title = d.title ? esc(d.title) : `<code>${esc(d.isbn)}</code>`;
+    const authorLine = d.author ? esc(d.author) : '';
+    const sales = d.sales_date ? esc(d.sales_date) : '発売日不明';
+    const meta = [authorLine, sales].filter(Boolean).join(' ・ ');
+    const links = [];
+    if (d.item_url) {
+      links.push(`<a href="${esc(d.item_url)}" target="_blank" rel="noopener">📕 楽天ブックス</a>`);
+    }
+    if (d.kobo_url) {
+      links.push(`<a href="${esc(d.kobo_url)}" target="_blank" rel="noopener">📱 楽天 Kobo</a>`);
+    }
     return `
       <li>
-        <code>${esc(d.isbn)}</code> ${koboLabel} — ${notified}
-        <span class="kw-sub"> · target #${d.target_id} · ${esc(fmtDate(d.created_at))}${kobo}</span>
+        <div class="kw-det-thumb">${thumb}</div>
+        <div class="kw-det-body">
+          <div class="kw-det-title">${title}</div>
+          <div class="kw-det-meta">${meta}</div>
+          <div class="kw-det-meta">
+            ${koboLabel} — ${notified}
+            <span class="kw-sub"> · target #${d.target_id} · ${esc(fmtDate(d.created_at))} · ISBN ${esc(d.isbn)}</span>
+          </div>
+          <div class="kw-det-links">${links.join('')}</div>
+        </div>
       </li>
     `;
   }).join('');

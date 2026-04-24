@@ -23,7 +23,11 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     @app.get("/api/kobo-watch/targets", dependencies=[Depends(ctx.verify)])
     async def list_targets(enabled_only: bool = False):
         targets = await bot.database.kobo_target_list(enabled_only=enabled_only)
-        return {"targets": targets}
+        enriched: list[dict] = []
+        for t in targets:
+            latest = await bot.database.kobo_known_latest_by_target(int(t["id"]))
+            enriched.append({**t, "latest_known": latest})
+        return {"targets": enriched}
 
     @app.post("/api/kobo-watch/targets", dependencies=[Depends(ctx.verify)])
     async def create_target(request: Request):
@@ -96,7 +100,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     @app.get("/api/kobo-watch/detections", dependencies=[Depends(ctx.verify)])
     async def list_detections(limit: int = 50):
         limit = max(1, min(int(limit), 200))
-        rows = await bot.database.kobo_detection_list(limit=limit)
+        rows = await bot.database.kobo_detection_list_with_books(limit=limit)
         return {"detections": rows}
 
     @app.post("/api/kobo-watch/check-now", dependencies=[Depends(ctx.verify)])
