@@ -16,6 +16,7 @@ import * as gallery from './pages/gallery.js';
 import * as prompts from './pages/prompts.js';
 import * as extract from './pages/extract.js';
 import * as wildcards from './pages/wildcards.js';
+import * as syntax from './pages/syntax.js';
 import * as lora from './pages/lora.js';
 import * as reference from './pages/reference.js';
 import * as referenceChenkin from './pages/reference_chenkin.js';
@@ -29,6 +30,7 @@ const routes = [
   { hash: '#/prompts',           module: prompts,          nav: 'prompts',           title: 'Prompts' },
   { hash: '#/extract',           module: extract,          nav: 'extract',           title: 'Extract' },
   { hash: '#/wildcards',         module: wildcards,        nav: 'wildcards',         title: 'Wildcards' },
+  { hash: '#/syntax',            module: syntax,           nav: 'syntax',            title: '構文リファレンス' },
   { hash: '#/lora',              module: lora,             nav: 'lora',              title: 'LoRA' },
   { hash: '#/reference',         module: reference,        nav: 'reference',         title: 'プリセット参考（共通）' },
   { hash: '#/reference/chenkin', module: referenceChenkin, nav: 'reference-chenkin', title: '参考 / ChenkinNoob-XL' },
