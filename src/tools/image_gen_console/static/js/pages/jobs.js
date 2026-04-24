@@ -8,10 +8,12 @@ import {
 // ============================================================
 // State
 // ============================================================
+const PAGE_SIZE = 200;
 let jobs = [];
 let sse = null;
 let pollTimer = null;
 let filterStatus = '';
+let hasMore = false;
 
 function $(id) { return document.getElementById(id); }
 
@@ -33,10 +35,14 @@ export function render() {
         <option value="cancelled">cancelled</option>
       </select>
       <button id="ij-reload" class="btn btn-sm">再読込</button>
+      <button id="ij-purge" class="btn btn-sm btn-danger" title="終端ステータス（done/failed/cancelled）のジョブを DB から削除します。NAS 上の画像ファイルは残ります。">過去Jobをクリア</button>
     </div>
   </div>
   <div id="ij-body">
     <div class="imggen-empty">Loading...</div>
+  </div>
+  <div id="ij-more-wrap" style="display:none;text-align:center;margin-top:0.6rem;">
+    <button id="ij-more" class="btn btn-sm">もっと読み込む</button>
   </div>
 </section>
 `;
@@ -99,15 +105,72 @@ function renderJobs() {
   };
 }
 
+function updateMoreButton() {
+  const wrap = $('ij-more-wrap');
+  if (!wrap) return;
+  wrap.style.display = hasMore ? '' : 'none';
+}
+
 async function loadJobs() {
   try {
-    const data = await GenerationAPI.listJobs({ limit: 50 });
+    const data = await GenerationAPI.listJobs({ limit: PAGE_SIZE });
     jobs = data?.jobs || [];
+    hasMore = jobs.length >= PAGE_SIZE;
     renderJobs();
+    updateMoreButton();
   } catch (err) {
     console.error('jobs load failed', err);
     const el = $('ij-body');
     if (el) el.innerHTML = '<div class="imggen-empty">取得失敗</div>';
+  }
+}
+
+async function loadMore() {
+  if (!hasMore) return;
+  const btn = $('ij-more');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await GenerationAPI.listJobs({
+      limit: PAGE_SIZE, offset: jobs.length,
+    });
+    const more = data?.jobs || [];
+    // job_id 重複を避けつつ末尾に追加（SSE で既に追加されているケース対策）
+    const existing = new Set(jobs.map(j => j.job_id));
+    for (const j of more) {
+      if (!existing.has(j.job_id)) jobs.push(j);
+    }
+    hasMore = more.length >= PAGE_SIZE;
+    renderJobs();
+    updateMoreButton();
+  } catch (err) {
+    console.error('load more failed', err);
+    toast('追加読み込みに失敗', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function handlePurge() {
+  const ok = confirm(
+    '終端ジョブ（done / failed / cancelled）を DB から削除します。\n'
+    + '・NAS 上の画像ファイルは残ります\n'
+    + '・done を削除するとギャラリーの索引からも消えます\n\n'
+    + '続行しますか？',
+  );
+  if (!ok) return;
+  const btn = $('ij-purge');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await GenerationAPI.purgeJobs({
+      statuses: ['done', 'failed', 'cancelled'],
+    });
+    toast(`${res?.deleted ?? 0} 件の過去 Job を削除しました`, 'info');
+    await loadJobs();
+  } catch (err) {
+    console.error('purge failed', err);
+    toast('クリア失敗', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -182,6 +245,8 @@ function connectSSE() {
 // ============================================================
 export async function mount() {
   $('ij-reload')?.addEventListener('click', loadJobs);
+  $('ij-purge')?.addEventListener('click', handlePurge);
+  $('ij-more')?.addEventListener('click', loadMore);
   const sel = $('ij-filter');
   if (sel) {
     sel.addEventListener('change', () => {

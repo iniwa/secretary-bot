@@ -455,9 +455,11 @@ class ImageGenUnit(BaseUnit):
         self, user_id: str | None = None, status: str | None = None,
         limit: int = 50, offset: int = 0,
     ) -> list[dict]:
+        # Jobs タブ・Discord の「最近のジョブ」用。created_at 降順にすることで
+        # queued/running（finished_at=NULL）が完了ジョブに押し出されないようにする。
         rows = await self.bot.database.generation_job_list(
             user_id=user_id, status=status, modality="image",
-            limit=limit, offset=offset,
+            limit=limit, offset=offset, order="created_desc",
         )
         return [await self._row_to_dict(r) for r in rows]
 

@@ -65,6 +65,11 @@ export const GenerationAPI = {
       method: 'POST', body: { job_ids: jobIds, keep_files: keepFiles },
     });
   },
+  purgeJobs({ statuses = ['failed', 'cancelled'], modality = 'image' } = {}) {
+    return api('/api/generation/jobs/purge', {
+      method: 'POST', body: { statuses, modality },
+    });
+  },
   bulkFavorite(jobIds, favorite) {
     return api('/api/generation/jobs/bulk-favorite', {
       method: 'POST', body: { job_ids: jobIds, favorite },

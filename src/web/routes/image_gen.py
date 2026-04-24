@@ -223,6 +223,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         if modality != "image":
             rows = await bot.database.generation_job_list(
                 status=status, modality=modality, limit=limit, offset=offset,
+                order="created_desc",
             )
             jobs = [await unit._row_to_dict(r) for r in rows]
         else:
@@ -445,6 +446,31 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             if await bot.database.generation_job_delete(jid):
                 deleted += 1
         return {"ok": True, "deleted": deleted, "removed_files": removed_files}
+
+    @app.post("/api/generation/jobs/purge", dependencies=[Depends(ctx.verify)])
+    async def generation_jobs_purge(request: Request):
+        """終端ジョブ（done/failed/cancelled）をバルク削除する。ファイルは残す。
+
+        Body:
+          statuses: list[str]  # 既定 ['failed', 'cancelled']。done を含めると
+                               # ギャラリーからも消える（NAS 上の画像ファイルは残る）
+          modality: str        # 既定 'image'
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        statuses = body.get("statuses")
+        if not isinstance(statuses, list) or not statuses:
+            statuses = ["failed", "cancelled"]
+        statuses = [s for s in statuses if isinstance(s, str)]
+        modality = body.get("modality") or "image"
+        deleted = await bot.database.generation_job_delete_by_statuses(
+            statuses, modality=modality,
+        )
+        return {"ok": True, "deleted": int(deleted), "statuses": statuses}
 
     @app.post("/api/generation/jobs/bulk-favorite", dependencies=[Depends(ctx.verify)])
     async def generation_jobs_bulk_favorite(request: Request):

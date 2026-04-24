@@ -159,6 +159,8 @@ class GenerationJobMixin:
             "new": "finished_at DESC, created_at DESC",
             "old": "finished_at ASC, created_at ASC",
             "fav": "favorite DESC, finished_at DESC",
+            # Jobs タブ用: 投入時刻順。進行中（finished_at=NULL）を末尾送りにしない。
+            "created_desc": "created_at DESC",
         }.get(order, "finished_at DESC, created_at DESC")
         params.extend([limit, offset])
         return await self.fetchall(
@@ -179,6 +181,41 @@ class GenerationJobMixin:
             "DELETE FROM generation_jobs WHERE id = ?", (job_id,),
         )
         return rc > 0
+
+    async def generation_job_delete_by_statuses(
+        self, statuses: list[str], *, modality: str | None = "image",
+    ) -> int:
+        """終端ステータスのジョブをバルク削除する（ファイルは残す）。
+
+        Jobs タブの「過去 Job クリア」用。status に queued/running/dispatching/warming_cache
+        などの非終端値を含めるのは危険なので、終端値（done/failed/cancelled）のみ許可する。
+        """
+        allowed = {"done", "failed", "cancelled"}
+        clean = [s for s in statuses if isinstance(s, str) and s in allowed]
+        if not clean:
+            return 0
+        placeholders = ",".join(["?"] * len(clean))
+        where = f"status IN ({placeholders})"
+        params: list = list(clean)
+        if modality:
+            where += " AND modality = ?"
+            params.append(modality)
+        # events / collection_items は job_id 経由で個別に消す（CASCADE 未設定のため）
+        await self.execute(
+            f"DELETE FROM generation_job_events "
+            f"WHERE job_id IN (SELECT id FROM generation_jobs WHERE {where})",
+            tuple(params),
+        )
+        await self.execute(
+            f"DELETE FROM image_collection_items "
+            f"WHERE job_id IN (SELECT id FROM generation_jobs WHERE {where})",
+            tuple(params),
+        )
+        rc = await self.execute_returning_rowcount(
+            f"DELETE FROM generation_jobs WHERE {where}",
+            tuple(params),
+        )
+        return int(rc or 0)
 
     async def generation_job_claim_queued(self) -> dict | None:
         """楽観ロックで 1 件 queued → dispatching へ遷移させ、該当行を返す。
