@@ -349,7 +349,48 @@ class PowerUnit(BaseUnit):
             return f"{name}のシャットダウン要求に失敗しました。"
 
         self._active_shutdowns[target] = time.monotonic()
+        # shutdown が reboot にすり替わる事故（Windows Update + veto）を検知するため
+        # バックグラウンドで結果確認する。cancel された場合は _active_shutdowns から外れている。
+        asyncio.create_task(self._verify_shutdown(target, delay))
         return f"{name}を{delay}秒後にシャットダウンします。キャンセルする場合は「キャンセル」と言ってください。"
+
+    async def _verify_shutdown(self, target: str, delay: int) -> None:
+        """shutdown 指示後、実際に停止したかを確認する。
+        Step1: delay+90s 後に /health が応答しないこと（shutdown 成功）
+        Step2: さらに 300s 後も /health が応答しないこと（reboot にすり替わっていない）
+        どちらの段階で異常を検知しても `notify_error` で通知する。
+        """
+        agent = self._pc_map.get(target)
+        if not agent:
+            return
+        name = agent["name"]
+
+        await asyncio.sleep(delay + 90)
+        # ユーザがキャンセルしていたら検証も打ち切り
+        if target not in self._active_shutdowns:
+            return
+        if await self._is_agent_alive(agent):
+            log.warning("shutdown verification: %s still alive after delay+90s", target)
+            try:
+                await self.notify_error(
+                    f"{name}のシャットダウンが効いていないようです。"
+                    f"veto されたアプリが残っている可能性があります。"
+                )
+            except Exception:
+                pass
+            return
+
+        await asyncio.sleep(300)
+        if await self._is_agent_alive(agent):
+            log.warning("shutdown verification: %s came back online within 5min (reboot detected)", target)
+            try:
+                await self.notify_error(
+                    f"{name}がシャットダウン後5分以内に再起動しました。"
+                    f"shutdown が reboot にすり替わった可能性があります"
+                    f"（Windows Update 保留 / veto 事故）。"
+                )
+            except Exception:
+                pass
 
     async def _restart_pc(self, target: str) -> str:
         agent = self._pc_map.get(target)

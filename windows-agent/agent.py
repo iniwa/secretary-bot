@@ -78,6 +78,94 @@ def _mount_nas() -> None:
         print(f"[Agent] NAS mount exception: {e}")
 
 
+# `shutdown /s` を veto しがちな常駐プロセス。Start Menu 経由だと Event 10001
+# で「The following application attempted to veto the shutdown」として記録される。
+# ここで挙げた名前は Get-Process -Name で拾えるパターン（.exe / 拡張子は付けない）。
+_SHUTDOWN_VETO_PROCESSES = (
+    "steam",          # Steam クライアント
+    "CodeSetup-*",    # VSCode アップデータ（一時 exe。ワイルドカードで拾う）
+    "SteamWebHelper",
+    "EpicGamesLauncher",
+    "EpicWebHelper",
+)
+
+
+def _kill_shutdown_vetoers() -> list[str]:
+    """shutdown を veto しがちなプロセスを事前に強制終了する。終了したプロセス名の一覧を返す。"""
+    names_literal = ",".join(f"'{n}'" for n in _SHUTDOWN_VETO_PROCESSES)
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$killed=New-Object System.Collections.Generic.List[string];"
+        f"$names=@({names_literal});"
+        "foreach ($n in $names) {"
+        "  Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {"
+        "    try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; $killed.Add($_.Name) } catch {}"
+        "  }"
+        "}"
+        "($killed | Sort-Object -Unique) -join ','"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, errors="replace", timeout=15,
+        )
+        out = (result.stdout or "").strip()
+        killed = [n for n in out.split(",") if n]
+        if killed:
+            print(f"[Agent] Shutdown veto preempted: killed {killed}")
+        return killed
+    except Exception as e:
+        print(f"[Agent] Kill vetoers exception: {e}")
+        return []
+
+
+def _log_last_shutdown_anomaly() -> None:
+    """直前の shutdown が veto/失敗/reboot すり替えだったかをイベントログから読み取り、警告を出す。
+
+    起動直後に実行することで、「この PC は前回シャットダウン時に事故っていた」ことを
+    運用側に気付かせる。運用判断用の情報出力であり、自動修復はしない。
+    """
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime;"
+        "$from=$boot.AddHours(-24);"
+        "$sys=Get-WinEvent -FilterHashtable @{LogName='System';StartTime=$from;EndTime=$boot} -ErrorAction SilentlyContinue | "
+        "Where-Object {"
+        "  ($_.ProviderName -eq 'Microsoft-Windows-Kernel-Power' -and $_.Id -eq 577) -or "
+        "  ($_.ProviderName -eq 'User32' -and $_.Id -in 1073,1074)"
+        "};"
+        # Winsrv 10001（shutdown veto）は Application ログに入る
+        "$app=Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=$from;EndTime=$boot;ProviderName='Microsoft-Windows-Winsrv';Id=10001} -ErrorAction SilentlyContinue;"
+        "$ev=@($sys) + @($app) | Sort-Object TimeCreated;"
+        "if ($ev) {"
+        "  $has577=@($ev | Where-Object { $_.Id -eq 577 -and $_.Message -match 'reboot' }).Count;"
+        "  $has1073=@($ev | Where-Object { $_.Id -eq 1073 }).Count;"
+        "  $vetoes=@($ev | Where-Object { $_.Id -eq 10001 } | ForEach-Object {"
+        "    if ($_.Message -match 'veto the shutdown:\\s*([^\\r\\n\\.]+)') { $Matches[1].Trim() }"
+        "  });"
+        "  $out=@();"
+        "  if ($has577 -gt 0) { $out+='CONVERTED_TO_REBOOT' };"
+        "  if ($has1073 -gt 0) { $out+='SHUTDOWN_FAILED_ONCE' };"
+        "  if ($vetoes) { $out+=('VETOED_BY:' + (($vetoes | Sort-Object -Unique) -join '|')) };"
+        "  if ($out) { 'ANOMALY:' + ($out -join ';') } else { 'CLEAN' }"
+        "} else { 'CLEAN' }"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, errors="replace", timeout=20,
+        )
+        out = (result.stdout or "").strip()
+        if out.startswith("ANOMALY:"):
+            print(f"[Agent] Last shutdown anomaly detected: {out[len('ANOMALY:'):]}")
+        elif out == "CLEAN":
+            pass  # 正常。ログ汚さない。
+        else:
+            print(f"[Agent] last-shutdown check unexpected output: {out!r}")
+    except Exception as e:
+        print(f"[Agent] last-shutdown check exception: {e}")
+
+
 def _ensure_wol_ready() -> None:
     """shutdown→WoL 起動の信頼性を確保するための OS/NIC 設定を毎回起動時に強制する。
 
@@ -173,6 +261,8 @@ async def lifespan(app: FastAPI):
     print(f"[Agent] Role: {role}")
     # WoL プリフライト（shutdown→WoL 起動の信頼性確保、全ロールで実行）
     _ensure_wol_ready()
+    # 前回 shutdown に異常（veto / reboot すり替え）が無かったかログに残す
+    _log_last_shutdown_anomaly()
     # NAS 認証（Sub PC で OBS ファイル整理時に必要）
     if role == "sub":
         _mount_nas()
@@ -784,11 +874,15 @@ async def shutdown_pc(request: Request):
     delay = max(body.get("delay", 60), 10)
     # shutdown 直前にも WoL 設定を再確認（セッション中にドリフトした場合の保険）
     _ensure_wol_ready()
+    # Steam や VSCode インストーラが shutdown を veto すると reboot にすり替わって
+    # WoL 起動不能状態にスタックする事故が起きる。事前に veto 常習犯を kill する。
+    killed = _kill_shutdown_vetoers()
+    # /f: アプリの応答を待たず強制終了（veto 無視）。/f 無しだと「保存してない」警告で止まる。
     subprocess.Popen(
-        ["shutdown", "/s", "/t", str(delay)],
+        ["shutdown", "/s", "/f", "/t", str(delay)],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    return {"status": "scheduled", "delay": delay}
+    return {"status": "scheduled", "delay": delay, "killed_vetoers": killed}
 
 
 @app.post("/restart")
@@ -796,11 +890,12 @@ async def restart_pc(request: Request):
     _verify_token(request)
     body = await request.json()
     delay = max(body.get("delay", 60), 10)
+    killed = _kill_shutdown_vetoers()
     subprocess.Popen(
-        ["shutdown", "/r", "/t", str(delay)],
+        ["shutdown", "/r", "/f", "/t", str(delay)],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    return {"status": "scheduled", "delay": delay}
+    return {"status": "scheduled", "delay": delay, "killed_vetoers": killed}
 
 
 @app.post("/cancel-shutdown")
