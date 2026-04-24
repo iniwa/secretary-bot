@@ -1,8 +1,8 @@
 """PC・サーバー状態確認ユニット。
 
 `execute()` はシステム状態を Discord に返す軽量応答。
-`on_heartbeat()` ではグローバル IP 変動検知を担う（kobo_watch 等の楽天 API
-Allow IP が変わったとき手動更新を促すため）。
+`on_heartbeat()` ではグローバル IP 変動検知と、VictoriaMetrics スクレイプ健全性
+（GPU Exporter が死んだ時の通知）を担う。
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ log = get_logger(__name__)
 _IP_STATE_KEY = "global_ip"
 _IP_LAST_CHECK_KEY = "global_ip_last_check_ts"
 _DEFAULT_IP_ENDPOINT = "https://api.ipify.org"
+
+_GPU_EXPORTER_STATE_PREFIX = "gpu_exporter_broken:"
 
 
 class StatusUnit(BaseUnit):
@@ -64,6 +66,10 @@ class StatusUnit(BaseUnit):
     # === IP 変動検知（heartbeat 連携）===
 
     async def on_heartbeat(self) -> None:
+        await self._heartbeat_ip_watch()
+        await self._heartbeat_gpu_exporter_watch()
+
+    async def _heartbeat_ip_watch(self) -> None:
         if not self._ip_watch_enabled:
             return
         # 前回チェックから interval_min 未満ならスキップ（heartbeat は 15 分毎だが
@@ -90,6 +96,58 @@ class StatusUnit(BaseUnit):
             await self.bot.database.system_state_set(_IP_STATE_KEY, current)
             await self._notify_ip_changed(previous, current)
 
+    async def _heartbeat_gpu_exporter_watch(self) -> None:
+        """windows_exporter は UP なのに nvidia_gpu_exporter が DOWN な PC を検出して通知。
+
+        VictoriaMetrics の /api/v1/targets で instance ごとに windows_* (:9182) と
+        gpu_* (:9835) のペアを突き合わせ、PC オン × GPU Exporter 壊れの組み合わせを
+        状態遷移として検知する（両方 DOWN の PC オフ時は対象外）。
+        """
+        metrics_url = (self.bot.config.get("metrics") or {}).get("victoria_metrics_url", "")
+        if not metrics_url:
+            return
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{metrics_url.rstrip('/')}/api/v1/targets")
+            resp.raise_for_status()
+            targets = resp.json().get("data", {}).get("activeTargets", [])
+        except Exception as e:
+            log.debug("gpu_exporter_watch: targets fetch failed: %s", e)
+            return
+
+        # instance → {"host": windows_* target, "gpu": gpu_* target}
+        pairs: dict[str, dict] = {}
+        for t in targets:
+            pool = t.get("scrapePool", "")
+            instance = (t.get("labels") or {}).get("instance", "")
+            if not instance:
+                continue
+            if pool.startswith("windows_"):
+                pairs.setdefault(instance, {})["host"] = t
+            elif pool.startswith("gpu_"):
+                pairs.setdefault(instance, {})["gpu"] = t
+
+        for instance, pair in pairs.items():
+            host = pair.get("host")
+            gpu = pair.get("gpu")
+            if not host or not gpu:
+                continue
+            host_up = host.get("health") == "up"
+            gpu_up = gpu.get("health") == "up"
+            if not host_up:
+                # PC オフ扱い。GPU の状態は評価しない（復旧時の誤通知を防ぐ）
+                continue
+
+            state_key = f"{_GPU_EXPORTER_STATE_PREFIX}{instance}"
+            was_broken = bool(await self.bot.database.system_state_get(state_key))
+            if not gpu_up and not was_broken:
+                await self.bot.database.system_state_set(state_key, "1")
+                err = (gpu.get("lastError") or "").strip()
+                await self._notify_gpu_exporter_broken(instance, err)
+            elif gpu_up and was_broken:
+                await self.bot.database.system_state_set(state_key, "")
+                await self._notify_gpu_exporter_recovered(instance)
+
     async def _fetch_global_ip(self) -> str | None:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -111,6 +169,19 @@ class StatusUnit(BaseUnit):
             "https://webservice.rakuten.co.jp/app/list"
         )
         await self.notify(msg)
+
+    async def _notify_gpu_exporter_broken(self, instance: str, last_error: str) -> None:
+        err_line = f"scrape error: {last_error[:200]}" if last_error else "scrape error: (unknown)"
+        msg = (
+            f"⚠️ GPU使用率が取得できなくなってるよ ({instance})\n"
+            f"{err_line}\n"
+            "nvidia_gpu_exporter の稼働とファイアウォール(:9835)を確認してね。\n"
+            "docs/other/gpu-exporter-firewall.md 参照。"
+        )
+        await self.notify(msg)
+
+    async def _notify_gpu_exporter_recovered(self, instance: str) -> None:
+        await self.notify(f"✅ GPU使用率の取得が復旧したよ ({instance})")
 
 
 async def setup(bot) -> None:
