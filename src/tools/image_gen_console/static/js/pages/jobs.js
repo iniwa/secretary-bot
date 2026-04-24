@@ -35,7 +35,7 @@ export function render() {
         <option value="cancelled">cancelled</option>
       </select>
       <button id="ij-reload" class="btn btn-sm">再読込</button>
-      <button id="ij-purge" class="btn btn-sm btn-danger" title="終端ステータス（done/failed/cancelled）のジョブを DB から削除します。NAS 上の画像ファイルは残ります。">過去Jobをクリア</button>
+      <button id="ij-purge" class="btn btn-sm btn-danger" title="失敗 / キャンセルしたジョブを DB から削除します（done は残すのでギャラリーに影響なし）。">失敗/キャンセルをクリア</button>
     </div>
   </div>
   <div id="ij-body">
@@ -152,9 +152,8 @@ async function loadMore() {
 
 async function handlePurge() {
   const ok = confirm(
-    '終端ジョブ（done / failed / cancelled）を DB から削除します。\n'
-    + '・NAS 上の画像ファイルは残ります\n'
-    + '・done を削除するとギャラリーの索引からも消えます\n\n'
+    '失敗 / キャンセルしたジョブを DB から削除します。\n'
+    + '（done は温存するのでギャラリーには影響しません）\n\n'
     + '続行しますか？',
   );
   if (!ok) return;
@@ -162,9 +161,9 @@ async function handlePurge() {
   if (btn) btn.disabled = true;
   try {
     const res = await GenerationAPI.purgeJobs({
-      statuses: ['done', 'failed', 'cancelled'],
+      statuses: ['failed', 'cancelled'],
     });
-    toast(`${res?.deleted ?? 0} 件の過去 Job を削除しました`, 'info');
+    toast(`${res?.deleted ?? 0} 件のジョブを削除しました`, 'info');
     await loadJobs();
   } catch (err) {
     console.error('purge failed', err);
