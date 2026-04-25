@@ -690,7 +690,7 @@ function renderChosen() {
 // ============================================================
 async function loadSectionPresets() {
   try {
-    const data = await GenerationAPI.listSectionPresets();
+    const data = await GenerationAPI.listSectionPresets({ nsfw: nsfwOn() });
     sectionPresets = data?.presets || [];
   } catch (err) {
     console.error('section presets load failed', err);
@@ -706,7 +706,8 @@ function renderSectionPresetSelect() {
   sel.innerHTML = `<option value="">— セクションプリセット選択 —</option>` +
     sectionPresets.map(p => {
       const sids = (p.payload?.section_ids || []).length;
-      return `<option value="${p.id}">${esc(p.name)} (${sids} sections)</option>`;
+      const tag = p.is_nsfw ? ' [NSFW]' : '';
+      return `<option value="${p.id}">${esc(p.name)}${tag} (${sids} sections)</option>`;
     }).join('');
   if (cur && sectionPresets.some(p => String(p.id) === cur)) sel.value = cur;
 }
@@ -751,12 +752,15 @@ async function handleSectionPresetSave() {
   if (!name) return;
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 64) { toast('名前は 1〜64 文字', 'error'); return; }
+  // NSFW モード ON 中の保存は NSFW プリセットとして扱う（OFF 時は一覧から消える）。
+  const isNsfw = nsfwOn();
   try {
     const res = await GenerationAPI.createSectionPreset({
       name: trimmed,
       payload: currentSectionPresetPayload(),
+      is_nsfw: isNsfw,
     });
-    toast('保存しました', 'success');
+    toast(isNsfw ? '保存しました（NSFW）' : '保存しました', 'success');
     await loadSectionPresets();
     const sel = $('ig-secpreset-select');
     if (sel && res?.id) sel.value = String(res.id);
@@ -1556,6 +1560,7 @@ export async function mount() {
 
   // NSFW モード切替時は NSFW カテゴリの可視/非可視を即反映。
   // OFF 時は chosen に紛れ込んだ nsfw セクションも除去する。
+  // セクションプリセット一覧も NSFW フラグで絞り込み直す。
   window.addEventListener('ig:nsfw-change', () => {
     if (!nsfwOn()) {
       chosen = chosen.filter(sid => {
@@ -1565,6 +1570,7 @@ export async function mount() {
     }
     renderSections();
     renderUserPosOptions();
+    loadSectionPresets();
   });
 
   await Promise.all([

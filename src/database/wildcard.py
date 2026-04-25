@@ -8,11 +8,13 @@ from src.database._base import JST, jst_now
 class WildcardMixin:
     # === 画像生成: wildcard_files ===
 
-    async def wildcard_file_list(self) -> list[dict]:
-        """一覧表示用。content は含めず length だけ返す（軽量）。"""
+    async def wildcard_file_list(self, *, include_nsfw: bool = True) -> list[dict]:
+        """一覧表示用。content は含めず length だけ返す（軽量）。
+        include_nsfw=False で is_nsfw=1 の行を除外（NSFWモードOFF時用）。"""
+        where = "" if include_nsfw else " WHERE is_nsfw = 0"
         return await self.fetchall(
-            "SELECT name, description, updated_at, length(content) AS size "
-            "FROM wildcard_files ORDER BY name ASC",
+            "SELECT name, description, updated_at, is_nsfw, length(content) AS size "
+            f"FROM wildcard_files{where} ORDER BY name ASC",
         )
 
     async def wildcard_file_get(self, name: str) -> dict | None:
@@ -28,16 +30,18 @@ class WildcardMixin:
 
     async def wildcard_file_put(
         self, *, name: str, content: str, description: str | None = None,
+        is_nsfw: bool = False,
     ) -> None:
-        """UPSERT。既存なら content / description / updated_at を差し替え。"""
+        """UPSERT。既存なら content / description / is_nsfw / updated_at を差し替え。"""
         await self.execute(
-            "INSERT INTO wildcard_files (name, content, description, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO wildcard_files (name, content, description, is_nsfw, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(name) DO UPDATE SET "
             "content = excluded.content, "
             "description = excluded.description, "
+            "is_nsfw = excluded.is_nsfw, "
             "updated_at = excluded.updated_at",
-            (name, content, description, jst_now(), jst_now()),
+            (name, content, description, 1 if is_nsfw else 0, jst_now(), jst_now()),
         )
 
     async def wildcard_file_delete(self, name: str) -> bool:

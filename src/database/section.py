@@ -175,9 +175,11 @@ class SectionMixin:
 
     # === セクションプリセット: prompt_section_presets ===
 
-    async def section_preset_list(self) -> list[dict]:
+    async def section_preset_list(self, *, include_nsfw: bool = True) -> list[dict]:
+        """include_nsfw=False で is_nsfw=1 の行を除外（NSFWモードOFF時用）。"""
+        where = "" if include_nsfw else " WHERE is_nsfw = 0"
         return await self.fetchall(
-            "SELECT * FROM prompt_section_presets ORDER BY name ASC",
+            f"SELECT * FROM prompt_section_presets{where} ORDER BY name ASC",
         )
 
     async def section_preset_get(self, preset_id: int) -> dict | None:
@@ -192,12 +194,13 @@ class SectionMixin:
 
     async def section_preset_insert(
         self, *, name: str, payload_json: str, description: str | None = None,
+        is_nsfw: bool = False,
     ) -> int:
         cursor = await self.execute(
             "INSERT INTO prompt_section_presets "
-            "(name, description, payload_json, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, description, payload_json, jst_now(), jst_now()),
+            "(name, description, payload_json, is_nsfw, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, payload_json, 1 if is_nsfw else 0, jst_now(), jst_now()),
         )
         return cursor.lastrowid
 
@@ -205,6 +208,7 @@ class SectionMixin:
         self, preset_id: int, *,
         name: str | None = None, description: str | None = None,
         payload_json: str | None = None,
+        is_nsfw: bool | None = None,
     ) -> bool:
         sets: list[str] = []
         params: list = []
@@ -214,6 +218,8 @@ class SectionMixin:
             sets.append("description = ?"); params.append(description)
         if payload_json is not None:
             sets.append("payload_json = ?"); params.append(payload_json)
+        if is_nsfw is not None:
+            sets.append("is_nsfw = ?"); params.append(1 if is_nsfw else 0)
         if not sets:
             return False
         sets.append("updated_at = ?"); params.append(jst_now())

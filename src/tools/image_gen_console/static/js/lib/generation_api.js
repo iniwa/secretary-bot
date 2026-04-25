@@ -155,8 +155,10 @@ export const GenerationAPI = {
   },
 
   // Section presets（選択中セクション + ユーザー追記プロンプトのスナップショット）
-  listSectionPresets() {
-    return api('/api/generation/section-presets');
+  listSectionPresets({ nsfw = false } = {}) {
+    const params = {};
+    if (nsfw) params.nsfw = 1;
+    return api('/api/generation/section-presets', { params });
   },
   createSectionPreset(body) {
     return api('/api/generation/section-presets', { method: 'POST', body });

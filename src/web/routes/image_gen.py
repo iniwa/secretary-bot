@@ -868,6 +868,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "name": r.get("name"),
             "description": r.get("description"),
             "payload": payload,
+            "is_nsfw": bool(r.get("is_nsfw")),
             "updated_at": r.get("updated_at"),
         }
 
@@ -890,8 +891,10 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         }
 
     @app.get("/api/generation/section-presets", dependencies=[Depends(ctx.verify)])
-    async def section_presets_list():
-        rows = await bot.database.section_preset_list()
+    async def section_presets_list(request: Request):
+        # ?nsfw=1 で NSFW を含める。未指定時は除外（NSFWモードOFFと同等）。
+        include_nsfw = request.query_params.get("nsfw") in ("1", "true")
+        rows = await bot.database.section_preset_list(include_nsfw=include_nsfw)
         return {"presets": [_section_preset_to_dict(r) for r in rows]}
 
     @app.post("/api/generation/section-presets", dependencies=[Depends(ctx.verify)])
@@ -909,6 +912,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             name=name,
             description=(body.get("description") or None),
             payload_json=json.dumps(normalized, ensure_ascii=False),
+            is_nsfw=bool(body.get("is_nsfw")),
         )
         return {"id": pid}
 
@@ -937,6 +941,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         if "payload" in body:
             normalized = _validate_section_preset_payload(body.get("payload"))
             kwargs["payload_json"] = json.dumps(normalized, ensure_ascii=False)
+        if "is_nsfw" in body:
+            kwargs["is_nsfw"] = bool(body.get("is_nsfw"))
         if not kwargs:
             raise HTTPException(400, "no fields to update")
         ok = await bot.database.section_preset_update(int(preset_id), **kwargs)
@@ -996,8 +1002,11 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     _WILDCARD_MAX_BYTES = 200_000   # 1 ファイル上限 ≒ 200 KB
 
     @app.get("/api/generation/wildcards", dependencies=[Depends(ctx.verify)])
-    async def wildcards_list():
-        rows = await bot.database.wildcard_file_list()
+    async def wildcards_list(request: Request):
+        # ?nsfw=1 で NSFW を含める。未指定時は除外（NSFWモードOFFと同等）。
+        # 一覧表示のみフィルタ。/bulk と /expand は参照展開のため常時全件返す。
+        include_nsfw = request.query_params.get("nsfw") in ("1", "true")
+        rows = await bot.database.wildcard_file_list(include_nsfw=include_nsfw)
         return {"files": rows}
 
     @app.get("/api/generation/wildcards/bulk", dependencies=[Depends(ctx.verify)])
@@ -1058,6 +1067,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             raise HTTPException(400, "description must be a string or null")
         await bot.database.wildcard_file_put(
             name=name, content=content, description=description,
+            is_nsfw=bool(body.get("is_nsfw")),
         )
         return {"ok": True}
 

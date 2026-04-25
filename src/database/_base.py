@@ -900,6 +900,12 @@ class DatabaseBase:
                     updated_at TEXT NOT NULL
                 )""",
             ],
+            37: [
+                # ワイルドカード / セクションプリセット に NSFW フラグを追加。
+                # NSFW モード OFF 時は一覧から除外する（参照されたワイルドカードは展開する）。
+                "ALTER TABLE wildcard_files ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE prompt_section_presets ADD COLUMN is_nsfw INTEGER NOT NULL DEFAULT 0",
+            ],
         }
         cursor = await self._db.execute("PRAGMA user_version")
         row = await cursor.fetchone()

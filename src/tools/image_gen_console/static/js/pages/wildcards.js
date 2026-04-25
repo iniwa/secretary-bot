@@ -8,10 +8,11 @@ import { toast } from '../lib/toast.js';
 import { esc, fmtTime } from '../lib/common.js';
 import { invalidateWildcardCache } from '../lib/wildcard.js';
 
-let files = [];      // [{name, description, updated_at, size}]
+let files = [];      // [{name, description, updated_at, size, is_nsfw}]
 let activeName = null;   // 現在編集中のファイル名（新規は null）
 
 function $(id) { return document.getElementById(id); }
+function nsfwOn() { return !!window.IGNsfw?.isOn(); }
 
 export function render() {
   return `
@@ -31,6 +32,9 @@ export function render() {
     <input id="wc-name" class="pc-input" type="text" placeholder="例: hair_colors">
     <div class="pc-label">説明（任意）</div>
     <input id="wc-desc" class="pc-input" type="text" placeholder="例: 髪色の候補（blonde, red, ...）">
+    <label class="pc-checkbox" style="margin-top:0.4rem;display:flex;gap:0.4rem;align-items:center;">
+      <input id="wc-nsfw" type="checkbox"> NSFW（隠しモードOFF時は一覧から非表示。展開は通常通り行われる）
+    </label>
     <div class="pc-label">内容（1 行 = 1 候補、<code>#</code> 行はコメント、空行は無視）</div>
     <textarea id="wc-content" class="pc-input" style="min-height:200px;font-family:monospace;"
               placeholder="# コメント行\nred\nblue\ngreen"></textarea>
@@ -73,10 +77,11 @@ function renderList() {
   el.innerHTML = files.map((f) => {
     const sel = f.name === activeName ? ' style="background:var(--bg-hover,#2a2a2a);"' : '';
     const desc = f.description ? esc(f.description) : '<span class="text-muted">（説明なし）</span>';
+    const nsfwBadge = f.is_nsfw ? ' <span style="color:var(--accent-danger);font-size:0.75rem;">[NSFW]</span>' : '';
     return `
       <div class="pc-session-row" data-name="${esc(f.name)}"${sel}>
         <div class="pc-session-text" style="cursor:pointer;" data-act="edit">
-          <div class="pc-session-positive"><code>__${esc(f.name)}__</code> · ${desc}</div>
+          <div class="pc-session-positive"><code>__${esc(f.name)}__</code>${nsfwBadge} · ${desc}</div>
           <div class="pc-session-meta">${f.size ?? 0} bytes · ${fmtTime(f.updated_at)}</div>
         </div>
       </div>`;
@@ -91,7 +96,8 @@ function renderList() {
 
 async function loadList() {
   try {
-    const res = await api('/api/generation/wildcards');
+    const url = nsfwOn() ? '/api/generation/wildcards?nsfw=1' : '/api/generation/wildcards';
+    const res = await api(url);
     files = res?.files || [];
   } catch (err) {
     console.error('wildcard list failed', err);
@@ -104,10 +110,11 @@ async function loadList() {
 // ============================================================
 // Editor
 // ============================================================
-function setEditor({ name = '', description = '', content = '', active = null } = {}) {
+function setEditor({ name = '', description = '', content = '', is_nsfw = false, active = null } = {}) {
   $('wc-name').value = name;
   $('wc-desc').value = description || '';
   $('wc-content').value = content || '';
+  $('wc-nsfw').checked = !!is_nsfw;
   activeName = active;
   $('wc-editor-title').textContent = active ? `📝 編集: ${active}` : '📝 新規作成';
   $('wc-name').disabled = !!active;   // 既存は改名不可（DELETE → PUT を案内）
@@ -122,6 +129,7 @@ async function loadFile(name) {
       name: res?.name || name,
       description: res?.description || '',
       content: res?.content || '',
+      is_nsfw: !!res?.is_nsfw,
       active: res?.name || name,
     });
   } catch (err) {
@@ -143,7 +151,11 @@ async function handleSave() {
   try {
     await api(`/api/generation/wildcards/${encodeURIComponent(name)}`, {
       method: 'PUT',
-      body: { content, description: description || null },
+      body: {
+        content,
+        description: description || null,
+        is_nsfw: !!$('wc-nsfw').checked,
+      },
     });
     invalidateWildcardCache();
     $('wc-note').textContent = `保存しました: ${name}`;
@@ -220,5 +232,7 @@ export async function mount() {
   $('wc-delete')?.addEventListener('click', handleDelete);
   $('wc-clear')?.addEventListener('click', () => setEditor());
   $('wc-preview-run')?.addEventListener('click', handlePreview);
+  // NSFWモード切替で一覧を再取得（OFF時はNSFW行を隠す）
+  window.addEventListener('ig:nsfw-change', () => { loadList(); });
   await loadList();
 }
