@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "標準 t2i（SDXL/NoobXL, 1024x1024）。LoRA 3段チェーン。slot2/3 は強度0で実質無効、UIで有効化",
+    "description": "t2i 多重LoRA（キャラ + 絵柄 + 構図 の3段チェーン）。スロット2/3 は強度0で実質無効、UIで有効化",
     "category": "t2i",
     "main_pc_only": false,
     "default_timeout_sec": 300

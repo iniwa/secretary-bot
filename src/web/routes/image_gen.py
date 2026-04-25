@@ -188,8 +188,18 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         user_position = str(body.get("user_position") or "tail")
         modality = body.get("modality")
         lora_overrides = body.get("lora_overrides")
-        if lora_overrides is not None and not isinstance(lora_overrides, list):
-            raise HTTPException(400, "lora_overrides must be an array")
+        if lora_overrides is not None:
+            if not isinstance(lora_overrides, list):
+                raise HTTPException(400, "lora_overrides must be an array")
+            for ov in lora_overrides:
+                if not isinstance(ov, dict):
+                    raise HTTPException(400, "lora_overrides entries must be objects")
+                if ov.get("op") == "add":
+                    if not isinstance(ov.get("lora_name"), str) or not ov["lora_name"].strip():
+                        raise HTTPException(400, "lora_overrides add entry requires lora_name")
+                else:
+                    if not ov.get("node_id"):
+                        raise HTTPException(400, "lora_overrides entry requires node_id")
         is_nsfw = bool(body.get("is_nsfw"))
         try:
             job_id = await unit.enqueue(
@@ -660,6 +670,31 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         except Exception as e:
             raise HTTPException(500, f"failed to load loras: {e}")
         return {"loras": loras}
+
+    @app.get("/api/generation/loras", dependencies=[Depends(ctx.verify)])
+    async def generation_loras():
+        """各 Agent がキャッシュ済みの LoRA ファイル一覧を集計して返す。
+
+        UI の動的 LoRA 追加用。/checkpoints と同じ集計方式。
+        """
+        rows = await bot.database.fetchall(
+            "SELECT agent_id, filename FROM model_cache_manifest "
+            "WHERE file_type = 'loras'"
+        )
+        by_file: dict[str, list[str]] = {}
+        for r in rows:
+            fn = r.get("filename") or ""
+            aid = r.get("agent_id") or ""
+            if not fn:
+                continue
+            by_file.setdefault(fn, [])
+            if aid and aid not in by_file[fn]:
+                by_file[fn].append(aid)
+        items = [
+            {"filename": fn, "agents": sorted(aids)}
+            for fn, aids in sorted(by_file.items(), key=lambda kv: kv[0].lower())
+        ]
+        return {"items": items}
 
     @app.get("/api/generation/checkpoints", dependencies=[Depends(ctx.verify)])
     async def generation_checkpoints():

@@ -22,8 +22,11 @@ const comfyBusy = new Set();
 // Presets modal state
 let presetModalState = { source: '', workflowJson: null, sourceLabel: '' };
 
-// LoRA state（workflow ごとに [{node_id, enabled, strength, lora_name}, ...]）
+// LoRA state（workflow ごとに [{node_id, enabled, strength, lora_name, ...}]）
+// addedLoras は workflow ごとの「追加 LoRA」（送信時に op:"add" として渡す）
 let loraNodes = [];
+let addedLoras = [];        // [{ uid, lora_name, strength, enabled }]
+let availableLoras = [];    // [{filename, agents}]
 const LORA_LS_PREFIX = 'imggen:lora:';   // + workflow_name → JSON
 
 // Checkpoint 選択（Agent キャッシュ集計から）
@@ -99,9 +102,13 @@ export function render() {
       <select id="ig-ckpt" class="form-input"><option value="">Loading...</option></select>
 
       <div id="ig-lora-block" class="imggen-lora-block" hidden>
-        <h4 style="margin:0.5rem 0 0.3rem;font-size:0.8rem;">LoRA</h4>
+        <h4 style="margin:0.5rem 0 0.3rem;font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;">
+          <span>LoRA</span>
+          <button id="ig-lora-add" class="imggen-toggle" type="button" title="このワークフローに LoRA を追加（送信時のみ適用）">+ 追加</button>
+        </h4>
         <div id="ig-lora-list"></div>
       </div>
+      <datalist id="ig-lora-files-datalist"></datalist>
 
       <div class="imggen-sections-block">
         <h4>
@@ -433,10 +440,34 @@ function persistLoraOverridesLS() {
     map[node.node_id] = {
       enabled: !!node.enabled,
       strength: (typeof node.strength === 'number') ? node.strength : null,
+      lora_name: node.lora_name_override || null,
     };
   }
+  // 追加 LoRA は __added__ キーに配列で持つ
+  map.__added__ = addedLoras.map(a => ({
+    uid: a.uid,
+    lora_name: a.lora_name,
+    strength: a.strength,
+    enabled: !!a.enabled,
+  }));
   try { localStorage.setItem(loraStorageKey(wf), JSON.stringify(map)); }
   catch { /* ignore */ }
+}
+
+async function loadAvailableLoras() {
+  try {
+    const data = await api('/api/generation/loras');
+    availableLoras = data?.items || [];
+  } catch (err) {
+    console.error('available loras load failed', err);
+    availableLoras = [];
+  }
+  const dl = $('ig-lora-files-datalist');
+  if (dl) {
+    dl.innerHTML = availableLoras
+      .map(f => `<option value="${esc(f.filename)}"></option>`)
+      .join('');
+  }
 }
 
 async function loadLoras() {
@@ -444,29 +475,39 @@ async function loadLoras() {
   const block = $('ig-lora-block');
   const list = $('ig-lora-list');
   if (!block || !list) return;
-  if (!wf) { block.hidden = true; loraNodes = []; return; }
+  if (!wf) { block.hidden = true; loraNodes = []; addedLoras = []; return; }
   list.innerHTML = '<div class="imggen-empty" style="padding:0.4rem;">Loading LoRA...</div>';
   try {
     const data = await GenerationAPI.workflowLoras(wf);
     const items = data?.loras || [];
-    if (!items.length) {
-      block.hidden = true;
-      loraNodes = [];
-      return;
-    }
     const saved = loadLoraOverridesLS(wf);
     loraNodes = items.map(it => {
       const ovr = saved[it.node_id] || {};
       const defStrength = (typeof it.strength_model === 'number') ? it.strength_model : 1.0;
       return {
         node_id: it.node_id,
-        lora_name: it.lora_name || '(unknown)',
+        lora_name: it.lora_name || '(unknown)',         // workflow オリジナル名
+        lora_name_override: (typeof ovr.lora_name === 'string' && ovr.lora_name) ? ovr.lora_name : null,
         title: it.title || null,
         default_strength: defStrength,
         enabled: (typeof ovr.enabled === 'boolean') ? ovr.enabled : true,
         strength: (typeof ovr.strength === 'number') ? ovr.strength : defStrength,
       };
     });
+    // 追加 LoRA も復元
+    const savedAdded = Array.isArray(saved.__added__) ? saved.__added__ : [];
+    addedLoras = savedAdded
+      .filter(a => a && typeof a.lora_name === 'string' && a.lora_name)
+      .map(a => ({
+        uid: a.uid || `add_${Math.random().toString(36).slice(2, 8)}`,
+        lora_name: String(a.lora_name),
+        strength: Number.isFinite(a.strength) ? a.strength : 0.6,
+        enabled: a.enabled !== false,
+      }));
+    if (!items.length && !addedLoras.length) {
+      block.hidden = true;
+      return;
+    }
     block.hidden = false;
     renderLoraList();
   } catch (err) {
@@ -479,53 +520,135 @@ async function loadLoras() {
 function renderLoraList() {
   const list = $('ig-lora-list');
   if (!list) return;
-  if (!loraNodes.length) { list.innerHTML = ''; return; }
-  list.innerHTML = loraNodes.map((n, i) => {
-    const label = n.title ? `${n.title} (${n.lora_name})` : n.lora_name;
+  if (!loraNodes.length && !addedLoras.length) { list.innerHTML = ''; return; }
+
+  const existingRows = loraNodes.map((n, i) => {
+    const currentName = n.lora_name_override || n.lora_name;
+    const labelTitle = n.title ? `${n.title}` : `node ${n.node_id}`;
     const strengthVal = Number.isFinite(n.strength) ? n.strength.toFixed(2) : n.default_strength.toFixed(2);
     return `
-      <div class="imggen-lora-row" data-idx="${i}">
+      <div class="imggen-lora-row" data-kind="existing" data-idx="${i}">
         <label class="imggen-lora-toggle" title="LoRA を適用するか">
           <input type="checkbox" data-lora-toggle ${n.enabled ? 'checked' : ''}>
         </label>
-        <span class="imggen-lora-name" title="${esc(n.lora_name)} (node ${esc(n.node_id)})">${esc(label)}</span>
+        <span class="imggen-lora-name" title="${esc(n.lora_name)} (node ${esc(n.node_id)})" style="min-width:8rem;">${esc(labelTitle)}</span>
+        <input class="form-input imggen-lora-file" type="text" list="ig-lora-files-datalist"
+               value="${esc(currentName)}" placeholder="LoRA ファイル名" data-lora-file
+               style="flex:1;min-width:12rem;font-size:0.78rem;" ${n.enabled ? '' : 'disabled'}>
         <input class="imggen-lora-strength" type="range" min="-2" max="2" step="0.05"
                value="${strengthVal}" data-lora-strength ${n.enabled ? '' : 'disabled'}>
         <input class="imggen-lora-strength-num" type="number" step="0.05"
                value="${strengthVal}" data-lora-strength-num ${n.enabled ? '' : 'disabled'}>
       </div>`;
-  }).join('');
+  });
+
+  const addedRows = addedLoras.map((a, i) => {
+    const sv = Number.isFinite(a.strength) ? a.strength.toFixed(2) : '0.60';
+    return `
+      <div class="imggen-lora-row" data-kind="added" data-idx="${i}" style="background:rgba(120,180,255,0.05);">
+        <label class="imggen-lora-toggle" title="LoRA を適用するか">
+          <input type="checkbox" data-lora-toggle ${a.enabled ? 'checked' : ''}>
+        </label>
+        <span class="imggen-lora-name" style="min-width:8rem;color:var(--text-muted);">+ 追加</span>
+        <input class="form-input imggen-lora-file" type="text" list="ig-lora-files-datalist"
+               value="${esc(a.lora_name)}" placeholder="LoRA ファイル名を選択" data-lora-file
+               style="flex:1;min-width:12rem;font-size:0.78rem;" ${a.enabled ? '' : 'disabled'}>
+        <input class="imggen-lora-strength" type="range" min="-2" max="2" step="0.05"
+               value="${sv}" data-lora-strength ${a.enabled ? '' : 'disabled'}>
+        <input class="imggen-lora-strength-num" type="number" step="0.05"
+               value="${sv}" data-lora-strength-num ${a.enabled ? '' : 'disabled'}>
+        <button type="button" class="btn btn-sm btn-danger" data-lora-remove title="削除">×</button>
+      </div>`;
+  });
+
+  list.innerHTML = existingRows.concat(addedRows).join('');
+
   list.querySelectorAll('.imggen-lora-row').forEach(row => {
+    const kind = row.dataset.kind;
     const idx = Number(row.dataset.idx);
     const toggle = row.querySelector('[data-lora-toggle]');
+    const file = row.querySelector('[data-lora-file]');
     const range = row.querySelector('[data-lora-strength]');
     const num = row.querySelector('[data-lora-strength-num]');
+    const remove = row.querySelector('[data-lora-remove]');
+
+    const target = () => kind === 'existing' ? loraNodes[idx] : addedLoras[idx];
+
     toggle?.addEventListener('change', () => {
-      loraNodes[idx].enabled = !!toggle.checked;
-      if (range) range.disabled = !toggle.checked;
-      if (num) num.disabled = !toggle.checked;
+      const t = target();
+      t.enabled = !!toggle.checked;
+      [file, range, num].forEach(el => { if (el) el.disabled = !toggle.checked; });
       persistLoraOverridesLS();
     });
+
+    file?.addEventListener('change', () => {
+      const t = target();
+      const v = (file.value || '').trim();
+      if (kind === 'existing') {
+        // workflow オリジナル名と同じなら override を解除
+        t.lora_name_override = (v && v !== t.lora_name) ? v : null;
+      } else {
+        t.lora_name = v;
+      }
+      persistLoraOverridesLS();
+    });
+
     const onStrength = (v) => {
       const f = parseFloat(v);
       if (!Number.isFinite(f)) return;
-      loraNodes[idx].strength = f;
+      const t = target();
+      t.strength = f;
       if (range && range.value !== String(f)) range.value = String(f);
       if (num && num.value !== String(f)) num.value = String(f);
       persistLoraOverridesLS();
     };
     range?.addEventListener('input', () => onStrength(range.value));
     num?.addEventListener('change', () => onStrength(num.value));
+
+    remove?.addEventListener('click', () => {
+      addedLoras.splice(idx, 1);
+      persistLoraOverridesLS();
+      renderLoraList();
+    });
   });
 }
 
+function handleLoraAdd() {
+  addedLoras.push({
+    uid: `add_${Math.random().toString(36).slice(2, 8)}`,
+    lora_name: '',
+    strength: 0.6,
+    enabled: true,
+  });
+  // 追加直後はブロックを必ず開く
+  const block = $('ig-lora-block');
+  if (block) block.hidden = false;
+  persistLoraOverridesLS();
+  renderLoraList();
+}
+
 function collectLoraOverrides() {
-  if (!loraNodes.length) return [];
-  return loraNodes.map(n => ({
-    node_id: n.node_id,
-    enabled: !!n.enabled,
-    strength: Number.isFinite(n.strength) ? n.strength : null,
-  }));
+  const out = [];
+  for (const n of loraNodes) {
+    const entry = {
+      node_id: n.node_id,
+      enabled: !!n.enabled,
+      strength: Number.isFinite(n.strength) ? n.strength : null,
+    };
+    if (n.lora_name_override) entry.lora_name = n.lora_name_override;
+    out.push(entry);
+  }
+  for (const a of addedLoras) {
+    if (!a.enabled) continue;
+    const name = (a.lora_name || '').trim();
+    if (!name) continue;   // ファイル未選択は無視
+    out.push({
+      op: 'add',
+      lora_name: name,
+      strength: Number.isFinite(a.strength) ? a.strength : 0.6,
+    });
+  }
+  return out;
 }
 
 // ============================================================
@@ -1012,16 +1135,33 @@ async function checkStashPrefill() {
     for (const [k, id] of Object.entries(map)) {
       if (p[k] !== undefined && $(id)) $(id).value = p[k];
     }
-    // ギャラリー再利用時に LoRA 状態も引き継ぐ
+    // ギャラリー再利用時に LoRA 状態も引き継ぐ（既存ノード操作 + 追加LoRA 両対応）
     const ovrList = Array.isArray(p.__LORA_OVERRIDES__) ? p.__LORA_OVERRIDES__ : null;
     if (workflowChanged) await loadLoras();
-    if (ovrList && loraNodes.length) {
+    if (ovrList) {
+      const adds = [];
       for (const ovr of ovrList) {
+        if (ovr && ovr.op === 'add') {
+          const name = (ovr.lora_name || '').trim();
+          if (!name) continue;
+          adds.push({
+            uid: `add_${Math.random().toString(36).slice(2, 8)}`,
+            lora_name: name,
+            strength: Number.isFinite(ovr.strength) ? ovr.strength : 0.6,
+            enabled: ovr.enabled !== false,
+          });
+          continue;
+        }
         const node = loraNodes.find(n => n.node_id === String(ovr.node_id));
         if (!node) continue;
         if (typeof ovr.enabled === 'boolean') node.enabled = ovr.enabled;
         if (typeof ovr.strength === 'number') node.strength = ovr.strength;
+        if (typeof ovr.lora_name === 'string' && ovr.lora_name.trim()) {
+          node.lora_name_override = ovr.lora_name.trim();
+        }
       }
+      // 再利用時は追加 LoRA を上書き（重複防止）
+      addedLoras = adds;
       renderLoraList();
       persistLoraOverridesLS();
     }
@@ -1558,6 +1698,8 @@ export async function mount() {
   $('ig-secpreset-overwrite')?.addEventListener('click', handleSectionPresetOverwrite);
   $('ig-secpreset-delete')?.addEventListener('click', handleSectionPresetDelete);
 
+  $('ig-lora-add')?.addEventListener('click', handleLoraAdd);
+
   // NSFW モード切替時は NSFW カテゴリの可視/非可視を即反映。
   // OFF 時は chosen に紛れ込んだ nsfw セクションも除去する。
   // セクションプリセット一覧も NSFW フラグで絞り込み直す。
@@ -1580,6 +1722,7 @@ export async function mount() {
     loadPresets(),
     loadSectionPresets(),
     loadCheckpoints(),
+    loadAvailableLoras(),
   ]);
   // workflows ロード後に初期 LoRA も読み込む
   await loadLoras();

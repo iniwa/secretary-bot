@@ -270,24 +270,41 @@ class WorkflowManager:
 
 
 def apply_lora_overrides(workflow: dict, overrides: list[dict]) -> dict:
-    """LoraLoader ノードの enabled/strength オーバーライドを適用する。
+    """LoraLoader ノードの enabled/strength/lora_name オーバーライドおよび追加挿入を適用する。
 
-    overrides: [{"node_id": str, "enabled": bool, "strength": float?}, ...]
+    overrides の要素は次の2種類:
+      1) 既存ノード操作: {"node_id": str, "enabled": bool?, "strength": float?, "lora_name": str?}
+         - enabled=False で workflow から削除、参照は上流へ付け替え（バイパス）
+         - strength 指定で strength_model/clip を上書き
+         - lora_name 指定でファイル名を差し替え
+      2) 新規追加: {"op": "add", "lora_name": str, "strength": float?, "enabled": bool?}
+         - 既存 LoraLoader チェーンの末尾（無ければ CheckpointLoaderSimple）の後ろに連結
+         - 末尾の MODEL(0)/CLIP(1) 出力を参照していた下流ノードを、追加した最後の LoRA に張り替え
+         - enabled=False の add は無視（追加しない）
 
-    - enabled=False のノードは workflow から削除し、その出力（MODEL/CLIP）を
-      参照していた他ノードの入力を、削除ノードの入力元へ付け替える（バイパス）。
-      連続して LoraLoader が disabled な場合は再帰的に上流へ辿る。
-    - enabled=True で strength が指定されたノードは strength_model/strength_clip を
-      その値で上書きする。
-    - workflow 自体は破壊せず deep copy 上で操作する。
+    workflow 自体は破壊せず deep copy 上で操作する。
     """
     if not overrides:
         return workflow
 
     disabled: set[str] = set()
     strength_map: dict[str, float] = {}
+    lora_name_map: dict[str, str] = {}
+    add_entries: list[dict] = []
     for ov in overrides:
         if not isinstance(ov, dict):
+            continue
+        if ov.get("op") == "add":
+            if ov.get("enabled") is False:
+                continue
+            ln = ov.get("lora_name")
+            if not isinstance(ln, str) or not ln.strip():
+                continue
+            try:
+                strength = float(ov.get("strength", 0.6))
+            except (TypeError, ValueError):
+                strength = 0.6
+            add_entries.append({"lora_name": ln.strip(), "strength": strength})
             continue
         nid = str(ov.get("node_id") or "")
         if not nid:
@@ -297,11 +314,14 @@ def apply_lora_overrides(workflow: dict, overrides: list[dict]) -> dict:
             continue
         if ov.get("enabled") is False:
             disabled.add(nid)
-        elif ov.get("strength") is not None:
+            continue
+        if ov.get("strength") is not None:
             try:
                 strength_map[nid] = float(ov["strength"])
             except (TypeError, ValueError):
-                continue
+                pass
+        if isinstance(ov.get("lora_name"), str) and ov["lora_name"].strip():
+            lora_name_map[nid] = ov["lora_name"].strip()
 
     # 削除ノードの入力元を記録（MODEL=output 0, CLIP=output 1）
     bypass_map: dict[str, dict[str, Any]] = {}
@@ -328,11 +348,14 @@ def apply_lora_overrides(workflow: dict, overrides: list[dict]) -> dict:
         if nid in disabled:
             continue
         new_node = json.loads(json.dumps(node))   # deep copy
-        # 強度上書き
-        if nid in strength_map and new_node.get("class_type") == "LoraLoader":
+        # 強度・lora_name 上書き
+        if new_node.get("class_type") == "LoraLoader":
             inputs = new_node.setdefault("inputs", {})
-            inputs["strength_model"] = strength_map[nid]
-            inputs["strength_clip"] = strength_map[nid]
+            if nid in strength_map:
+                inputs["strength_model"] = strength_map[nid]
+                inputs["strength_clip"] = strength_map[nid]
+            if nid in lora_name_map:
+                inputs["lora_name"] = lora_name_map[nid]
         # 入力リンクの再配線
         inputs = new_node.get("inputs", {}) or {}
         for k, v in list(inputs.items()):
@@ -340,6 +363,94 @@ def apply_lora_overrides(workflow: dict, overrides: list[dict]) -> dict:
                 continue
             inputs[k] = _redirect(v[0], int(v[1]), set())
         out[nid] = new_node
+
+    if add_entries:
+        out = _append_added_loras(out, add_entries)
+    return out
+
+
+def _find_lora_chain_tail(workflow: dict) -> tuple[str | None, str | None]:
+    """LoraLoader チェーンの末尾ノードIDを返す。
+
+    末尾 = MODEL/CLIP 出力が他の LoraLoader 以外（KSampler / CLIPTextEncode 等）
+    から参照されているノード。LoraLoader が無ければ CheckpointLoaderSimple を返す。
+
+    戻り値: (tail_node_id, tail_class_type) もしくは (None, None)
+    """
+    lora_ids = {
+        nid for nid, n in workflow.items()
+        if isinstance(n, dict) and n.get("class_type") == "LoraLoader"
+    }
+    if not lora_ids:
+        for nid, n in workflow.items():
+            if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple":
+                return nid, "CheckpointLoaderSimple"
+        return None, None
+    # 他 LoraLoader の input から参照されているノード集合
+    referenced_by_lora = set()
+    for nid, n in workflow.items():
+        if not isinstance(n, dict) or n.get("class_type") != "LoraLoader":
+            continue
+        for inp in (n.get("inputs", {}) or {}).values():
+            if isinstance(inp, list) and len(inp) == 2 and isinstance(inp[0], str):
+                referenced_by_lora.add(inp[0])
+    tails = lora_ids - referenced_by_lora
+    if not tails:
+        return None, None
+    # 複数末尾は通常想定外。決定的に1つを選ぶ。
+    return sorted(tails)[0], "LoraLoader"
+
+
+def _alloc_node_id(workflow: dict, prefix: str) -> str:
+    i = 1
+    while True:
+        nid = f"{prefix}_{i}"
+        if nid not in workflow:
+            return nid
+        i += 1
+
+
+def _append_added_loras(workflow: dict, adds: list[dict]) -> dict:
+    """LoraLoader チェーン末尾に新ノードを連結し、下流参照を張り替える。"""
+    tail_id, _ = _find_lora_chain_tail(workflow)
+    if tail_id is None:
+        log.warning("apply_lora_overrides: cannot find chain tail; skip add")
+        return workflow
+
+    out = json.loads(json.dumps(workflow))
+    new_ids: list[str] = []
+    current_model = [tail_id, 0]
+    current_clip = [tail_id, 1]
+    for i, add in enumerate(adds):
+        new_id = _alloc_node_id(out, "added_lora")
+        out[new_id] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "lora_name": str(add["lora_name"]),
+                "strength_model": float(add["strength"]),
+                "strength_clip": float(add["strength"]),
+                "model": list(current_model),
+                "clip": list(current_clip),
+            },
+            "_meta": {"title": f"Added LoRA {i + 1}"},
+        }
+        new_ids.append(new_id)
+        current_model = [new_id, 0]
+        current_clip = [new_id, 1]
+
+    last_id = new_ids[-1]
+    # 末尾ノードの MODEL(0) / CLIP(1) を参照する下流ノードを最終ノードへ張り替え。
+    # CheckpointLoaderSimple の VAE(2) は触らない。新ノード自身も除外する。
+    skip = set(new_ids) | {tail_id}
+    for nid, n in out.items():
+        if nid in skip or not isinstance(n, dict):
+            continue
+        inputs = n.get("inputs", {}) or {}
+        for k, v in list(inputs.items()):
+            if not (isinstance(v, list) and len(v) == 2 and isinstance(v[0], str)):
+                continue
+            if v[0] == tail_id and int(v[1]) in (0, 1):
+                inputs[k] = [last_id, int(v[1])]
     return out
 
 
